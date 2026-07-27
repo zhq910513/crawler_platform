@@ -9,3 +9,5 @@ data/task-logs/*
 data/backups/*
 !data/**/.gitkeep
 agent/state.json
+*.bak*
+docker-build.log

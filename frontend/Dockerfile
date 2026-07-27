@@ -8,4 +8,7 @@ RUN npm run build
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+COPY docker-entrypoint-wait.sh /usr/local/bin/docker-entrypoint-wait.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-wait.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint-wait.sh"]
+CMD ["nginx", "-g", "daemon off;"]

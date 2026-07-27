@@ -19,12 +19,42 @@ from app.utils import utcnow
 
 class SchedulerService:
     def __init__(self) -> None:
-        self.redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
         self.lock_name = "crawler:scheduler:leader"
         self.token = str(uuid.uuid4())
+        self.redis = self._create_redis_client()
+
+    @staticmethod
+    def _create_redis_client() -> redis.Redis:
+        return redis.Redis.from_url(
+            settings.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=5,
+            socket_keepalive=True,
+            health_check_interval=30,
+            retry_on_timeout=True,
+        )
+
+    def _reset_redis_client(self) -> None:
+        try:
+            self.redis.close()
+        except Exception:
+            pass
+        self.redis = self._create_redis_client()
 
     def acquire_lock(self) -> bool:
-        return bool(self.redis.set(self.lock_name, self.token, nx=True, ex=settings.scheduler_lock_seconds))
+        last_error: Exception | None = None
+        for attempt in range(1, 6):
+            try:
+                return bool(self.redis.set(self.lock_name, self.token, nx=True, ex=settings.scheduler_lock_seconds))
+            except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+                last_error = exc
+                self._reset_redis_client()
+                if attempt < 5:
+                    time.sleep(min(attempt, 3))
+        if last_error:
+            raise last_error
+        return False
 
     def release_lock(self) -> None:
         script = """

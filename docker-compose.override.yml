@@ -1,0 +1,4 @@
+services:
+  redis:
+    sysctls:
+      net.core.somaxconn: "1024"
