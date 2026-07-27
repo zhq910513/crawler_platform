@@ -1,0 +1,28 @@
+stages: [build, register]
+variables:
+  IMAGE_TAG: "$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
+  IMAGE_NAME: "$CI_REGISTRY_IMAGE:$IMAGE_TAG"
+
+build:
+  stage: build
+  image: docker:27
+  services: [docker:27-dind]
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "$IMAGE_NAME" .
+    - docker push "$IMAGE_NAME"
+    - docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_NAME" | sed 's/.*@//' > image_digest.txt
+  artifacts:
+    paths: [image_digest.txt]
+
+register:
+  stage: register
+  image: curlimages/curl:8.10.1
+  dependencies: [build]
+  script:
+    - DIGEST="$(cat image_digest.txt)"
+    - |
+      curl --fail --request POST "$CRAWLER_PLATFORM_URL/api/cicd/image-versions" \
+        --header "X-CICD-Token: $CRAWLER_PLATFORM_CICD_TOKEN" \
+        --header "Content-Type: application/json" \
+        --data "{\"project_code\":\"ulike_overseas_scraper\",\"image_tag\":\"$IMAGE_TAG\",\"image_digest\":\"$DIGEST\",\"git_branch\":\"$CI_COMMIT_REF_NAME\",\"git_commit\":\"$CI_COMMIT_SHA\",\"pipeline_id\":\"$CI_PIPELINE_ID\",\"build_status\":\"SUCCESS\",\"build_url\":\"$CI_PIPELINE_URL\"}"

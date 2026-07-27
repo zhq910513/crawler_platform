@@ -1,0 +1,11 @@
+.env
+**/__pycache__/
+*.py[cod]
+frontend/node_modules/
+frontend/dist/
+data/mysql/*
+data/redis/*
+data/task-logs/*
+data/backups/*
+!data/**/.gitkeep
+agent/state.json

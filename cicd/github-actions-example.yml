@@ -1,0 +1,41 @@
+name: Build crawler image
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - id: meta
+        run: echo "tag=$(date +%Y%m%d)-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.REGISTRY }}/crawlers/ulike-overseas-scraper:${{ steps.meta.outputs.tag }}
+      - name: Register image in control platform
+        env:
+          PLATFORM_URL: ${{ secrets.CRAWLER_PLATFORM_URL }}
+          CICD_TOKEN: ${{ secrets.CRAWLER_PLATFORM_CICD_TOKEN }}
+        run: |
+          curl --fail --request POST "$PLATFORM_URL/api/cicd/image-versions" \
+            --header "X-CICD-Token: $CICD_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"project_code\": \"ulike_overseas_scraper\",
+              \"image_tag\": \"${{ steps.meta.outputs.tag }}\",
+              \"image_digest\": \"${{ steps.build.outputs.digest }}\",
+              \"git_branch\": \"${GITHUB_REF_NAME}\",
+              \"git_commit\": \"${GITHUB_SHA}\",
+              \"pipeline_id\": \"${GITHUB_RUN_ID}\",
+              \"build_status\": \"SUCCESS\",
+              \"build_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
+            }"
