@@ -9,3 +9,8 @@ data/task-logs/*
 data/backups/*
 !data/**/.gitkeep
 agent/state.json
+.env.*
+!.env.example
+!**/.env.example
+crawler_agent.env
+agent/.env.local
