@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     app_name: str = "crawler_platform"
     app_env: str = "production"
-    app_version: str = "1.0.0"
+    app_version: str = "2.0.0"
     timezone: str = "Asia/Shanghai"
     api_prefix: str = "/api"
 
@@ -31,14 +31,18 @@ class Settings(BaseSettings):
     cicd_token: str = "change-this-cicd-token"
     agent_bootstrap_token: str = "change-this-agent-bootstrap-token"
     agent_lease_seconds: int = 90
+    agent_offline_seconds: int = 120
     scheduler_poll_seconds: int = 5
     scheduler_lock_seconds: int = 60
 
     task_log_root: Path = Path("/data/task-logs")
     task_log_retention_days: int = 30
     metric_retention_days: int = 14
+    sse_poll_seconds: float = 0.5
+    sse_keepalive_seconds: int = 15
 
-    cors_origins: str = "*"
+    cors_origins: str = ""
+    enable_api_docs: bool = False
 
     @property
     def cors_origin_list(self) -> list[str]:
@@ -46,6 +50,29 @@ class Settings(BaseSettings):
         if value == "*":
             return ["*"]
         return [item.strip() for item in value.split(",") if item.strip()]
+
+    def validate_runtime(self) -> None:
+        if self.app_env.lower() not in {"production", "prod"}:
+            return
+        failures: list[str] = []
+        checks = {
+            "JWT_SECRET": (self.jwt_secret, 32),
+            "SECRET_ENCRYPTION_KEY": (self.secret_encryption_key, 32),
+            "ADMIN_PASSWORD": (self.admin_password, 12),
+            "CICD_TOKEN": (self.cicd_token, 24),
+            "AGENT_BOOTSTRAP_TOKEN": (self.agent_bootstrap_token, 24),
+        }
+        for name, (value, minimum) in checks.items():
+            lowered = value.lower()
+            if len(value) < minimum or "replacewith" in lowered or "change-this" in lowered:
+                failures.append(name)
+        if self.database_url.startswith("sqlite"):
+            failures.append("DATABASE_URL")
+        if "replacewith" in self.database_url.lower():
+            failures.append("DATABASE_URL")
+        if failures:
+            names = ", ".join(sorted(set(failures)))
+            raise RuntimeError(f"production configuration is unsafe or incomplete: {names}")
 
 
 @lru_cache(maxsize=1)

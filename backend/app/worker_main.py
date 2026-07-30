@@ -38,6 +38,7 @@ def cleanup_logs() -> None:
 
 
 def run_forever() -> None:
+    settings.validate_runtime()
     init_db()
     while True:
         try:

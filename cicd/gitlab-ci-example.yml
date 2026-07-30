@@ -1,28 +1,33 @@
 stages: [build, register]
+
 variables:
-  IMAGE_TAG: "$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA"
-  IMAGE_NAME: "$CI_REGISTRY_IMAGE:$IMAGE_TAG"
+  IMAGE_REPOSITORY: "$CI_REGISTRY_IMAGE/crawler_platform_spiders"
 
 build:
   stage: build
   image: docker:27
   services: [docker:27-dind]
+  before_script:
+    - apk add --no-cache jq
   script:
+    - VERSION="$(jq -r '.version' RELEASE_MANIFEST.json)"
+    - IMAGE_REF="$IMAGE_REPOSITORY:$VERSION"
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
-    - docker build -t "$IMAGE_NAME" .
-    - docker push "$IMAGE_NAME"
-    - docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_NAME" | sed 's/.*@//' > image_digest.txt
+    - docker build -t "$IMAGE_REF" .
+    - docker push "$IMAGE_REF"
+    - docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_REF" | sed 's/.*@//' > image_digest.txt
+    - printf '%s' "$VERSION" > image_version.txt
   artifacts:
-    paths: [image_digest.txt]
+    paths: [image_digest.txt, image_version.txt, RELEASE_MANIFEST.json]
 
 register:
   stage: register
-  image: curlimages/curl:8.10.1
+  image: alpine:3.21
   dependencies: [build]
+  before_script:
+    - apk add --no-cache curl jq
   script:
     - DIGEST="$(cat image_digest.txt)"
-    - |
-      curl --fail --request POST "$CRAWLER_PLATFORM_URL/api/cicd/image-versions" \
-        --header "X-CICD-Token: $CRAWLER_PLATFORM_CICD_TOKEN" \
-        --header "Content-Type: application/json" \
-        --data "{\"project_code\":\"ulike_overseas_scraper\",\"image_tag\":\"$IMAGE_TAG\",\"image_digest\":\"$DIGEST\",\"git_branch\":\"$CI_COMMIT_REF_NAME\",\"git_commit\":\"$CI_COMMIT_SHA\",\"pipeline_id\":\"$CI_PIPELINE_ID\",\"build_status\":\"SUCCESS\",\"build_url\":\"$CI_PIPELINE_URL\"}"
+    - VERSION="$(cat image_version.txt)"
+    - jq -n --arg repository "$IMAGE_REPOSITORY" --arg tag "$VERSION" --arg digest "$DIGEST" --arg commit "$CI_COMMIT_SHA" --slurpfile manifest RELEASE_MANIFEST.json '{image_repository:$repository,image_tag:$tag,image_digest:$digest,git_commit:$commit,manifest:$manifest[0]}' > release-request.json
+    - curl --fail-with-body --retry 3 --retry-all-errors --request POST "$CRAWLER_PLATFORM_URL/api/cicd/spider-releases" --header "X-CICD-Token:$CRAWLER_PLATFORM_CICD_TOKEN" --header "Content-Type:application/json" --data-binary @release-request.json

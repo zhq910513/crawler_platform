@@ -1,5 +1,18 @@
 name: crawler_platform
 
+x-backend-common: &backend-common
+  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    TZ: ${TZ:-Asia/Shanghai}
+  networks: [backend]
+  logging: &default-logging
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+
 services:
   mysql:
     image: mysql:8.4
@@ -22,11 +35,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-    logging: &default-logging
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
+    logging: *default-logging
 
   redis:
     image: redis:7.4-alpine
@@ -45,66 +54,63 @@ services:
       retries: 10
     logging: *default-logging
 
-  api:
-    build: ./backend
+  migrate:
+    build:
+      context: ./backend
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
     image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
-    restart: unless-stopped
+    restart: "no"
     env_file: .env
     environment:
       TZ: ${TZ:-Asia/Shanghai}
+    command: ["python", "-m", "app.migration_main"]
     depends_on:
       mysql: { condition: service_healthy }
+    networks: [backend]
+    logging: *default-logging
+
+  api:
+    <<: *backend-common
+    depends_on:
+      migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     volumes:
       - ./data/task-logs:/data/task-logs
-    networks: [backend]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 20s
       timeout: 5s
       retries: 10
-    logging: *default-logging
 
   scheduler:
-    image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
+    <<: *backend-common
     command: ["python", "-m", "app.scheduler_main"]
     depends_on:
-      mysql: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
-    volumes:
-      - ./data/task-logs:/data/task-logs
-    networks: [backend]
-    logging: *default-logging
 
-  worker:
-    image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
+  maintenance:
+    <<: *backend-common
     command: ["python", "-m", "app.worker_main"]
     depends_on:
-      mysql: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     volumes:
       - ./data/task-logs:/data/task-logs
-    networks: [backend]
-    logging: *default-logging
 
   web:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       api: { condition: service_healthy }
     ports:
       - "${WEB_PORT:-8080}:80"
-    networks:
-      - backend
+    networks: [backend]
     logging: *default-logging
 
 networks:

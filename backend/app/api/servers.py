@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import require_admin
+from app.deps import get_current_user, require_admin
 from app.models import CrawlerAgent, CrawlerServer, CrawlerServerMetric, SysUser
 from app.services.audit import write_operation_log
 from app.utils import utcnow
@@ -30,6 +30,10 @@ def server_dict(row: CrawlerServer, agent: CrawlerAgent | None, metric: CrawlerS
             "agent_id": agent.agent_id,
             "agent_code": agent.agent_code,
             "agent_version": agent.agent_version,
+            "protocol_version": agent.protocol_version,
+            "instance_id": agent.instance_id,
+            "capabilities": agent.capabilities_json,
+            "labels": agent.labels_json,
             "hostname": agent.hostname,
             "os_name": agent.os_name,
             "python_version": agent.python_version,
@@ -53,7 +57,7 @@ def server_dict(row: CrawlerServer, agent: CrawlerAgent | None, metric: CrawlerS
 
 
 @router.get("")
-def list_servers(db: Session = Depends(get_db), _: SysUser = Depends(require_admin)) -> list[dict]:
+def list_servers(db: Session = Depends(get_db), _: SysUser = Depends(get_current_user)) -> list[dict]:
     rows = db.scalars(select(CrawlerServer).order_by(CrawlerServer.server_id.asc())).all()
     result = []
     for row in rows:
@@ -89,7 +93,7 @@ def update_server(
 
 
 @router.get("/{server_id}/metrics")
-def server_metrics(server_id: int, limit: int = 200, db: Session = Depends(get_db), _: SysUser = Depends(require_admin)) -> list[dict]:
+def server_metrics(server_id: int, limit: int = 200, db: Session = Depends(get_db), _: SysUser = Depends(get_current_user)) -> list[dict]:
     rows = db.scalars(
         select(CrawlerServerMetric)
         .where(CrawlerServerMetric.server_id == server_id)

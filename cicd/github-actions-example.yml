@@ -1,11 +1,15 @@
-name: Build crawler image
+name: Build crawler_platform_spiders release
 on:
   push:
     branches: [main]
+    tags: ['v*']
 
 jobs:
-  build:
+  build-and-register:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/login-action@v3
@@ -14,28 +18,36 @@ jobs:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - id: meta
-        run: echo "tag=$(date +%Y%m%d)-${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('RELEASE_MANIFEST.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "image=${{ secrets.REGISTRY }}/crawlers/crawler_platform_spiders" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         id: build
         with:
           context: .
           push: true
-          tags: ${{ secrets.REGISTRY }}/crawlers/ulike-overseas-scraper:${{ steps.meta.outputs.tag }}
-      - name: Register image in control platform
+          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+      - name: Register immutable SpiderRelease
         env:
           PLATFORM_URL: ${{ secrets.CRAWLER_PLATFORM_URL }}
           CICD_TOKEN: ${{ secrets.CRAWLER_PLATFORM_CICD_TOKEN }}
+          IMAGE_REPOSITORY: ${{ steps.meta.outputs.image }}
+          IMAGE_TAG: ${{ steps.meta.outputs.version }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
         run: |
-          curl --fail --request POST "$PLATFORM_URL/api/cicd/image-versions" \
+          jq -n \
+            --arg repository "$IMAGE_REPOSITORY" \
+            --arg tag "$IMAGE_TAG" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg commit "$GITHUB_SHA" \
+            --slurpfile manifest RELEASE_MANIFEST.json \
+            '{image_repository:$repository,image_tag:$tag,image_digest:$digest,git_commit:$commit,manifest:$manifest[0]}' \
+            > release-request.json
+          curl --fail-with-body --retry 3 --retry-all-errors \
+            --request POST "$PLATFORM_URL/api/cicd/spider-releases" \
             --header "X-CICD-Token: $CICD_TOKEN" \
             --header "Content-Type: application/json" \
-            --data "{
-              \"project_code\": \"ulike_overseas_scraper\",
-              \"image_tag\": \"${{ steps.meta.outputs.tag }}\",
-              \"image_digest\": \"${{ steps.build.outputs.digest }}\",
-              \"git_branch\": \"${GITHUB_REF_NAME}\",
-              \"git_commit\": \"${GITHUB_SHA}\",
-              \"pipeline_id\": \"${GITHUB_RUN_ID}\",
-              \"build_status\": \"SUCCESS\",
-              \"build_url\": \"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"
-            }"
+            --data-binary @release-request.json

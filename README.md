@@ -1,94 +1,87 @@
 # crawler_platform
 
-项目名称固定为 `crawler_platform`。目录名、压缩包名、Docker Compose 项目名和平台镜像前缀均不附加版本后缀；发布版本通过 Git Tag、Release 或镜像 Tag 管理。
+`crawler_platform` 是一个面向多公司、多项目的可视化分布式爬虫管理平台。平台本身不直接运行爬虫代码，而是作为控制面管理项目、权限、调度、版本、Agent、运行状态、日志、错误和告警。
 
-这是按当前确认方案实现的可运行代码：
+当前架构与 `crawler_platform_spiders` V2 协议对齐：
 
-- 管理平台使用 Docker Compose 部署。
-- 爬虫项目由 CI/CD 构建成 Docker 镜像。
-- 一次任务执行对应一个临时爬虫容器。
-- 管理平台只保存任务配置、运行记录、日志索引和监控数据，不保存爬虫业务数据。
-- 爬虫容器直接连接独立业务数据库。
-- 爬虫服务器运行宿主机 Agent，由 Agent 管理 Docker 容器。
-- 权限只有 `SUPER_ADMIN` 和 `NORMAL_USER` 两种。
+```text
+crawler_platform 管理平台
+    ↓ HTTPS，Agent 主动连接
+crawler_agent 爬虫服务器执行代理
+    ↓ Docker
+crawler_platform_spiders 单次任务容器
+    ↓
+具体 spiders/<platform>/...::run(context) 完成登录、翻页、解析、入库
+```
 
-## 1. 目录结构
+核心原则：
+
+- 平台服务器和爬虫服务器可以部署在不同机器、不同网络区域。
+- 一个 TaskRun 对应一个临时 Docker 容器，任务结束后容器退出。
+- 爬虫容器不持有平台认证信息，不直接回调平台。
+- Agent 负责采集容器 stdout/stderr、ERROR 事件、结果文件，并实时同步平台。
+- 平台通过 SSE 将 ERROR、状态和日志增量推送到前端。
+- 任务只能选择 `crawler_platform_spiders` 发布清单中的 SpiderEntry，不允许执行任意 Python 模块、函数或 Shell 命令。
+- 数据库资源按公司和项目隔离，只向任务下发本次运行所需的最小资源清单和密钥。
+
+## 目录结构
 
 ```text
 crawler_platform/
-├── backend/                  FastAPI API、调度器、清理 Worker
+├── backend/                  FastAPI 控制面 API、调度器、维护服务、Alembic 迁移
 ├── frontend/                 Vue 3 + Element Plus 管理界面
-├── agent/                    爬虫服务器宿主机 Agent
-├── runtime/                  Python 方法统一执行器，需安装进爬虫镜像
-├── cicd/                     GitHub Actions / GitLab CI 示例
-├── deploy/scripts/           初始化、部署和备份脚本
-├── data/                     MySQL、Redis、任务日志和备份持久化目录
-├── docker-compose.yml
-└── .env.example
+├── agent/                    爬虫服务器 Agent，主动连接平台并管理 Docker 容器
+├── cicd/                     SpiderRelease 导入示例
+├── deploy/scripts/           部署、备份、恢复脚本
+├── docs/                     V2 架构、运维和协议说明
+├── data/                     MySQL、Redis、运行日志等持久化目录
+└── docker-compose.yml
 ```
 
-## 2. 已实现功能
+## 主要功能
 
-### 平台控制端
+### 控制面
 
-- 用户登录和 JWT 认证
-- 超级管理员、普通用户固定权限
-  - 超级管理员：全部菜单和任务增删改权限。
-  - 普通用户：仅任务列表、任务详情、执行记录/日志入口、修改调度时间和立即执行一次。
-- 用户管理
-- 爬虫项目管理
-- CI/CD 镜像版本登记
-- 固定镜像、发布通道、最新成功构建三种版本策略
-- 任务新增、编辑、删除和查询
-- Cron 调度和仅手动任务
-- 普通用户修改调度时间
-- 普通用户立即执行一次
-- 任务重叠策略：跳过、排队、允许并发、停止旧任务
-- 超时控制
-- 失败重试和固定/指数退避
-- 任务运行实例及状态生命周期
-- 运行日志查看
-- 容器事件记录
-- 服务器 Agent 心跳
-- CPU、内存、磁盘、负载和 Docker 镜像空间监控
-- 用户操作日志
-- 普通配置和加密密钥管理
-- 历史性能数据和日志自动清理
+- 登录认证和 JWT。
+- 多公司、多项目管理。
+- 公司成员和项目成员权限：`OWNER`、`OPERATOR`、`VIEWER`。
+- 项目资源绑定：MySQL、MongoDB、Redis、逻辑数据库、表、Collection、密钥。
+- 不可变 SpiderRelease 管理：版本、Git Commit、镜像 Digest、发布清单。
+- SpiderEntry 管理：任务入口、API/Browser 镜像类型、参数 Schema、所需资源。
+- 任务配置、手动运行、取消、重试、Cron 调度。
+- Agent 节点注册、心跳、槽位、能力和状态监控。
+- TaskRun 状态机、租约、超时、LOST、OOM、终态保护。
+- 实时日志、实时 ERROR、最近错误、最终错误。
+- 操作审计和基础系统配置。
 
-### 爬虫 Agent
+### Agent
 
-- Bootstrap Token 注册
-- Agent 独立 Token 认证
-- 主动领取任务，不需要 SSH
-- 拉取指定镜像摘要
-- 创建独立任务容器
-- 注入普通环境变量和加密密钥
-- Volume、网络、CPU、内存、共享内存和进程数限制
-- 实时采集 stdout/stderr
-- 任务心跳和租约续期
-- 人工停止和超时停止
-- OOM、非零退出码等异常识别
-- 成功或失败后的容器清理
+- 使用 Bootstrap Token 注册，获取 Agent Token。
+- 主动向平台心跳和认领任务，平台无需连接爬虫服务器。
+- 一个 TaskRun 创建一个独立容器。
+- 固定容器命令：`crawler_platform_spiders run --mode server ...`。
+- 本地 Spool 持久化：task、resources、secrets、stdout、stderr、events、result、finish。
+- 平台断网时继续运行爬虫，网络恢复后补传日志、ERROR 和结果。
+- Agent 重启后恢复未完成任务，避免重复日志和重复执行。
+- 支持容器超时、取消、非零退出码、OOM、容器缺失识别。
 
-## 3. 管理平台部署
+## 管理平台部署
 
-### 3.1 准备环境
+### 1. 准备环境
 
-服务器需要安装：
+管理平台服务器需要：
 
 - Docker Engine
 - Docker Compose Plugin
-- Git
+- 可访问镜像仓库和 Python/npm 软件源
 
-### 3.2 初始化配置
+### 2. 初始化配置
 
 ```bash
-cd crawler_platform
-./deploy/scripts/prepare.sh
-vim .env
+cd crawler_platform && ./deploy/scripts/prepare.sh && cp .env.example .env && vim .env
 ```
 
-必须修改 `.env` 中全部 `ReplaceWith...` 配置，特别是：
+生产环境必须修改 `.env` 中所有 `ReplaceWith...` 值，尤其是：
 
 ```text
 MYSQL_ROOT_PASSWORD
@@ -103,226 +96,141 @@ CICD_TOKEN
 AGENT_BOOTSTRAP_TOKEN
 ```
 
-注意：`DATABASE_URL` 和 `REDIS_URL` 中的密码需要与前面的 MySQL、Redis 密码一致。密码中包含 `@`、`:`、`/` 等 URL 特殊字符时，应进行 URL 编码。
+密码出现在 `DATABASE_URL` 或 `REDIS_URL` 中时，包含 `@`、`:`、`/` 等特殊字符需要 URL 编码。
 
-### 3.3 构建并启动
-
-```bash
-./deploy/scripts/deploy.sh
-```
-
-或手动执行：
+### 3. 启动
 
 ```bash
-docker compose build --no-cache --progress=plain
-docker compose up -d
-docker compose ps
-docker compose logs -f api scheduler worker web
+docker compose build --no-cache --progress=plain && docker compose up -d && docker compose ps
 ```
 
-默认访问地址：
+默认访问：
 
 ```text
 http://管理平台IP:8080
 ```
 
-账号来自 `.env`：
+API 文档默认关闭。排障时可设置：
 
 ```text
-ADMIN_USERNAME
-ADMIN_PASSWORD
+ENABLE_API_DOCS=true
 ```
 
-API 文档：
+### 4. 数据库升级
 
-```text
-http://管理平台IP:8080/docs
-```
-
-生产环境建议通过外层 Nginx、VPN 或访问控制限制 `/docs` 和 `/openapi.json`。
-
-## 4. 爬虫镜像接入统一运行器
-
-`PYTHON_METHOD` 模式依赖 `crawler-runtime`。在爬虫项目 Dockerfile 中加入：
-
-```dockerfile
-COPY runtime /tmp/crawler-runtime
-RUN pip install /tmp/crawler-runtime \
-    && rm -rf /tmp/crawler-runtime
-```
-
-如果 CI/CD 构建上下文无法直接访问平台项目中的 `runtime`，可以把 `runtime/crawler_runtime` 复制进爬虫代码仓库，或发布成公司的私有 Python 包。
-
-平台配置的业务入口示例：
-
-```text
-openApi.ufl.ufl_inventory:wms_uf_eplusss_inventory
-```
-
-最终容器内会执行：
+Compose 中的 `migrate` 服务会在 API、Scheduler、Maintenance 启动前执行 Alembic 迁移。生产升级前务必先备份 MySQL：
 
 ```bash
-python -m crawler_runtime \
-  --entrypoint openApi.ufl.ufl_inventory:wms_uf_eplusss_inventory \
-  --args-json '[]' \
-  --kwargs-json '{"site":"HK"}'
+./deploy/scripts/backup.sh
 ```
 
-任务函数抛出异常时，运行器打印完整 traceback 并返回退出码 `1`；正常完成返回 `0`。
+## 爬虫服务器 Agent 安装
 
-## 5. 安装爬虫服务器 Agent
-
-在爬虫服务器上传 `agent` 目录：
+将 `agent/` 目录上传到爬虫服务器后执行：
 
 ```bash
-cd agent
-sudo ./install-linux.sh
-sudo vim /opt/crawler-agent/.env
-sudo systemctl restart crawler-agent
-sudo systemctl status crawler-agent
-sudo journalctl -u crawler-agent -f
+cd agent && sudo ./install-linux.sh && sudo vim /opt/crawler-agent/.env && sudo systemctl restart crawler-agent && sudo journalctl -u crawler-agent -f
 ```
 
-关键配置：
+核心配置：
 
 ```text
-PLATFORM_URL=http://管理平台IP:8080
-AGENT_BOOTSTRAP_TOKEN=与平台 .env 完全一致
+PLATFORM_URL=https://管理平台域名
+AGENT_BOOTSTRAP_TOKEN=与平台 .env 中一致
+AGENT_CODE=crawler-prod-01
 SERVER_CODE=crawler-prod-01
 SERVER_NAME=爬虫生产服务器01
-SERVER_IP=服务器实际IP
-MAX_CONTAINER_SLOTS=4
+AGENT_MAX_SLOTS=4
+AGENT_CAPABILITIES=["api","browser"]
+AGENT_LABELS={"region":"cn-east","network":"china"}
 ```
 
-Agent 当前通过 Docker Socket 管理宿主机容器，因此 systemd 服务默认使用 root。生产服务器应限制 Agent 安装目录、配置文件和平台网络访问权限。
-
-## 6. 创建项目和登记镜像
-
-先在“项目与镜像”中创建项目：
+生产建议平台与 Agent 使用 HTTPS。内网临时 HTTP 测试需显式设置：
 
 ```text
-项目编码：ulike_overseas_scraper
-Registry：registry.example.com
-Repository：crawlers/ulike-overseas-scraper
+AGENT_ALLOW_INSECURE_HTTP=true
 ```
 
-CI/CD 构建成功后调用：
+## SpiderRelease 导入
 
-```bash
-curl --request POST 'http://管理平台IP:8080/api/cicd/image-versions' \
-  --header 'X-CICD-Token: 平台CICD_TOKEN' \
-  --header 'Content-Type: application/json' \
-  --data '{
-    "project_code": "ulike_overseas_scraper",
-    "image_tag": "20260724-8f19c2a",
-    "image_digest": "sha256:完整镜像摘要",
-    "git_branch": "main",
-    "git_commit": "8f19c2a",
-    "pipeline_id": "521",
-    "build_status": "SUCCESS",
-    "build_url": "流水线地址"
-  }'
+`crawler_platform_spiders` 镜像构建完成后，CI/CD 应读取镜像中的 `RELEASE_MANIFEST.json`，调用：
+
+```text
+POST /api/cicd/spider-releases
 ```
 
-完整示例位于：
+示例见：
 
 ```text
 cicd/github-actions-example.yml
 cicd/gitlab-ci-example.yml
 ```
 
-## 7. 新增任务建议配置
+平台登记发布后，项目可将 `stable`、`canary` 等通道绑定到指定 SpiderRelease。任务只能选择该发布中正式存在的 SpiderEntry。
 
-生产任务建议：
-
-```text
-镜像策略：PINNED
-拉取策略：IF_NOT_PRESENT
-最大并发：1
-重叠策略：SKIP
-失败重试：按业务决定
-自动删除容器：开启
-失败后保留容器：关闭
-```
-
-浏览器自动化任务建议适当增大：
+## 任务运行链路
 
 ```text
-内存限制
-共享内存 shm_size_mb
-执行超时时间
+平台调度或手动创建 TaskRun
+→ Agent 主动认领
+→ 平台返回 task.json/resources.json/secrets.json 和镜像 Digest
+→ Agent 创建本地运行目录并启动临时容器
+→ crawler_platform_spiders 调用具体爬虫 run(context)
+→ 爬虫内部完成登录、翻页、解析、入库
+→ ERROR/CRITICAL 输出结构化事件
+→ Agent 实时上传事件和日志
+→ 平台更新 last_error 并 SSE 推送前端
+→ 容器写 result.json 并退出
+→ Agent 上传最终结果
+→ 平台进入终态
 ```
 
-## 8. 密钥管理
+## 状态说明
 
-先在“系统设置 → 密钥管理”创建：
+TaskRun 标准状态：
 
 ```text
-密钥编码：business_mysql_pwd
+CREATED
+QUEUED
+ASSIGNED
+STARTING
+RUNNING
+CANCEL_REQUESTED
+SUCCEEDED
+PARTIAL_SUCCESS
+SKIPPED
+FAILED
+CANCELLED
+TIMED_OUT
+LOST
 ```
 
-任务中的密钥引用填写：
+`last_error` 表示运行期间最近一次 ERROR，任务后续可能恢复成功。`terminal_error` 表示最终导致失败、超时或丢失的错误。
 
-```json
-{
-  "MYSQL_PWD": "business_mysql_pwd"
-}
-```
+## 本地开发检查
 
-平台数据库只保存加密后的密钥。Agent 领取任务时，平台通过 HTTPS 将解密后的值发送给对应 Agent，并注入本次任务容器。生产环境必须启用 HTTPS，避免密钥明文经过不安全网络。
-
-普通环境变量不要放密码：
-
-```json
-{
-  "APP_ENV": "production",
-  "MYSQL_HOST": "business-mysql.internal"
-}
-```
-
-## 9. 日志和监控
-
-任务完整日志保存在管理服务器：
-
-```text
-data/task-logs/YYYY-MM-DD/task_<任务ID>/run_<运行编号>.log
-```
-
-MySQL 只保存日志路径、大小、最后日志时间和运行摘要，不保存大段日志正文。
-
-服务器性能默认：
-
-- Agent 每 15 秒上报最新状态
-- 平台每分钟保存一条历史性能记录
-- 默认保留 14 天
-- 任务日志默认保留 30 天
-
-## 10. 数据备份
+Backend：
 
 ```bash
-./deploy/scripts/backup.sh
+PYTHONPATH=backend python -m unittest discover -s backend/tests -v
 ```
 
-备份保存到：
+Agent：
 
-```text
-data/backups/
+```bash
+PYTHONPATH=agent python -m unittest discover -s agent/tests -v
 ```
 
-脚本默认清理 30 天前的 SQL 压缩备份。
+前端：
 
-## 11. 当前功能边界
+```bash
+cd frontend && npm install && npm run build
+```
 
-当前代码已完成核心调度闭环，以下功能可在后续迭代中增加：
+## 注意事项
 
-- 邮件、飞书和企业微信告警
-- 镜像自动清理策略
-- HTTPS 自动证书配置
-- Agent 在线升级
-- 多管理节点高可用
-- Kubernetes 执行器
-- 更细的容器实时资源监控
-- 任务工作流和上下游依赖
-- 数据质量检测
-
-当前代码已经按远程多爬虫服务器设计，即使第一阶段只有一台爬虫服务器，也不需要后续重构执行模型。
+- 不要在平台任务中填写任意 Python 模块、函数或 Shell 命令。
+- 不要让平台服务器访问爬虫服务器 Docker Socket。
+- 不要将公司数据库密码、Cookie、Token 明文写入任务参数。
+- 不要把所有公司的资源配置下发给 Agent 或容器。
+- Agent 本地运行目录应定期保留和清理，默认完成任务保留 72 小时。
