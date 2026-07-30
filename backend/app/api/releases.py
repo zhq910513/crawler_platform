@@ -9,7 +9,7 @@ from app.deps import get_current_user, verify_cicd_token
 from app.models import CrawlerReleaseChannel, CrawlerSpiderEntry, CrawlerSpiderRelease, CrawlerTask, CrawlerTaskRun, CrawlerTaskRuntime, SysUser
 from app.schemas import SpiderReleaseImport
 from app.services.permissions import is_super_admin
-from app.services.release_service import ReleaseValidationError, import_release
+from app.services.release_service import ReleaseValidationError, import_release, is_latest_selectable_release
 from app.services.run_state import TERMINAL_STATUSES
 
 router = APIRouter(prefix="/spider-releases", tags=["爬虫发布"])
@@ -31,6 +31,7 @@ def entry_dict(row: CrawlerSpiderEntry) -> dict:
 
 
 def release_dict(db: Session, row: CrawlerSpiderRelease, include_entries: bool = False) -> dict:
+    selectable = is_latest_selectable_release(db, row)
     result = {
         "release_id": row.release_id,
         "app_name": row.app_name,
@@ -42,6 +43,8 @@ def release_dict(db: Session, row: CrawlerSpiderRelease, include_entries: bool =
         "status": row.status,
         "published_at": row.published_at,
         "created_at": row.created_at,
+        "selectable": selectable,
+        "disabled_reason": "" if selectable else "历史镜像只读；只能选择发布时间最新的镜像版本",
     }
     if include_entries:
         entries = db.scalars(select(CrawlerSpiderEntry).where(CrawlerSpiderEntry.release_id == row.release_id).order_by(CrawlerSpiderEntry.task_name)).all()

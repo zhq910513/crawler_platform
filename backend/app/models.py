@@ -122,6 +122,9 @@ class CrawlerProject(Base, TimestampMixin):
     repository: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     default_branch: Mapped[str] = mapped_column(String(100), default="main", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="ENABLED", index=True, nullable=False)
+    deployment_mode: Mapped[str] = mapped_column(String(30), default="BOOTSTRAP", index=True, nullable=False)
+    online_status: Mapped[str] = mapped_column(String(30), default="DRAFT", index=True, nullable=False)
+    min_agent_version: Mapped[str] = mapped_column(String(50), default="2.0.0", nullable=False)
     description: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
 
@@ -261,6 +264,12 @@ class CrawlerTask(Base, TimestampMixin):
     platform: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
     task_group: Mapped[str] = mapped_column(String(100), default="default", index=True, nullable=False)
     developer: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    entry_module: Mapped[str] = mapped_column(String(300), default="", index=True, nullable=False)
+    entry_function: Mapped[str] = mapped_column(String(120), default="", index=True, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(30), default="MANUAL", index=True, nullable=False)
+    source_file: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    resource_requirements: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     # 旧动态入口字段仅为迁移保留，V2 API 始终清空。
     executor_type: Mapped[str] = mapped_column(String(30), default="SPIDER_ENTRY", nullable=False)
@@ -445,6 +454,57 @@ class CrawlerContainerEvent(Base):
     exit_code: Mapped[int | None] = mapped_column(Integer)
     event_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class CrawlerProjectBootstrapToken(Base, TimestampMixin):
+    __tablename__ = "crawler_project_bootstrap_token"
+    __table_args__ = (Index("idx_bootstrap_token_project", "project_id", "status"),)
+    token_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
+    token_name: Mapped[str] = mapped_column(String(120), default="default", nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    allowed_repo: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    permissions_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", index=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
+
+
+class CrawlerDeploymentLog(Base, TimestampMixin):
+    __tablename__ = "crawler_deployment_log"
+    __table_args__ = (Index("idx_deploy_project_time", "project_id", "created_at"),)
+    deployment_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
+    token_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_project_bootstrap_token.token_id", ondelete="SET NULL"))
+    server_code: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    agent_code: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    stage: Mapped[str] = mapped_column(String(50), default="BOOTSTRAP", index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True, nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    git_branch: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    git_commit: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    image_repository: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    image_digest: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    release_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_spider_release.release_id", ondelete="SET NULL"))
+    preflight_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class CrawlerTaskChangeLog(Base):
+    __tablename__ = "crawler_task_change_log"
+    change_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
+    change_type: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    before_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    after_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    reason: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
 
 
 class CrawlerResourceConnection(Base, TimestampMixin):

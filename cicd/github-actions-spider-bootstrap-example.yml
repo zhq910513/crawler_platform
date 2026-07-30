@@ -1,0 +1,26 @@
+name: Deploy Spider Project
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH deploy and bootstrap
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            mkdir -p "${{ secrets.DEPLOY_BASE_DIR }}"
+            cd "${{ secrets.DEPLOY_BASE_DIR }}"
+            if [ ! -d "${{ secrets.PROJECT_CODE }}/.git" ]; then
+              git clone "${{ secrets.REPO_URL }}" "${{ secrets.PROJECT_CODE }}"
+            fi
+            cd "${{ secrets.PROJECT_CODE }}"
+            git fetch --all --prune
+            git checkout main
+            git pull --ff-only
+            ./deploy/bootstrap.sh --non-interactive

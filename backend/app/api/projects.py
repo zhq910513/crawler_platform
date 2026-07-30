@@ -9,6 +9,7 @@ from app.deps import get_current_user
 from app.models import (
     CrawlerCompanyMember,
     CrawlerProject,
+    CrawlerProjectBootstrapToken,
     CrawlerProjectMember,
     CrawlerReleaseChannel,
     CrawlerSpiderEntry,
@@ -16,9 +17,11 @@ from app.models import (
     CrawlerTask,
     SysUser,
 )
-from app.schemas import ProjectCreate, ProjectMemberUpsert, ReleaseChannelUpdate
+from app.schemas import ProjectBootstrapTokenCreate, ProjectCreate, ProjectMemberUpsert, ReleaseChannelUpdate
 from app.services.audit import write_operation_log
+from app.services.bootstrap_service import create_project_bootstrap_token
 from app.services.permissions import is_super_admin, project_role, require_company_role, require_project_role, visible_project_ids
+from app.services.release_service import ReleaseValidationError, ensure_latest_selectable_release
 
 router = APIRouter(prefix="/projects", tags=["项目"])
 
@@ -33,6 +36,9 @@ def project_dict(db: Session, row: CrawlerProject, user: SysUser) -> dict:
         "repository": row.repository,
         "default_branch": row.default_branch,
         "status": row.status,
+        "deployment_mode": row.deployment_mode,
+        "online_status": row.online_status,
+        "min_agent_version": row.min_agent_version,
         "description": row.description,
         "role": project_role(db, user, row.project_id),
         "created_at": row.created_at,
@@ -173,8 +179,82 @@ def delete_member(
     return {"ok": True}
 
 
+def _token_dict(row: CrawlerProjectBootstrapToken) -> dict:
+    return {
+        "token_id": row.token_id,
+        "company_id": row.company_id,
+        "project_id": row.project_id,
+        "token_name": row.token_name,
+        "allowed_repo": row.allowed_repo,
+        "permissions": row.permissions_json,
+        "expires_at": row.expires_at,
+        "status": row.status,
+        "last_used_at": row.last_used_at,
+        "use_count": row.use_count,
+        "created_at": row.created_at,
+    }
+
+
+@router.get("/{project_id}/bootstrap-tokens")
+def list_bootstrap_tokens(project_id: int, db: Session = Depends(get_db), user: SysUser = Depends(get_current_user)) -> list[dict]:
+    require_project_role(db, user, project_id, "OWNER")
+    rows = db.scalars(select(CrawlerProjectBootstrapToken).where(CrawlerProjectBootstrapToken.project_id == project_id).order_by(CrawlerProjectBootstrapToken.token_id.desc())).all()
+    return [_token_dict(row) for row in rows]
+
+
+@router.post("/{project_id}/bootstrap-tokens")
+def create_bootstrap_token(
+    project_id: int,
+    payload: ProjectBootstrapTokenCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SysUser = Depends(get_current_user),
+) -> dict:
+    require_project_role(db, user, project_id, "OWNER")
+    project = db.get(CrawlerProject, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    row, raw_token = create_project_bootstrap_token(
+        db,
+        project=project,
+        token_name=payload.token_name,
+        allowed_repo=payload.allowed_repo,
+        expires_in_days=payload.expires_in_days,
+        created_by=user.user_id,
+    )
+    write_operation_log(db, request, user, "CREATE_BOOTSTRAP_TOKEN", "PROJECT", project_id, after_data={"token_id": row.token_id, "token_name": row.token_name})
+    db.commit()
+    return _token_dict(row) | {"token": raw_token, "notice": "token 只会显示一次，请保存到 CI/CD Secrets 或项目 .env。"}
+
+
+@router.patch("/{project_id}/bootstrap-tokens/{token_id}/disable")
+def disable_bootstrap_token(
+    project_id: int,
+    token_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: SysUser = Depends(get_current_user),
+) -> dict:
+    require_project_role(db, user, project_id, "OWNER")
+    row = db.get(CrawlerProjectBootstrapToken, token_id)
+    if not row or row.project_id != project_id:
+        raise HTTPException(status_code=404, detail="接入令牌不存在")
+    row.status = "DISABLED"
+    write_operation_log(db, request, user, "DISABLE_BOOTSTRAP_TOKEN", "PROJECT", project_id, before_data={"token_id": token_id})
+    db.commit()
+    return _token_dict(row)
+
+
 def _channel_dict(db: Session, row: CrawlerReleaseChannel) -> dict:
     release = db.get(CrawlerSpiderRelease, row.spider_release_id) if row.spider_release_id else None
+    selectable = False
+    disabled_reason = ""
+    if release:
+        try:
+            ensure_latest_selectable_release(db, release)
+            selectable = True
+        except ReleaseValidationError as exc:
+            disabled_reason = str(exc)
     return {
         "channel_id": row.channel_id,
         "project_id": row.project_id,
@@ -182,6 +262,9 @@ def _channel_dict(db: Session, row: CrawlerReleaseChannel) -> dict:
         "spider_release_id": row.spider_release_id,
         "version": release.version if release else None,
         "image_digest": release.image_digest if release else None,
+        "published_at": release.published_at if release else None,
+        "selectable": selectable,
+        "disabled_reason": disabled_reason,
     }
 
 
@@ -205,6 +288,10 @@ def set_channel(
     release = db.get(CrawlerSpiderRelease, payload.spider_release_id)
     if not release or release.status != "ACTIVE":
         raise HTTPException(status_code=400, detail="SpiderRelease 不可用")
+    try:
+        ensure_latest_selectable_release(db, release)
+    except ReleaseValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     row = db.scalar(select(CrawlerReleaseChannel).where(
         CrawlerReleaseChannel.project_id == project_id,
         CrawlerReleaseChannel.channel_name == channel_name,
@@ -234,6 +321,10 @@ def rollback_channel(
     release = db.get(CrawlerSpiderRelease, payload.spider_release_id)
     if not release or release.status != "ACTIVE":
         raise HTTPException(status_code=400, detail="目标版本不可用")
+    try:
+        ensure_latest_selectable_release(db, release)
+    except ReleaseValidationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     required_names = set(db.scalars(select(CrawlerTask.spider_task_name).where(
         CrawlerTask.project_id == project_id,
         CrawlerTask.status == "ENABLED",

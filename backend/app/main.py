@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.encoders import ENCODERS_BY_TYPE
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import agent, auth, companies, dashboard, operations, projects, releases, resources, runs, servers, settings_api, tasks, users
+from app.api import agent, auth, bootstrap, companies, dashboard, operations, projects, releases, resources, runs, servers, settings_api, tasks, users
 from app.config import settings
 from app.init_db import init_db
 
@@ -60,6 +60,7 @@ for router in (
     settings_api.router,
     operations.router,
     dashboard.router,
+    bootstrap.router,
     agent.router,
 ):
     app.include_router(router, prefix=settings.api_prefix)

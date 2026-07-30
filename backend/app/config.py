@@ -12,9 +12,14 @@ class Settings(BaseSettings):
 
     app_name: str = "crawler_platform"
     app_env: str = "production"
-    app_version: str = "2.0.0"
+    app_version: str = "2.1.0"
     timezone: str = "Asia/Shanghai"
     api_prefix: str = "/api"
+    platform_public_url: str = ""
+
+    agent_image: str = "crawler_platform_agent:2.1.0"
+    min_agent_version: str = "2.0.0"
+    agent_container_name: str = "crawler-agent"
 
     database_url: str = "mysql+pymysql://crawler_platform:crawler_platform@mysql:3306/crawler_platform?charset=utf8mb4"
     redis_url: str = "redis://:crawler@redis:6379/0"

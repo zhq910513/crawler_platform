@@ -11,7 +11,9 @@ from app.models import (
     CrawlerReleaseChannel,
     CrawlerServer,
     CrawlerSpiderEntry,
+    CrawlerSpiderRelease,
     CrawlerTask,
+    CrawlerTaskChangeLog,
     CrawlerTaskRun,
     CrawlerTaskRuntime,
     CrawlerTaskSchedule,
@@ -22,6 +24,7 @@ from app.schemas import TaskCreate, TaskScheduleUpdate
 from app.services.audit import write_operation_log
 from app.services.cron_service import next_run_utc, validate_cron
 from app.services.permissions import project_role, require_project_role, visible_project_ids
+from app.services.release_service import ReleaseValidationError, ensure_latest_selectable_release
 from app.services.run_service import ACTIVE_RUN_STATUSES, RunCreationError, create_run
 
 router = APIRouter(prefix="/tasks", tags=["任务"])
@@ -48,6 +51,12 @@ def _task_dict(db: Session, task: CrawlerTask, user: SysUser, latest: CrawlerTas
         "platform": task.platform,
         "task_group": task.task_group,
         "developer": task.developer,
+        "entry_module": task.entry_module,
+        "entry_function": task.entry_function,
+        "source_type": task.source_type,
+        "source_file": task.source_file,
+        "source_fingerprint": task.source_fingerprint,
+        "resource_requirements": task.resource_requirements,
         "parameters": task.parameters,
         "status": task.status,
         "description": task.description,
@@ -95,7 +104,14 @@ def _task_dict(db: Session, task: CrawlerTask, user: SysUser, latest: CrawlerTas
 
 def _resolve_release_id(db: Session, payload: TaskCreate) -> int:
     if payload.runtime.image_policy == "PINNED":
-        return int(payload.runtime.fixed_spider_release_id)
+        release = db.get(CrawlerSpiderRelease, int(payload.runtime.fixed_spider_release_id))
+        if not release or release.status != "ACTIVE":
+            raise HTTPException(status_code=400, detail="固定版本不可用")
+        try:
+            ensure_latest_selectable_release(db, release)
+        except ReleaseValidationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return release.release_id
     channel = db.scalar(select(CrawlerReleaseChannel).where(
         CrawlerReleaseChannel.project_id == payload.project_id,
         CrawlerReleaseChannel.channel_name == payload.runtime.release_channel,
@@ -278,12 +294,34 @@ def update_schedule(
     if not task or not task.schedule:
         raise HTTPException(status_code=404, detail="任务或调度不存在")
     require_project_role(db, user, task.project_id, "OWNER")
+    before_schedule = {
+        "cron_expression": task.schedule.cron_expression,
+        "timezone": task.schedule.timezone,
+        "misfire_policy": task.schedule.misfire_policy,
+        "max_concurrency": task.schedule.max_concurrency,
+        "overlap_policy": task.schedule.overlap_policy,
+        "timeout_seconds": task.schedule.timeout_seconds,
+        "max_retry_count": task.schedule.max_retry_count,
+        "retry_interval_seconds": task.schedule.retry_interval_seconds,
+        "retry_backoff": task.schedule.retry_backoff,
+        "enabled": task.schedule.enabled,
+    }
     values = payload.model_dump(exclude_none=True)
     for key, value in values.items():
         setattr(task.schedule, key, value)
     if task.schedule.schedule_type == "CRON":
         validate_cron(task.schedule.cron_expression, task.schedule.timezone)
     task.schedule.next_run_at = next_run_utc(task.schedule.cron_expression, task.schedule.timezone) if task.schedule.schedule_type == "CRON" and task.schedule.enabled else None
+    after_schedule = before_schedule | values | {"next_run_at": task.schedule.next_run_at}
+    db.add(CrawlerTaskChangeLog(
+        task_id=task.task_id,
+        project_id=task.project_id,
+        user_id=user.user_id,
+        change_type="UPDATE_SCHEDULE",
+        before_json=before_schedule,
+        after_json=after_schedule,
+        reason="前端平台调度修改；生产真实调度以前端配置为准",
+    ))
     write_operation_log(db, request, user, "UPDATE_SCHEDULE", "TASK", task_id, after_data=values)
     db.commit()
     return values | {"next_run_at": task.schedule.next_run_at}

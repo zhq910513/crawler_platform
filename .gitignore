@@ -12,5 +12,5 @@ agent/state.json
 .env.*
 !.env.example
 !**/.env.example
-crawler_agent.env
 agent/.env.local
+crawler_agent.env

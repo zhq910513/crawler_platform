@@ -67,6 +67,9 @@ class ProjectCreate(StrictModel):
     repository: str = Field(default="", max_length=255)
     default_branch: str = Field(default="main", max_length=100)
     status: Literal["ENABLED", "DISABLED"] = "ENABLED"
+    deployment_mode: Literal["BOOTSTRAP", "MANUAL"] = "BOOTSTRAP"
+    online_status: Literal["DRAFT", "ONLINE", "OFFLINE"] = "DRAFT"
+    min_agent_version: str = Field(default="2.0.0", max_length=50)
     description: str = Field(default="", max_length=500)
 
 
@@ -123,6 +126,12 @@ class TaskCreate(StrictModel):
     platform: str = Field(default="", max_length=100)
     task_group: str = Field(default="default", max_length=100)
     developer: str = Field(default="", max_length=100)
+    entry_module: str = Field(default="", max_length=300)
+    entry_function: str = Field(default="", max_length=120)
+    source_type: Literal["MANUAL", "SCH_IMPORT", "PROJECT_MANIFEST", "CICD_IMPORT"] = "MANUAL"
+    source_file: str = Field(default="", max_length=300)
+    source_fingerprint: str = Field(default="", max_length=100)
+    resource_requirements: dict[str, Any] = Field(default_factory=dict)
     parameters: dict[str, Any] = Field(default_factory=dict)
     status: Literal["ENABLED", "DISABLED"] = "ENABLED"
     description: str = Field(default="", max_length=1000)
@@ -155,6 +164,31 @@ class SpiderReleaseImport(StrictModel):
 class ReleaseChannelUpdate(StrictModel):
     spider_release_id: int
 
+
+class ProjectBootstrapTokenCreate(StrictModel):
+    token_name: str = Field(default="default", min_length=1, max_length=120)
+    allowed_repo: str = Field(default="", max_length=500)
+    expires_in_days: int | None = Field(default=30, ge=1, le=3650)
+
+
+class BootstrapPreflightReport(StrictModel):
+    server_code: str = Field(default="", max_length=100)
+    agent_code: str = Field(default="", max_length=100)
+    status: Literal["PASS", "WARN", "FAIL"]
+    stage: str = Field(default="PREFLIGHT", max_length=50)
+    message: str = Field(default="", max_length=4000)
+    git_branch: str = Field(default="", max_length=100)
+    git_commit: str = Field(default="", max_length=100)
+    checks: dict[str, Any] = Field(default_factory=dict)
+
+
+class BootstrapReleaseImport(SpiderReleaseImport):
+    git_branch: str = Field(default="", max_length=100)
+    server_code: str = Field(default="", max_length=100)
+    agent_code: str = Field(default="", max_length=100)
+    project_manifest: dict[str, Any] = Field(default_factory=dict)
+    preflight: dict[str, Any] = Field(default_factory=dict)
+    import_entries: bool = True
 
 
 
