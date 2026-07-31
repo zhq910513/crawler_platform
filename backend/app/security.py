@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import uuid
 from datetime import timedelta
 from typing import Any
 
@@ -29,20 +30,45 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(subject: str, extra: dict[str, Any] | None = None) -> str:
+def new_token_id() -> str:
+    return uuid.uuid4().hex
+
+
+def create_access_token(user_id: int, session_id: str, role_type: str, company_id: int | None) -> str:
     now = utcnow()
     payload: dict[str, Any] = {
-        "sub": subject,
+        "sub": str(user_id),
+        "sid": session_id,
+        "jti": new_token_id(),
+        "roleType": role_type,
+        "companyId": company_id,
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
     }
-    if extra:
-        payload.update(extra)
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+def create_force_login_token(user_id: int, current_session_id: str) -> str:
+    now = utcnow()
+    payload: dict[str, Any] = {
+        "purpose": "force-login",
+        "sub": str(user_id),
+        "sid": current_session_id,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.force_login_token_minutes),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def decode_force_login_token(token: str) -> dict[str, Any]:
+    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    if payload.get("purpose") != "force-login":
+        raise ValueError("invalid token purpose")
+    return payload
 
 
 def _fernet() -> Fernet:

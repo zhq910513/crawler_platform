@@ -1,11 +1,11 @@
-name: Build crawler_platform_spiders release
+name: Build and report crawler project
 on:
   push:
     branches: [main]
     tags: ['v*']
 
 jobs:
-  build-and-register:
+  build-and-report:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -19,35 +19,27 @@ jobs:
           password: ${{ secrets.REGISTRY_PASSWORD }}
       - id: meta
         shell: bash
-        run: |
-          VERSION=$(python -c "import json; print(json.load(open('RELEASE_MANIFEST.json'))['version'])")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "image=${{ secrets.REGISTRY }}/crawlers/crawler_platform_spiders" >> "$GITHUB_OUTPUT"
+        run: echo "image=${{ secrets.REGISTRY }}/${{ secrets.IMAGE_REPOSITORY }}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         id: build
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
-      - name: Register immutable SpiderRelease
+          tags: ${{ steps.meta.outputs.image }}:${{ github.sha }}
+      - name: Parse sch.py and report discovered project
         env:
           PLATFORM_URL: ${{ secrets.CRAWLER_PLATFORM_URL }}
-          CICD_TOKEN: ${{ secrets.CRAWLER_PLATFORM_CICD_TOKEN }}
+          DISCOVERY_TOKEN: ${{ secrets.CRAWLER_PLATFORM_DISCOVERY_TOKEN }}
+          COMPANY_ID: ${{ secrets.CRAWLER_PLATFORM_COMPANY_ID }}
+          SERVER_CODE: ${{ secrets.CRAWLER_PLATFORM_SERVER_CODE }}
           IMAGE_REPOSITORY: ${{ steps.meta.outputs.image }}
-          IMAGE_TAG: ${{ steps.meta.outputs.version }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          PROJECT_KEY: ${{ vars.PROJECT_KEY || secrets.PROJECT_KEY }}
+          PROJECT_CODE: ${{ vars.PROJECT_CODE || secrets.PROJECT_CODE }}
+          PROJECT_NAME: ${{ vars.PROJECT_NAME || secrets.PROJECT_NAME }}
+          RELEASE_CHANNEL: ${{ vars.RELEASE_CHANNEL || 'stable' }}
         shell: bash
         run: |
-          jq -n \
-            --arg repository "$IMAGE_REPOSITORY" \
-            --arg tag "$IMAGE_TAG" \
-            --arg digest "$IMAGE_DIGEST" \
-            --arg commit "$GITHUB_SHA" \
-            --slurpfile manifest RELEASE_MANIFEST.json \
-            '{image_repository:$repository,image_tag:$tag,image_digest:$digest,git_commit:$commit,manifest:$manifest[0]}' \
-            > release-request.json
-          curl --fail-with-body --retry 3 --retry-all-errors \
-            --request POST "$PLATFORM_URL/api/cicd/spider-releases" \
-            --header "X-CICD-Token: $CICD_TOKEN" \
-            --header "Content-Type: application/json" \
-            --data-binary @release-request.json
+          python cicd/parse_sch_manifest.py --project-key "$PROJECT_KEY" --project-code "$PROJECT_CODE" --project-name "$PROJECT_NAME" --image-repository "$IMAGE_REPOSITORY" --image-digest "$IMAGE_DIGEST" --release-version "${GITHUB_REF_NAME:-$GITHUB_SHA}" --release-channel "${RELEASE_CHANNEL:-stable}" --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --git-branch "$GITHUB_REF_NAME" --git-commit "$GITHUB_SHA"
+          jq -n --argjson companyId "$COMPANY_ID" --arg serverCode "$SERVER_CODE" --slurpfile manifest crawler_manifest.json '{companyId:$companyId,serverCode:$serverCode,manifest:$manifest[0]}' > discovered-project.json
+          curl --fail-with-body --retry 3 --retry-all-errors --request POST "$PLATFORM_URL/api/v1/discovered-projects" --header "Authorization: Discovery $DISCOVERY_TOKEN" --header "Content-Type: application/json" --data-binary @discovered-project.json

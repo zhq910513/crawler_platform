@@ -1,308 +1,187 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from fastapi import status
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.config import settings
-from app.models import (
-    CrawlerAgent,
-    CrawlerProject,
-    CrawlerReleaseChannel,
-    CrawlerServer,
-    CrawlerSpiderEntry,
-    CrawlerSpiderRelease,
-    CrawlerTask,
-    CrawlerTaskRun,
-    CrawlerTaskRuntime,
-    CrawlerTaskSchedule,
-    CrawlerTaskTarget,
-)
-from app.services.log_service import build_log_path
-from app.services.resource_manifest import ResourceManifestError, build_resource_files
-from app.utils import token_urlsafe, utcnow
+from app.errors import AppError
+from app.models import CrawlerReleaseChannel, CrawlerTask, CrawlerTaskRun, CrawlerTaskSchedule, SysAlertEvent, SysUser
+from app.repositories.platform import RunRepository, TaskRepository
+from app.schemas import ManualRunCreate
+from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
+from app.services.routing_service import RoutingService
+from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status, set_synthetic_parent_terminal
+from app.utils import utcnow
 
-ACTIVE_RUN_STATUSES = {"ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
-TERMINAL_RUN_STATUSES = {"SUCCEEDED", "PARTIAL_SUCCESS", "SKIPPED", "FAILED", "CANCELLED", "TIMED_OUT", "LOST"}
+AUTO_RETRY_STATUSES = {"FAILED", "TIMED_OUT", "LOST"}
+AUTO_RETRY_POLICIES = {"IDEMPOTENT", "CHECKPOINTABLE"}
+ACTIVE_RUN_STATUSES = {"QUEUED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
 
 
-class RunCreationError(RuntimeError):
-    pass
+class RunService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.runs = RunRepository(db)
+        self.tasks = TaskRepository(db)
+        self.router = RoutingService(db)
 
+    def list_runs(self, user: SysUser, company_id: int | None = None, project_id: int | None = None, task_id: int | None = None) -> list[CrawlerTaskRun]:
+        if is_super_admin(user):
+            return self.runs.list_runs(company_id=company_id, project_id=project_id, task_id=task_id)
+        scoped = scoped_company_id(user, company_id)
+        return self.runs.list_runs(company_id=scoped, project_id=project_id, task_id=task_id, user_id=user.user_id)
 
-def make_run_no() -> str:
-    now = utcnow()
-    suffix = token_urlsafe(4).replace("-", "").replace("_", "")[:6]
-    return f"RUN{now:%Y%m%d%H%M%S%f}-{suffix}"
+    def create_manual_run(self, user: SysUser, payload: ManualRunCreate) -> CrawlerTaskRun:
+        task = self.tasks.get(payload.task_id)
+        if not task:
+            raise AppError("任务不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_project_role(self.db, user, task.project_id, "OPERATOR")
+        run = self.create_run(task, None, utcnow(), payload.parameters, trigger_type="MANUAL")
+        self.db.commit()
+        return run
 
+    def create_run(
+        self,
+        task: CrawlerTask,
+        schedule: CrawlerTaskSchedule | None,
+        scheduled_at: datetime,
+        parameters: dict[str, Any] | None = None,
+        trigger_type: str = "SCHEDULE",
+        hold_for_queue: bool = False,
+    ) -> CrawlerTaskRun:
+        if task.status not in {"ENABLED", "DRAFT"} and trigger_type == "MANUAL":
+            raise AppError("任务状态不允许手动执行", code=40061)
+        if task.status != "ENABLED" and trigger_type != "MANUAL":
+            raise AppError("任务未启用", code=40062)
+        release = self._resolve_release(task)
+        if not release:
+            raise AppError("任务未绑定可用发布版本", code=40064)
+        if task.execution_mode == "SHARDED":
+            return self._create_sharded_run(task, schedule, scheduled_at, parameters or {}, release, trigger_type, hold_for_queue)
+        return self._create_single_run(task, schedule, scheduled_at, parameters or {}, release, trigger_type, None, None, hold_for_queue, "single")
 
-def choose_server(db: Session, task: CrawlerTask, required_capability: str) -> CrawlerServer:
-    project = db.get(CrawlerProject, task.project_id)
-    if not project or not project.company_id or task.company_id != project.company_id:
-        raise RunCreationError("任务项目不存在或公司归属异常")
+    def request_cancel(self, user: SysUser, run_id: int) -> CrawlerTaskRun:
+        run = self.runs.get(run_id)
+        if not run:
+            raise AppError("运行实例不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_project_role(self.db, user, run.project_id, "OPERATOR")
+        if run.run_status in RUN_TERMINAL:
+            raise AppError("终态运行实例不可取消", code=40063)
+        if run.run_status in {"ASSIGNED", "STARTING", "RUNNING"}:
+            safe_set_run_status(run, "CANCEL_REQUESTED")
+        else:
+            safe_set_run_status(run, "CANCELLED")
+            run.finished_at = utcnow()
+            set_routing_status(run, "ROUTE_CANCELLED", reason="用户取消运行")
+        self.db.commit()
+        return run
 
-    targets = db.scalars(
-        select(CrawlerTaskTarget)
-        .where(CrawlerTaskTarget.task_id == task.task_id, CrawlerTaskTarget.enabled.is_(True))
-        .order_by(CrawlerTaskTarget.priority.asc(), CrawlerTaskTarget.target_id.asc())
-    ).all()
+    def mark_lost_runs(self) -> int:
+        expired_runs = list(self.db.scalars(select(CrawlerTaskRun).where(CrawlerTaskRun.run_status.in_(["ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"]), CrawlerTaskRun.lease_expires_at.is_not(None), CrawlerTaskRun.lease_expires_at < utcnow()).limit(300)).all())
+        for run in expired_runs:
+            safe_set_run_status(run, "LOST", message="Agent 租约过期，运行状态已标记为失联")
+            run.finished_at = utcnow()
+            run.lease_expires_at = None
+            self.maybe_retry(run)
+            self.aggregate_sharded_parent(run.parent_run_id)
+        if len(expired_runs) >= 10:
+            self._raise_p0_alert("大量运行实例失联", f"本轮检测到 {len(expired_runs)} 个运行实例进入 LOST。", "run_lost_massive")
+        self.db.commit()
+        return len(expired_runs)
 
-    if targets:
-        server_items = []
-        for target in targets:
-            server = db.get(CrawlerServer, target.server_id)
-            if server:
-                server_items.append((server, target.priority, target.target_id))
-        no_server_message = f"任务绑定的 Agent 均不可用、非本公司或不支持 {required_capability} 运行能力"
-    else:
-        servers = db.scalars(
-            select(CrawlerServer)
-            .where(
-                CrawlerServer.company_id == project.company_id,
-                CrawlerServer.status.in_(["ONLINE", "DEGRADED"]),
-            )
-            .order_by(CrawlerServer.server_id.asc())
-        ).all()
-        server_items = [(server, 1000, server.server_id) for server in servers]
-        no_server_message = f"公司 Agent 池没有可用服务器或不支持 {required_capability} 运行能力"
+    def maybe_retry(self, run: CrawlerTaskRun) -> CrawlerTaskRun | None:
+        if run.run_status not in AUTO_RETRY_STATUSES:
+            return None
+        task = self.db.get(CrawlerTask, run.task_id)
+        if not task:
+            return None
+        if task.idempotency_policy not in AUTO_RETRY_POLICIES:
+            if task.idempotency_policy in {"MANUAL_CONFIRM", "NON_IDEMPOTENT"}:
+                self._raise_p0_alert("非幂等任务需要人工处理", f"运行实例 {run.run_id} 进入 {run.run_status}，该任务禁止自动重跑。", f"non_idempotent_run_{run.run_id}", run.company_id, run.project_id)
+            return None
+        if run.attempt >= run.max_attempts:
+            return None
+        release = self.db.get(__import__("app.models", fromlist=["CrawlerProjectRelease"]).CrawlerProjectRelease, run.release_id) if run.release_id else self._resolve_release(task)
+        if not release:
+            return None
+        retry = self._create_single_run(task, None, utcnow(), dict(run.parameters_snapshot or {}), release, run.trigger_type, run.shard_index, run.shard_count, False, f"retry:{run.run_id}:{run.attempt + 1}")
+        retry.attempt = run.attempt + 1
+        retry.max_attempts = run.max_attempts
+        retry.root_run_id = run.root_run_id or run.run_id
+        retry.parent_run_id = run.parent_run_id
+        retry.retry_reason = f"由运行实例 {run.run_id} 的 {run.run_status} 自动重试创建"
+        return retry
 
-    candidates: list[tuple[tuple[int, float, int, int], CrawlerServer]] = []
-    for server, priority, stable_id in server_items:
-        if not server or server.company_id != project.company_id or server.status not in {"ONLINE", "DEGRADED"}:
-            continue
-        agent = db.scalar(select(CrawlerAgent).where(CrawlerAgent.server_id == server.server_id))
-        if not agent or agent.status not in {"ONLINE", "DEGRADED"}:
-            continue
-        capabilities = set(agent.capabilities_json or [])
-        if required_capability and required_capability not in capabilities:
-            continue
-        active = db.scalar(select(func.count(CrawlerTaskRun.run_id)).where(
-            CrawlerTaskRun.server_id == server.server_id,
-            CrawlerTaskRun.status.in_(ACTIVE_RUN_STATUSES),
-        )) or 0
-        capacity = max(1, server.max_container_slots)
-        score = (1 if active >= capacity else 0, active / capacity, priority, stable_id)
-        candidates.append((score, server))
+    def aggregate_sharded_parent(self, parent_run_id: int | None) -> CrawlerTaskRun | None:
+        if not parent_run_id:
+            return None
+        parent = self.db.get(CrawlerTaskRun, parent_run_id)
+        if not parent or parent.run_status in RUN_TERMINAL:
+            return parent
+        children = list(self.db.scalars(select(CrawlerTaskRun).where(CrawlerTaskRun.parent_run_id == parent_run_id)).all())
+        if not children or any(child.run_status not in RUN_TERMINAL for child in children):
+            return parent
+        statuses = {child.run_status for child in children}
+        if statuses <= {"SUCCEEDED", "SKIPPED"} and "SUCCEEDED" in statuses:
+            set_synthetic_parent_terminal(parent, "SUCCEEDED")
+        elif "SUCCEEDED" in statuses or "PARTIAL_SUCCESS" in statuses:
+            set_synthetic_parent_terminal(parent, "PARTIAL_SUCCESS", message="分片任务部分成功，请检查失败分片")
+        elif "CANCELLED" in statuses and statuses <= {"CANCELLED", "SKIPPED"}:
+            set_synthetic_parent_terminal(parent, "CANCELLED")
+        elif "TIMED_OUT" in statuses:
+            set_synthetic_parent_terminal(parent, "TIMED_OUT", message="至少一个分片超时")
+        elif "LOST" in statuses:
+            set_synthetic_parent_terminal(parent, "LOST", message="至少一个分片失联")
+        else:
+            set_synthetic_parent_terminal(parent, "FAILED", message="分片任务失败")
+        parent.finished_at = utcnow()
+        self.db.flush()
+        return parent
 
-    if not candidates:
-        raise RunCreationError(no_server_message)
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    def _resolve_release(self, task: CrawlerTask):
+        if task.image_policy == "PINNED" and task.fixed_release_id:
+            return self.db.get(__import__("app.models", fromlist=["CrawlerProjectRelease"]).CrawlerProjectRelease, task.fixed_release_id)
+        channel = self.db.scalar(select(CrawlerReleaseChannel).where(CrawlerReleaseChannel.project_id == task.project_id, CrawlerReleaseChannel.channel_name == task.release_channel, CrawlerReleaseChannel.channel_status == "ENABLED"))
+        return self.db.get(__import__("app.models", fromlist=["CrawlerProjectRelease"]).CrawlerProjectRelease, channel.release_id) if channel and channel.release_id else None
 
+    @staticmethod
+    def _trigger_key(schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, trigger_type: str, suffix: str) -> str | None:
+        if not schedule:
+            return None
+        return f"schedule:{schedule.schedule_id}:{scheduled_at.isoformat()}:{suffix}"
 
-def resolve_release(
-    db: Session, task: CrawlerTask, runtime: CrawlerTaskRuntime
-) -> tuple[CrawlerSpiderRelease, CrawlerSpiderEntry]:
-    release: CrawlerSpiderRelease | None = None
-    if runtime.image_policy == "PINNED":
-        if not runtime.fixed_spider_release_id:
-            raise RunCreationError("固定发布策略未指定 SpiderRelease")
-        release = db.get(CrawlerSpiderRelease, runtime.fixed_spider_release_id)
-    elif runtime.image_policy == "RELEASE_CHANNEL":
-        channel = db.scalar(
-            select(CrawlerReleaseChannel).where(
-                CrawlerReleaseChannel.project_id == task.project_id,
-                CrawlerReleaseChannel.channel_name == runtime.release_channel,
-            )
-        )
-        if channel and channel.spider_release_id:
-            release = db.get(CrawlerSpiderRelease, channel.spider_release_id)
-    else:
-        raise RunCreationError(f"不支持的发布策略：{runtime.image_policy}")
-    if not release or release.status != "ACTIVE":
-        raise RunCreationError("没有找到可用的 crawler_platform_spiders 发布版本")
-    entry = db.scalar(
-        select(CrawlerSpiderEntry).where(
-            CrawlerSpiderEntry.release_id == release.release_id,
-            CrawlerSpiderEntry.task_name == task.spider_task_name,
-        )
-    )
-    if not entry:
-        raise RunCreationError(f"发布版本中不存在入口：{task.spider_task_name}")
-    return release, entry
+    def _create_single_run(self, task: CrawlerTask, schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, parameters: dict[str, Any], release, trigger_type: str, shard_index: int | None, shard_count: int | None, hold_for_queue: bool, trigger_suffix: str) -> CrawlerTaskRun:
+        run = CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id if schedule else None, release_id=release.release_id, image_repository=release.image_repository, image_digest=release.image_digest, entry_module=task.entry_module, entry_function=task.entry_function, execution_mode=task.execution_mode, shard_index=shard_index, shard_count=shard_count, trigger_type=trigger_type, idempotency_policy=task.idempotency_policy, cpu_limit=task.cpu_limit, memory_limit_mb=task.memory_limit_mb, timeout_seconds=task.timeout_seconds, runtime_mode=task.runtime_mode, task_group=task.task_group, task_max_concurrency=task.task_max_concurrency, group_max_concurrency=task.group_max_concurrency, exclusive_mode=task.exclusive_mode, io_class=task.io_class, shm_size_mb=task.shm_size_mb, log_limit_mb=task.log_limit_mb, resource_locks=task.resource_locks or [], run_status="QUEUED", routing_status="PENDING", scheduled_at=scheduled_at, trigger_key=self._trigger_key(schedule, scheduled_at, trigger_type, trigger_suffix), attempt=1, max_attempts=max(1, task.max_retry_count + 1), parameters_snapshot={**(task.parameters or {}), **parameters})
+        self.db.add(run)
+        self.db.flush()
+        run.root_run_id = run.run_id
+        if hold_for_queue:
+            set_routing_status(run, "WAITING_RESOURCE", reason="重叠策略排队等待上一轮结束")
+        else:
+            self.router.route_run(run)
+        return run
 
+    def _create_sharded_run(self, task: CrawlerTask, schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, parameters: dict[str, Any], release, trigger_type: str, hold_for_queue: bool) -> CrawlerTaskRun:
+        shard_count = max(1, min(task.max_parallel_nodes, task.required_node_count))
+        parent = CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id if schedule else None, release_id=release.release_id, image_repository=release.image_repository, image_digest=release.image_digest, entry_module=task.entry_module, entry_function=task.entry_function, execution_mode="SHARDED", shard_count=shard_count, trigger_type=trigger_type, idempotency_policy=task.idempotency_policy, cpu_limit=task.cpu_limit, memory_limit_mb=task.memory_limit_mb, timeout_seconds=task.timeout_seconds, runtime_mode=task.runtime_mode, task_group=task.task_group, task_max_concurrency=task.task_max_concurrency, group_max_concurrency=task.group_max_concurrency, exclusive_mode=task.exclusive_mode, io_class=task.io_class, shm_size_mb=task.shm_size_mb, log_limit_mb=task.log_limit_mb, resource_locks=task.resource_locks or [], run_status="RUNNING", routing_status="ROUTE_CANCELLED", routing_reason="父运行实例，用于聚合分片状态", scheduled_at=scheduled_at, trigger_key=self._trigger_key(schedule, scheduled_at, trigger_type, "parent"), started_at=utcnow(), attempt=1, max_attempts=max(1, task.max_retry_count + 1), parameters_snapshot={**(task.parameters or {}), **parameters})
+        self.db.add(parent)
+        self.db.flush()
+        parent.root_run_id = parent.run_id
+        for index in range(shard_count):
+            child_params = {**parameters, "shardIndex": index, "shardCount": shard_count}
+            child = self._create_single_run(task, schedule, scheduled_at, child_params, release, trigger_type, index, shard_count, hold_for_queue, f"shard:{index}")
+            child.parent_run_id = parent.run_id
+            child.root_run_id = parent.run_id
+        return parent
 
-def runtime_snapshot(runtime: CrawlerTaskRuntime) -> dict[str, Any]:
-    return {
-        "pull_policy": runtime.pull_policy,
-        "cpu_limit": float(runtime.cpu_limit),
-        "memory_limit_mb": runtime.memory_limit_mb,
-        "shm_size_mb": runtime.shm_size_mb,
-        "pids_limit": runtime.pids_limit,
-        "stop_grace_seconds": runtime.stop_grace_seconds,
-        "auto_remove": runtime.auto_remove,
-        "keep_failed_container": runtime.keep_failed_container,
-    }
-
-
-def create_run(
-    db: Session,
-    task: CrawlerTask,
-    trigger_type: str,
-    scheduled_at=None,
-    triggered_by: int | None = None,
-    schedule: CrawlerTaskSchedule | None = None,
-    attempt: int = 1,
-    parent_run_id: int | None = None,
-) -> CrawlerTaskRun:
-    if task.status != "ENABLED":
-        raise RunCreationError("任务已停用")
-    project = db.get(CrawlerProject, task.project_id)
-    if not project or not project.company_id:
-        raise RunCreationError("任务项目不存在或未绑定公司")
-    runtime = task.runtime or db.scalar(select(CrawlerTaskRuntime).where(CrawlerTaskRuntime.task_id == task.task_id))
-    schedule = schedule or task.schedule or db.scalar(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.task_id == task.task_id))
-    if not runtime:
-        raise RunCreationError("任务缺少运行配置")
-    if schedule:
-        active_count = db.scalar(
-            select(func.count(CrawlerTaskRun.run_id)).where(
-                CrawlerTaskRun.task_id == task.task_id,
-                CrawlerTaskRun.status.in_(ACTIVE_RUN_STATUSES),
-            )
-        ) or 0
-        if active_count >= schedule.max_concurrency and schedule.overlap_policy == "SKIP":
-            raise RunCreationError("任务已达到最大并发，按重叠策略跳过")
-    release, entry = resolve_release(db, task, runtime)
-    server = choose_server(db, task, entry.image_profile)
-    timeout_seconds = schedule.timeout_seconds if schedule else entry.default_timeout_seconds
-    max_attempts = (schedule.max_retry_count + 1) if schedule else 1
-    try:
-        resource_manifest, _ = build_resource_files(
-            db,
-            company_id=project.company_id,
-            project_id=project.project_id,
-            required_resources=list(entry.required_resources or []),
-        )
-    except ResourceManifestError as exc:
-        raise RunCreationError(str(exc)) from exc
-    now = utcnow()
-    created_at = now.isoformat().replace("+00:00", "Z") if now.tzinfo else now.isoformat() + "Z"
-    trigger_name = {
-        "SCHEDULE": "schedule", "MANUAL": "manual", "RETRY": "retry", "API": "api"
-    }.get(trigger_type, "system")
-    run_no = make_run_no()
-    task_spec = {
-        "schema_version": "1.0",
-        "project_name": "crawler_platform_spiders",
-        "company_id": str(project.company_id),
-        "project_id": str(project.project_id),
-        "task_id": str(task.task_id),
-        "run_id": "pending",
-        "task_name": entry.task_name,
-        "attempt": attempt,
-        "max_attempts": max_attempts,
-        "timeout_seconds": timeout_seconds,
-        "triggered_by": trigger_name,
-        "triggered_by_user_id": str(triggered_by) if triggered_by else None,
-        "created_at": created_at,
-        "parameters": task.parameters or {},
-    }
-    root_run_id = None
-    if parent_run_id:
-        parent = db.get(CrawlerTaskRun, parent_run_id)
-        root_run_id = (parent.root_run_id or parent.run_id) if parent else parent_run_id
-    run = CrawlerTaskRun(
-        run_no=run_no,
-        company_id=project.company_id,
-        project_id=project.project_id,
-        task_id=task.task_id,
-        schedule_id=schedule.schedule_id if schedule else None,
-        server_id=server.server_id,
-        spider_release_id=release.release_id,
-        spider_entry_id=entry.entry_id,
-        trigger_type=trigger_type,
-        triggered_by=triggered_by,
-        scheduled_at=scheduled_at or now,
-        queued_at=now,
-        status="QUEUED",
-        attempt=attempt,
-        max_attempts=max_attempts,
-        parent_run_id=parent_run_id,
-        root_run_id=root_run_id,
-        image_name=release.image_repository,
-        image_tag=release.image_tag,
-        image_digest=release.image_digest,
-        git_commit=release.git_commit,
-        task_spec_json=task_spec,
-        resource_manifest_json=resource_manifest,
-        runtime_json=runtime_snapshot(runtime),
-        log_path="",
-    )
-    db.add(run)
-    db.flush()
-    run.root_run_id = run.root_run_id or run.run_id
-    run.task_spec_json = {**task_spec, "run_id": str(run.run_id)}
-    run.log_path = str(build_log_path(task.task_id, run.run_no, now.date().isoformat()))
-    db.flush()
-    return run
-
-
-def create_retry(
-    db: Session,
-    failed_run: CrawlerTaskRun,
-    *,
-    scheduled_at=None,
-) -> CrawlerTaskRun:
-    if failed_run.status not in {"FAILED", "TIMED_OUT", "LOST"}:
-        raise RunCreationError("只有失败、超时或丢失任务可以重试")
-    if failed_run.attempt >= failed_run.max_attempts:
-        raise RunCreationError("已达到最大重试次数")
-    existing = db.scalar(select(CrawlerTaskRun).where(CrawlerTaskRun.parent_run_id == failed_run.run_id))
-    if existing:
-        return existing
-    task = db.get(CrawlerTask, failed_run.task_id)
-    entry = db.get(CrawlerSpiderEntry, failed_run.spider_entry_id)
-    release = db.get(CrawlerSpiderRelease, failed_run.spider_release_id)
-    if not task or task.status != "ENABLED":
-        raise RunCreationError("原任务不存在或已停用")
-    if not entry or not release:
-        raise RunCreationError("原运行绑定的 SpiderRelease 或 SpiderEntry 不存在")
-
-    server = choose_server(db, task, entry.image_profile)
-    now = utcnow()
-    attempt = failed_run.attempt + 1
-    task_spec = dict(failed_run.task_spec_json or {})
-    task_spec.update({
-        "run_id": "pending",
-        "attempt": attempt,
-        "max_attempts": failed_run.max_attempts,
-        "triggered_by": "retry",
-        "triggered_by_user_id": None,
-        "created_at": now.isoformat().replace("+00:00", "Z") if now.tzinfo else now.isoformat() + "Z",
-    })
-    run = CrawlerTaskRun(
-        run_no=make_run_no(),
-        company_id=failed_run.company_id,
-        project_id=failed_run.project_id,
-        task_id=failed_run.task_id,
-        schedule_id=failed_run.schedule_id,
-        server_id=server.server_id,
-        spider_release_id=failed_run.spider_release_id,
-        spider_entry_id=failed_run.spider_entry_id,
-        trigger_type="RETRY",
-        scheduled_at=scheduled_at or now,
-        queued_at=now,
-        status="QUEUED",
-        attempt=attempt,
-        max_attempts=failed_run.max_attempts,
-        parent_run_id=failed_run.run_id,
-        root_run_id=failed_run.root_run_id or failed_run.run_id,
-        image_name=failed_run.image_name,
-        image_tag=failed_run.image_tag,
-        image_digest=failed_run.image_digest,
-        git_commit=failed_run.git_commit,
-        task_spec_json=task_spec,
-        resource_manifest_json=dict(failed_run.resource_manifest_json or {}),
-        runtime_json=dict(failed_run.runtime_json or {}),
-        log_path="",
-    )
-    db.add(run)
-    db.flush()
-    run.task_spec_json = {**task_spec, "run_id": str(run.run_id)}
-    run.log_path = str(build_log_path(task.task_id, run.run_no, now.date().isoformat()))
-    db.flush()
-    return run
-
+    def _raise_p0_alert(self, title: str, content: str, fingerprint: str, company_id: int | None = None, project_id: int | None = None) -> None:
+        existing = self.db.scalar(select(SysAlertEvent).where(SysAlertEvent.fingerprint == fingerprint, SysAlertEvent.alert_status.in_(["OPEN", "NOTIFYING", "NOTIFIED", "ACKED"])))
+        if existing:
+            existing.occurrence_count += 1
+            existing.last_seen_at = utcnow()
+            return
+        self.db.add(SysAlertEvent(company_id=company_id, project_id=project_id, severity="P0", alert_status="OPEN", alert_type="RUNTIME", title=title, content=content, fingerprint=fingerprint, notify_after_at=utcnow()))

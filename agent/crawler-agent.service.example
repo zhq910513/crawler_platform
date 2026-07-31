@@ -1,5 +1,5 @@
 [Unit]
-Description=crawler_platform Agent V2
+Description=爬虫管理平台 Agent
 Documentation=file:/opt/crawler-agent/README.md
 After=docker.service network-online.target
 Requires=docker.service

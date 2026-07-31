@@ -12,16 +12,9 @@ class Base(DeclarativeBase):
     pass
 
 
-_engine_kwargs = {
-    "pool_pre_ping": True,
-    "future": True,
-}
+_engine_kwargs = {"pool_pre_ping": True, "future": True}
 if not settings.database_url.startswith("sqlite"):
-    _engine_kwargs.update(
-        pool_recycle=1800,
-        pool_size=10,
-        max_overflow=20,
-    )
+    _engine_kwargs.update(pool_recycle=1800, pool_size=10, max_overflow=20)
 
 engine = create_engine(settings.database_url, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)

@@ -34,8 +34,6 @@ def main():
         "JWT_SECRET": 32,
         "SECRET_ENCRYPTION_KEY": 32,
         "ADMIN_PASSWORD": 12,
-        "CICD_TOKEN": 24,
-        "AGENT_BOOTSTRAP_TOKEN": 24,
     }
 
     errors = []  # type: List[str]

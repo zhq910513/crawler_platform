@@ -5,7 +5,7 @@ set -Eeuo pipefail
 AGENT_HOME="${AGENT_HOME:-/opt/crawler-agent}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-/var/lib/crawler-agent}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:2.1.0}"
+AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:3.0.0}"
 ENV_FILE="${ENV_FILE:-$AGENT_HOME/.env}"
 errors=()
 warn(){ printf '⚠️  %s\n' "$*"; }

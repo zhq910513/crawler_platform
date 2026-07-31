@@ -1,132 +1,28 @@
 from __future__ import annotations
 
-from datetime import timedelta
-
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_current_user, require_admin
-from app.models import CrawlerAgent, CrawlerCompanyMember, CrawlerServer, CrawlerServerMetric, SysUser
-from app.services.audit import write_operation_log
-from app.services.permissions import is_super_admin
-from app.utils import utcnow
+from app.deps import get_current_user
+from app.models import SysUser
+from app.responses import ok
+from app.schemas import AgentRegistration, ServerCreate, ServerUpdate
+from app.services.server_service import ServerService
 
 router = APIRouter(prefix="/servers", tags=["服务器"])
 
 
-def server_dict(row: CrawlerServer, agent: CrawlerAgent | None, metric: CrawlerServerMetric | None) -> dict:
-    online = bool(agent and agent.last_heartbeat_at and agent.last_heartbeat_at >= utcnow() - timedelta(seconds=90))
-    return {
-        "server_id": row.server_id,
-        "company_id": row.company_id,
-        "server_code": row.server_code,
-        "server_name": row.server_name,
-        "server_ip": row.server_ip,
-        "environment": row.environment,
-        "max_container_slots": row.max_container_slots,
-        "status": "ONLINE" if online else ("DISABLED" if row.status == "DISABLED" else "OFFLINE"),
-        "description": row.description,
-        "agent": {
-            "agent_id": agent.agent_id,
-            "agent_code": agent.agent_code,
-            "agent_version": agent.agent_version,
-            "protocol_version": agent.protocol_version,
-            "instance_id": agent.instance_id,
-            "capabilities": agent.capabilities_json,
-            "labels": agent.labels_json,
-            "hostname": agent.hostname,
-            "os_name": agent.os_name,
-            "python_version": agent.python_version,
-            "docker_version": agent.docker_version,
-            "status": agent.status,
-            "last_heartbeat_at": agent.last_heartbeat_at,
-            "last_error": agent.last_error,
-        } if agent else None,
-        "metric": {
-            "cpu_percent": float(metric.cpu_percent),
-            "memory_percent": float(metric.memory_percent),
-            "disk_percent": float(metric.disk_percent),
-            "load_1m": float(metric.load_1m),
-            "load_5m": float(metric.load_5m),
-            "running_task_count": metric.running_task_count,
-            "process_count": metric.process_count,
-            "docker_image_bytes": metric.docker_image_bytes,
-            "recorded_at": metric.recorded_at,
-        } if metric else None,
-    }
-
-
-def _visible_server_query(db: Session, user: SysUser):
-    stmt = select(CrawlerServer)
-    if not is_super_admin(user):
-        company_ids = select(CrawlerCompanyMember.company_id).where(CrawlerCompanyMember.user_id == user.user_id)
-        stmt = stmt.where(CrawlerServer.company_id.in_(company_ids))
-    return stmt
-
-
-def _require_server_visible(db: Session, user: SysUser, server_id: int) -> CrawlerServer:
-    row = db.scalar(_visible_server_query(db, user).where(CrawlerServer.server_id == server_id))
-    if not row:
-        raise HTTPException(status_code=404, detail="服务器不存在或无权访问")
-    return row
-
-
 @router.get("")
-def list_servers(db: Session = Depends(get_db), user: SysUser = Depends(get_current_user)) -> list[dict]:
-    rows = db.scalars(_visible_server_query(db, user).order_by(CrawlerServer.server_id.asc())).all()
-    result = []
-    for row in rows:
-        agent = db.scalar(select(CrawlerAgent).where(CrawlerAgent.server_id == row.server_id))
-        metric = db.scalar(
-            select(CrawlerServerMetric).where(CrawlerServerMetric.server_id == row.server_id).order_by(CrawlerServerMetric.metric_id.desc()).limit(1)
-        )
-        result.append(server_dict(row, agent, metric))
-    return result
+def list_servers(company_id: int | None = Query(default=None), user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).list_servers(user, company_id))
 
 
-@router.put("/{server_id}")
-def update_server(
-    server_id: int,
-    payload: dict,
-    request: Request,
-    db: Session = Depends(get_db),
-    user: SysUser = Depends(require_admin),
-) -> dict:
-    row = db.get(CrawlerServer, server_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="服务器不存在")
-    before = {"server_name": row.server_name, "max_container_slots": row.max_container_slots, "status": row.status}
-    for field in ("server_name", "server_ip", "environment", "max_container_slots", "status", "description"):
-        if field in payload:
-            setattr(row, field, payload[field])
-    after = {"server_name": row.server_name, "max_container_slots": row.max_container_slots, "status": row.status}
-    write_operation_log(db, request, user, "UPDATE", "SERVER", row.server_id, before, after)
-    db.commit()
-    agent = db.scalar(select(CrawlerAgent).where(CrawlerAgent.server_id == row.server_id))
-    metric = db.scalar(select(CrawlerServerMetric).where(CrawlerServerMetric.server_id == row.server_id).order_by(CrawlerServerMetric.metric_id.desc()).limit(1))
-    return server_dict(row, agent, metric)
+@router.post("")
+def create_server(payload: ServerCreate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).create_server(user, payload))
 
 
-@router.get("/{server_id}/metrics")
-def server_metrics(server_id: int, limit: int = 200, db: Session = Depends(get_db), user: SysUser = Depends(get_current_user)) -> list[dict]:
-    _require_server_visible(db, user, server_id)
-    rows = db.scalars(
-        select(CrawlerServerMetric)
-        .where(CrawlerServerMetric.server_id == server_id)
-        .order_by(CrawlerServerMetric.metric_id.desc())
-        .limit(min(max(limit, 1), 2000))
-    ).all()
-    return [
-        {
-            "cpu_percent": float(row.cpu_percent),
-            "memory_percent": float(row.memory_percent),
-            "disk_percent": float(row.disk_percent),
-            "load_1m": float(row.load_1m),
-            "load_5m": float(row.load_5m),
-            "running_task_count": row.running_task_count,
-            "recorded_at": row.recorded_at,
-        }
-        for row in reversed(rows)
-    ]
+@router.patch("/{server_id}")
+def update_server(server_id: int, payload: ServerUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).update_server(user, server_id, payload))

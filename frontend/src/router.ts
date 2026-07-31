@@ -1,0 +1,29 @@
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { sessionState } from './stores/session'
+
+const routes: RouteRecordRaw[] = [
+  { path: '/login', name: 'login', component: () => import('./views/LoginPage.vue'), meta: { title: '登录' } },
+  { path: '/', component: () => import('./layouts/MainLayout.vue'), children: [
+    { path: '', redirect: () => sessionState.user?.isSuperAdmin ? '/dashboard' : '/projects' },
+    { path: 'dashboard', component: () => import('./views/DashboardPage.vue'), meta: { title: '运行总览', adminOnly: true } },
+    { path: 'companies', component: () => import('./views/CompaniesPage.vue'), meta: { title: '公司配置', adminOnly: true } },
+    { path: 'users', component: () => import('./views/UsersPage.vue'), meta: { title: '用户管理', adminOnly: true } },
+    { path: 'servers', component: () => import('./views/ServersPage.vue'), meta: { title: 'Agent 节点' } },
+    { path: 'projects', component: () => import('./views/ProjectsPage.vue'), meta: { title: '项目管理' } },
+    { path: 'tasks', component: () => import('./views/TasksPage.vue'), meta: { title: '任务调度' } },
+    { path: 'runs', component: () => import('./views/RunsPage.vue'), meta: { title: '执行记录' } },
+    { path: 'operations', component: () => import('./views/OperationsPage.vue'), meta: { title: '操作日志', adminOnly: true } },
+    { path: 'settings', component: () => import('./views/SettingsPage.vue'), meta: { title: '系统设置', adminOnly: true } },
+  ] },
+]
+
+const router = createRouter({ history: createWebHistory(), routes })
+
+router.beforeEach((to) => {
+  document.title = `${String(to.meta.title || '首页')} - 爬虫管理平台`
+  if (to.path !== '/login' && !sessionState.token) return '/login'
+  if (to.meta.adminOnly && !sessionState.user?.isSuperAdmin) return '/projects'
+  return true
+})
+
+export default router

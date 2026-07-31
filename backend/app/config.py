@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+import os
+import secrets
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -12,30 +14,27 @@ class Settings(BaseSettings):
 
     app_name: str = "crawler_platform"
     app_env: str = "production"
-    app_version: str = "2.1.0"
+    app_version: str = "3.0.0"
     timezone: str = "Asia/Shanghai"
-    api_prefix: str = "/api"
+    api_prefix: str = "/api/v1"
     platform_public_url: str = ""
 
-    agent_image: str = "crawler_platform_agent:2.1.0"
-    min_agent_version: str = "2.0.0"
-    agent_container_name: str = "crawler-agent"
+    database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite+pysqlite:///./crawler_platform_dev.db" if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
+    redis_url: str = Field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0" if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
 
-    database_url: str = "mysql+pymysql://crawler_platform:crawler_platform@mysql:3306/crawler_platform?charset=utf8mb4"
-    redis_url: str = "redis://:crawler@redis:6379/0"
-
-    jwt_secret: str = Field(default="change-this-jwt-secret-at-least-32-characters")
+    jwt_secret: str = Field(default_factory=lambda: os.getenv("JWT_SECRET", secrets.token_urlsafe(48) if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 720
+    session_active_minutes: int = 10
+    force_login_token_minutes: int = 2
 
-    secret_encryption_key: str = Field(default="change-this-secret-encryption-master-key")
+    secret_encryption_key: str = Field(default_factory=lambda: os.getenv("SECRET_ENCRYPTION_KEY", secrets.token_urlsafe(48) if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
     admin_username: str = "admin"
-    admin_password: str = "Admin@123456"
+    admin_password: str = Field(default_factory=lambda: os.getenv("ADMIN_PASSWORD", "Admin@123456" if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
     admin_nickname: str = "超级管理员"
 
-    cicd_token: str = "change-this-cicd-token"
-    agent_bootstrap_token: str = "change-this-agent-bootstrap-token"
     agent_lease_seconds: int = 90
+    agent_stale_seconds: int = 60
     agent_offline_seconds: int = 120
     scheduler_poll_seconds: int = 5
     scheduler_lock_seconds: int = 60
@@ -64,20 +63,19 @@ class Settings(BaseSettings):
             "JWT_SECRET": (self.jwt_secret, 32),
             "SECRET_ENCRYPTION_KEY": (self.secret_encryption_key, 32),
             "ADMIN_PASSWORD": (self.admin_password, 12),
-            "CICD_TOKEN": (self.cicd_token, 24),
-            "AGENT_BOOTSTRAP_TOKEN": (self.agent_bootstrap_token, 24),
+            "DATABASE_URL": (self.database_url, 12),
+            "REDIS_URL": (self.redis_url, 8),
         }
         for name, (value, minimum) in checks.items():
             lowered = value.lower()
-            if len(value) < minimum or "replacewith" in lowered or "change-this" in lowered:
+            if len(value) < minimum or "change-this" in lowered or "replacewith" in lowered:
                 failures.append(name)
         if self.database_url.startswith("sqlite"):
             failures.append("DATABASE_URL")
-        if "replacewith" in self.database_url.lower():
-            failures.append("DATABASE_URL")
+        if self.redis_url.startswith("redis://localhost") or "crawler@redis" in self.redis_url:
+            failures.append("REDIS_URL")
         if failures:
-            names = ", ".join(sorted(set(failures)))
-            raise RuntimeError(f"production configuration is unsafe or incomplete: {names}")
+            raise RuntimeError("production configuration is unsafe or incomplete: " + ", ".join(sorted(set(failures))))
 
 
 @lru_cache(maxsize=1)

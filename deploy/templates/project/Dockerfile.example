@@ -1,0 +1,16 @@
+# 示例爬虫业务镜像。生产任务由平台下发 entryModule / entryFunction，并通过 crawler-runtime 调用。
+FROM python:3.12-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
+
+# 业务依赖
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 平台统一运行时：必须安装，否则 Agent 启动任务会报 No module named crawler_runtime
+COPY runtime /tmp/crawler-runtime
+RUN pip install --no-cache-dir /tmp/crawler-runtime && rm -rf /tmp/crawler-runtime
+
+# 业务代码与 sch.py。sch.py 只允许声明静态 TASKS，生产不执行 sch.py。
+COPY . .
+CMD ["python", "-m", "crawler_runtime", "--entrypoint", "healthcheck:run"]

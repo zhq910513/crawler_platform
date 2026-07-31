@@ -1,0 +1,274 @@
+export interface ApiResponse<T> {
+  code: number
+  message: string
+  data: T
+}
+
+export interface UserInfo {
+  userId: number
+  companyId: number | null
+  userName: string
+  nickName: string
+  roleType: 'SUPER_ADMIN' | 'NORMAL_USER'
+  status: string
+  isSuperAdmin: boolean
+}
+
+export interface LoginRequest {
+  userName: string
+  password: string
+  forceLoginToken?: string | null
+}
+
+export interface LoginConflictData {
+  lastActiveAt: string
+  deviceName: string
+  loginIp: string
+  forceLoginToken: string
+}
+
+export interface LoginResponse {
+  accessToken: string
+  tokenType: string
+  sessionId: string
+  user: UserInfo
+}
+
+export interface Company {
+  companyId: number
+  companyCode: string
+  companyName: string
+  status: string
+  timezone: string
+  description: string
+  createdAt: string
+}
+
+export interface UserAccount {
+  userId: number
+  companyId: number | null
+  userName: string
+  nickName: string
+  roleType: string
+  status: string
+  lastLoginAt?: string
+}
+
+export interface ServerNode {
+  serverId: number
+  companyId: number
+  serverCode: string
+  serverName: string
+  serverIp: string
+  environment: string
+  maxContainerSlots: number
+  manageStatus: string
+  healthStatus: string
+  capacityStatus: string
+  metrics: Record<string, unknown>
+  description: string
+}
+
+export interface DiscoveredProject {
+  discoveredProjectId: number
+  companyId: number
+  projectKey: string
+  projectCode: string
+  projectName: string
+  imageRepository: string
+  latestVersion: string
+  latestImageDigest: string
+  discoveryStatus: string
+  parseStatus: string
+  parseError: string
+  formalProjectId: number | null
+  lastDeployedAt: string | null
+  deploymentServerCount?: number
+  selectable?: boolean
+}
+
+export interface Project {
+  projectId: number
+  companyId: number
+  projectCode: string
+  projectName: string
+  projectKey: string
+  remark: string
+  repositoryUrl: string
+  imageRepository: string
+  status: string
+  onlineStatus: string
+  dispatchMode: string
+  minAvailableServers: number
+  maxActiveServers: number
+  allowDeployedFallback: boolean
+  allowCompanyPoolFallback: boolean
+  defaultRuntimeMode?: string
+  defaultTaskMaxConcurrency?: number
+  defaultGroupMaxConcurrency?: number
+  defaultShmSizeMb?: number
+  defaultLogLimitMb?: number
+  containerConfig?: Record<string, unknown>
+  latestVersion?: string
+  latestImageDigest?: string
+  deployedServerCount?: number
+  executionServerCount?: number
+  createdAt: string
+}
+
+export interface ProjectServer {
+  projectServerId: number
+  companyId: number
+  projectId: number
+  serverId: number
+  deploymentStatus: string
+  schedulingStatus: string
+  imageReadinessStatus: string
+  serverRole: string
+  priority: number
+  weight: number
+  maxConcurrency: number
+  autoEjectEnabled: boolean
+  autoRecoverEnabled: boolean
+  latestImageDigest: string
+  lastDeployedAt: string | null
+  disabledReason: string
+  serverName?: string
+  serverCode?: string
+  manageStatus?: string
+  healthStatus?: string
+  capacityStatus?: string
+}
+
+export interface TaskDefinition {
+  definitionId: number
+  companyId: number
+  projectId: number
+  definitionKey: string
+  taskName: string
+  entryModule: string
+  entryFunction: string
+  defaultParams: Record<string, unknown>
+  suggestedCron: string
+  executionMode: string
+  idempotencyPolicy: string
+  runtimeMode?: string
+  taskGroup?: string
+  taskMaxConcurrency?: number
+  groupMaxConcurrency?: number
+  exclusiveMode?: boolean
+  ioClass?: string
+  shmSizeMb?: number
+  logLimitMb?: number
+  resourceLocks?: string[]
+  definitionStatus: string
+  createdAt: string
+}
+
+export interface Task {
+  taskId: number
+  companyId: number
+  projectId: number
+  definitionId: number | null
+  taskCode: string
+  taskName: string
+  entryModule: string
+  entryFunction: string
+  parameters: Record<string, unknown>
+  executionMode: string
+  idempotencyPolicy: string
+  runtimeMode?: string
+  taskGroup?: string
+  taskMaxConcurrency?: number
+  groupMaxConcurrency?: number
+  exclusiveMode?: boolean
+  ioClass?: string
+  shmSizeMb?: number
+  logLimitMb?: number
+  resourceLocks?: string[]
+  status: string
+  imagePolicy: string
+  releaseChannel: string
+  timeoutSeconds: number
+  maxRetryCount: number
+  scheduleId?: number
+  scheduleStatus?: string
+  scheduleType?: string
+  cronExpression?: string
+  scheduleTimezone?: string
+  overlapPolicy?: string
+  scheduleConfig?: Record<string, unknown>
+  scheduleLabel?: string
+  nextRunAt?: string | null
+  lastTriggeredAt?: string | null
+  createdAt: string
+}
+
+export interface RunRecord {
+  runId: number
+  companyId: number
+  projectId: number
+  taskId: number
+  serverId: number | null
+  runStatus: string
+  routingStatus: string
+  routingReason: string
+  scheduledAt: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  errorMessage: string
+  createdAt: string
+}
+
+export interface NotificationChannel {
+  channelId: number
+  scopeType: string
+  channelName: string
+  channelType: string
+  channelStatus: string
+  p0Only: boolean
+  lastTestAt: string | null
+  lastTestResult: string
+  cooldownSeconds?: number
+}
+
+
+export interface AlertEvent {
+  alertId: number
+  companyId: number | null
+  projectId: number | null
+  severity: string
+  alertStatus: string
+  alertType: string
+  title: string
+  content: string
+  fingerprint: string
+  occurrenceCount: number
+  firstSeenAt: string
+  lastSeenAt: string
+  notifiedAt: string | null
+  resolvedAt: string | null
+}
+
+export interface DashboardSummary {
+  projectCount: number
+  serverCount: number
+  taskCount: number
+  runningCount: number
+  waitingCount: number
+}
+
+export interface UserCreateRequest { companyId?: number | null; userName: string; nickName: string; password: string; roleType: string; status?: string }
+export interface ServerCreateRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; maxContainerSlots?: number; description?: string }
+export interface AgentRegistrationRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; agentCode: string; agentName?: string; maxContainerSlots?: number }
+export interface ProjectImportRequest { discoveredProjectId: number; remark?: string; dispatchMode?: string; minAvailableServers?: number; maxActiveServers?: number; allowDeployedFallback?: boolean; allowCompanyPoolFallback?: boolean; defaultRuntimeMode?: string; defaultTaskMaxConcurrency?: number; defaultGroupMaxConcurrency?: number; defaultShmSizeMb?: number; defaultLogLimitMb?: number; containerConfig?: Record<string, unknown> }
+export interface ProjectUpdateRequest { projectName?: string; remark?: string; status?: string; onlineStatus?: string; dispatchMode?: string; minAvailableServers?: number; maxActiveServers?: number; allowDeployedFallback?: boolean; allowCompanyPoolFallback?: boolean; defaultRuntimeMode?: string; defaultTaskMaxConcurrency?: number; defaultGroupMaxConcurrency?: number; defaultShmSizeMb?: number; defaultLogLimitMb?: number; containerConfig?: Record<string, unknown>; description?: string }
+export interface ProjectServerUpsertRequest { serverId: number; schedulingStatus: string; serverRole: string; priority: number; weight: number; maxConcurrency: number; autoEjectEnabled: boolean; autoRecoverEnabled: boolean }
+export interface ProjectServerPoolUpdateRequest { servers: ProjectServerUpsertRequest[]; reason?: string }
+export interface TaskCreateRequest { definitionId: number; taskCode: string; taskName: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string; serverIds?: number[]; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
+export interface TaskUpdateRequest { taskName?: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
+export interface NotificationChannelCreateRequest { scopeType: string; companyId?: number | null; projectId?: number | null; channelName: string; channelType: string; channelStatus: string; config: Record<string, unknown>; p0Only?: boolean; cooldownSeconds?: number }
+
+export interface ScheduleUpdateRequest { scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string }
+export interface CronPreviewRequest { cronExpression: string; timezone?: string; count?: number }
+export interface CronPreviewResult { valid: boolean; cronExpression: string; timezone: string; nextTimes: string[] }

@@ -1,62 +1,56 @@
 <template>
   <el-container class="layout">
-    <el-aside width="220px" class="aside">
-      <div class="brand"><el-icon><Monitor /></el-icon><span>crawler_platform</span></div>
-      <el-menu :default-active="$route.path" router background-color="#17233d" text-color="#bfcbd9" active-text-color="#409eff">
-        <el-menu-item index="/dashboard"><el-icon><DataBoard /></el-icon><span>运行总览</span></el-menu-item>
-        <el-menu-item index="/tasks"><el-icon><List /></el-icon><span>任务管理</span></el-menu-item>
-        <el-menu-item index="/runs"><el-icon><Clock /></el-icon><span>执行记录</span></el-menu-item>
-        <el-menu-item index="/projects"><el-icon><Folder /></el-icon><span>项目管理</span></el-menu-item>
-        <el-menu-item index="/companies"><el-icon><OfficeBuilding /></el-icon><span>公司与成员</span></el-menu-item>
-        <el-menu-item index="/releases"><el-icon><Box /></el-icon><span>爬虫发布</span></el-menu-item>
-        <template v-if="isAdmin">
-          <el-menu-item index="/servers"><el-icon><Cpu /></el-icon><span>Agent 节点</span></el-menu-item>
-          <el-menu-item index="/operations"><el-icon><Document /></el-icon><span>操作日志</span></el-menu-item>
-          <el-menu-item index="/users"><el-icon><User /></el-icon><span>用户管理</span></el-menu-item>
-          <el-menu-item index="/settings"><el-icon><Setting /></el-icon><span>系统设置</span></el-menu-item>
-        </template>
+    <el-aside width="230px" class="aside">
+      <div class="brand">爬虫管理平台</div>
+      <el-menu router :default-active="$route.path" background-color="#111827" text-color="#cbd5e1" active-text-color="#ffffff">
+        <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">{{ item.title }}</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
       <el-header class="header">
-        <div class="header-left">
-          <strong>{{ $route.meta.title || 'crawler_platform' }}</strong>
-          <el-select v-model="platformContext.companyId" placeholder="选择公司" style="width:180px" @change="changeCompany">
-            <el-option v-for="item in platformContext.companies" :key="item.company_id" :label="item.company_name" :value="item.company_id" />
-          </el-select>
-          <el-select v-model="platformContext.projectId" clearable placeholder="选择项目" style="width:220px" @change="changeProject">
-            <el-option v-for="item in platformContext.projects" :key="item.project_id" :label="item.project_name" :value="item.project_id" />
-          </el-select>
+        <div>{{ $route.meta.title }}</div>
+        <div class="user-box">
+          <span>{{ sessionState.user?.nickName }}</span>
+          <el-button size="small" @click="logout">退出</el-button>
         </div>
-        <el-dropdown @command="handleCommand">
-          <span class="user"><el-icon><UserFilled /></el-icon>{{ authState.user?.nick_name }}<el-icon><ArrowDown /></el-icon></span>
-          <template #dropdown><el-dropdown-menu><el-dropdown-item command="logout">退出登录</el-dropdown-item></el-dropdown-menu></template>
-        </el-dropdown>
       </el-header>
-      <el-main class="main"><router-view :key="`${$route.path}-${platformContext.projectId || 0}`" /></el-main>
+      <el-main><router-view /></el-main>
     </el-container>
   </el-container>
 </template>
 
-<script setup>
-import { onMounted } from 'vue'
+<script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { authState, clearAuth, isAdmin } from '../auth'
-import { clearPlatformContext, loadPlatformContext, platformContext, selectCompany, selectProject } from '../context'
+import { deleteSession } from '../api/sessions'
+import { clearSession, sessionState } from '../stores/session'
+
 const router = useRouter()
-onMounted(() => loadPlatformContext().catch(() => {}))
-async function changeCompany(value) { await selectCompany(value); router.replace({ path: router.currentRoute.value.path, query: {} }) }
-function changeProject(value) { selectProject(value); router.replace({ path: router.currentRoute.value.path, query: {} }) }
-function handleCommand(command) { if (command === 'logout') { clearAuth(); clearPlatformContext(); router.push('/login') } }
+const menus = [
+  { path: '/dashboard', title: '运行总览', adminOnly: true },
+  { path: '/companies', title: '公司配置', adminOnly: true },
+  { path: '/users', title: '用户管理', adminOnly: true },
+  { path: '/servers', title: 'Agent 节点', adminOnly: false },
+  { path: '/projects', title: '项目管理', adminOnly: false },
+  { path: '/tasks', title: '任务调度', adminOnly: false },
+  { path: '/runs', title: '执行记录', adminOnly: false },
+  { path: '/operations', title: '操作日志', adminOnly: true },
+  { path: '/settings', title: '系统设置', adminOnly: true },
+]
+const visibleMenus = computed(() => menus.filter((item) => !item.adminOnly || sessionState.user?.isSuperAdmin))
+async function logout() {
+  const sessionId = sessionState.sessionId
+  if (sessionId) await deleteSession(sessionId).catch(() => undefined)
+  clearSession()
+  await router.push('/login')
+}
 </script>
 
 <style scoped>
 .layout { min-height: 100vh; }
-.aside { background: #17233d; color: white; }
-.brand { height: 60px; display:flex; align-items:center; gap:10px; padding:0 20px; font-weight:700; font-size:17px; border-bottom:1px solid rgba(255,255,255,.08); }
-.el-menu { border-right: 0; }
-.header { height:60px; background:#fff; display:flex; justify-content:space-between; align-items:center; box-shadow:0 1px 4px rgba(0,0,0,.08); }
-.header-left { display:flex; align-items:center; gap:12px; min-width:0; }
-.user { display:flex; align-items:center; gap:6px; cursor:pointer; }
-.main { padding:18px; }
+.aside { background: #111827; }
+.brand { color: #fff; font-size: 20px; font-weight: 700; height: 56px; display: flex; align-items: center; padding-left: 22px; border-bottom: 1px solid #243142; }
+.header { background: #fff; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e5e7eb; font-size: 16px; font-weight: 600; }
+.user-box { display: flex; gap: 12px; align-items: center; font-weight: 400; }
+.el-menu { border-right: none; }
 </style>
