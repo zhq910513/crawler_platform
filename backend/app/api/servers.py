@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.deps import get_current_user, require_admin
-from app.models import CrawlerAgent, CrawlerServer, CrawlerServerMetric, SysUser
+from app.models import CrawlerAgent, CrawlerCompanyMember, CrawlerServer, CrawlerServerMetric, SysUser
 from app.services.audit import write_operation_log
+from app.services.permissions import is_super_admin
 from app.utils import utcnow
 
 router = APIRouter(prefix="/servers", tags=["服务器"])
@@ -19,6 +20,7 @@ def server_dict(row: CrawlerServer, agent: CrawlerAgent | None, metric: CrawlerS
     online = bool(agent and agent.last_heartbeat_at and agent.last_heartbeat_at >= utcnow() - timedelta(seconds=90))
     return {
         "server_id": row.server_id,
+        "company_id": row.company_id,
         "server_code": row.server_code,
         "server_name": row.server_name,
         "server_ip": row.server_ip,
@@ -56,9 +58,24 @@ def server_dict(row: CrawlerServer, agent: CrawlerAgent | None, metric: CrawlerS
     }
 
 
+def _visible_server_query(db: Session, user: SysUser):
+    stmt = select(CrawlerServer)
+    if not is_super_admin(user):
+        company_ids = select(CrawlerCompanyMember.company_id).where(CrawlerCompanyMember.user_id == user.user_id)
+        stmt = stmt.where(CrawlerServer.company_id.in_(company_ids))
+    return stmt
+
+
+def _require_server_visible(db: Session, user: SysUser, server_id: int) -> CrawlerServer:
+    row = db.scalar(_visible_server_query(db, user).where(CrawlerServer.server_id == server_id))
+    if not row:
+        raise HTTPException(status_code=404, detail="服务器不存在或无权访问")
+    return row
+
+
 @router.get("")
-def list_servers(db: Session = Depends(get_db), _: SysUser = Depends(get_current_user)) -> list[dict]:
-    rows = db.scalars(select(CrawlerServer).order_by(CrawlerServer.server_id.asc())).all()
+def list_servers(db: Session = Depends(get_db), user: SysUser = Depends(get_current_user)) -> list[dict]:
+    rows = db.scalars(_visible_server_query(db, user).order_by(CrawlerServer.server_id.asc())).all()
     result = []
     for row in rows:
         agent = db.scalar(select(CrawlerAgent).where(CrawlerAgent.server_id == row.server_id))
@@ -93,7 +110,8 @@ def update_server(
 
 
 @router.get("/{server_id}/metrics")
-def server_metrics(server_id: int, limit: int = 200, db: Session = Depends(get_db), _: SysUser = Depends(get_current_user)) -> list[dict]:
+def server_metrics(server_id: int, limit: int = 200, db: Session = Depends(get_db), user: SysUser = Depends(get_current_user)) -> list[dict]:
+    _require_server_visible(db, user, server_id)
     rows = db.scalars(
         select(CrawlerServerMetric)
         .where(CrawlerServerMetric.server_id == server_id)

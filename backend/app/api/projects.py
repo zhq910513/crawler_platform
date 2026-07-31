@@ -32,6 +32,7 @@ def project_dict(db: Session, row: CrawlerProject, user: SysUser) -> dict:
         "company_id": row.company_id,
         "project_code": row.project_code,
         "project_name": row.project_name,
+        "remark": row.remark,
         "registry": row.registry,
         "repository": row.repository,
         "default_branch": row.default_branch,
@@ -78,6 +79,8 @@ def create_project(
     require_company_role(db, user, payload.company_id, "ADMIN")
     if db.scalar(select(CrawlerProject).where(CrawlerProject.project_code == payload.project_code)):
         raise HTTPException(status_code=409, detail="项目编码已存在")
+    if db.scalar(select(CrawlerProject).where(CrawlerProject.company_id == payload.company_id, CrawlerProject.project_name == payload.project_name)):
+        raise HTTPException(status_code=409, detail="同一公司下项目名称已存在")
     row = CrawlerProject(**payload.model_dump(), created_by=user.user_id)
     db.add(row)
     db.flush()
@@ -102,6 +105,9 @@ def update_project(
     duplicate = db.scalar(select(CrawlerProject).where(CrawlerProject.project_code == payload.project_code, CrawlerProject.project_id != project_id))
     if duplicate:
         raise HTTPException(status_code=409, detail="项目编码已存在")
+    name_duplicate = db.scalar(select(CrawlerProject).where(CrawlerProject.company_id == payload.company_id, CrawlerProject.project_name == payload.project_name, CrawlerProject.project_id != project_id))
+    if name_duplicate:
+        raise HTTPException(status_code=409, detail="同一公司下项目名称已存在")
     before = project_dict(db, row, user)
     for key, value in payload.model_dump().items():
         setattr(row, key, value)

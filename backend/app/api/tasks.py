@@ -134,11 +134,22 @@ def _validate_payload(db: Session, payload: TaskCreate) -> CrawlerProject:
         raise HTTPException(status_code=400, detail="所选发布版本不包含该 SpiderEntry")
     if payload.schedule.schedule_type == "CRON":
         validate_cron(payload.schedule.cron_expression, payload.schedule.timezone)
-    if not payload.server_ids:
-        raise HTTPException(status_code=400, detail="至少绑定一台 Agent 服务器")
-    count = db.scalar(select(func.count()).select_from(CrawlerServer).where(CrawlerServer.server_id.in_(payload.server_ids))) or 0
-    if count != len(set(payload.server_ids)):
-        raise HTTPException(status_code=400, detail="存在无效 Agent 服务器")
+    server_ids = list(payload.server_ids or [])
+    unique_server_ids = list(dict.fromkeys(server_ids))
+    if len(unique_server_ids) != len(server_ids):
+        raise HTTPException(status_code=400, detail="Agent 服务器不能重复绑定")
+    if unique_server_ids:
+        count = db.scalar(
+            select(func.count())
+            .select_from(CrawlerServer)
+            .where(
+                CrawlerServer.server_id.in_(unique_server_ids),
+                CrawlerServer.company_id == project.company_id,
+                CrawlerServer.status != "DISABLED",
+            )
+        ) or 0
+        if count != len(unique_server_ids):
+            raise HTTPException(status_code=400, detail="存在非本公司或不可用的 Agent 服务器")
     return project
 
 

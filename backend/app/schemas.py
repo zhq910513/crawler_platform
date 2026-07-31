@@ -63,6 +63,7 @@ class ProjectCreate(StrictModel):
     company_id: int
     project_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=100)
     project_name: str = Field(min_length=1, max_length=150)
+    remark: str = Field(default="", max_length=500)
     registry: str = Field(default="", max_length=255)
     repository: str = Field(default="", max_length=255)
     default_branch: str = Field(default="main", max_length=100)
@@ -253,6 +254,7 @@ class ProjectSecretBindingUpsert(StrictModel):
 
 class AgentRegisterRequest(StrictModel):
     protocol_version: Literal["2.0"] = "2.0"
+    company_id: int | None = Field(default=None, ge=1)
     instance_id: str = Field(min_length=1, max_length=100)
     agent_code: str = Field(min_length=1, max_length=100)
     server_code: str = Field(min_length=1, max_length=100)

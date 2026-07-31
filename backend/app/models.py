@@ -118,6 +118,7 @@ class CrawlerProject(Base, TimestampMixin):
     company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="RESTRICT"), index=True, nullable=False)
     project_code: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     project_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    remark: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     registry: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     repository: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     default_branch: Mapped[str] = mapped_column(String(100), default="main", nullable=False)
@@ -141,6 +142,7 @@ class CrawlerProjectMember(Base, TimestampMixin):
 class CrawlerServer(Base, TimestampMixin):
     __tablename__ = "crawler_server"
     server_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
     server_code: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     server_name: Mapped[str] = mapped_column(String(100), nullable=False)
     server_ip: Mapped[str] = mapped_column(String(128), default="", nullable=False)

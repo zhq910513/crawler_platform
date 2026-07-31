@@ -14,6 +14,7 @@ from app.db import get_db
 from app.deps import get_agent
 from app.models import (
     CrawlerAgent,
+    CrawlerCompany,
     CrawlerContainerEvent,
     CrawlerServer,
     CrawlerServerMetric,
@@ -149,8 +150,26 @@ def register_agent(
     if code_owner and not server:
         raise HTTPException(status_code=409, detail="Agent 编码已存在，但 SERVER_CODE 不匹配")
     client_ip = request.client.host if request.client else ""
+    company_id = server.company_id if server else payload.company_id
+    if not company_id:
+        enabled_company_ids = db.scalars(
+            select(CrawlerCompany.company_id)
+            .where(CrawlerCompany.status == "ENABLED")
+            .order_by(CrawlerCompany.company_id.asc())
+            .limit(2)
+        ).all()
+        if len(enabled_company_ids) == 1:
+            company_id = enabled_company_ids[0]
+        else:
+            raise HTTPException(status_code=400, detail="Agent 注册必须指定 company_id")
+    company = db.get(CrawlerCompany, company_id)
+    if not company or company.status != "ENABLED":
+        raise HTTPException(status_code=400, detail="Agent 归属公司不存在或已停用")
+    if server and payload.company_id and payload.company_id != server.company_id:
+        raise HTTPException(status_code=409, detail="Agent 服务器已归属其他公司，禁止跨公司重绑")
     if not server:
         server = CrawlerServer(
+            company_id=company_id,
             server_code=payload.server_code,
             server_name=payload.server_name,
             server_ip=client_ip,

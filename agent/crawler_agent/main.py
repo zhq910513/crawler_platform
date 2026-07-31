@@ -57,6 +57,7 @@ class AgentApp:
             pass
         self.api.register({
             "protocol_version": "2.0",
+            "company_id": config.company_id or None,
             "instance_id": config.instance_id,
             "agent_code": config.agent_code,
             "server_code": config.server_code,

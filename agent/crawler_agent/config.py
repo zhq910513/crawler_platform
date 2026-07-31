@@ -36,6 +36,7 @@ def _json_env(name: str, default):
 class AgentConfig:
     platform_url: str = os.getenv("PLATFORM_URL", "http://127.0.0.1:8000").rstrip("/")
     bootstrap_token: str = os.getenv("AGENT_BOOTSTRAP_TOKEN", "change-this-agent-bootstrap-token")
+    company_id: int = int(os.getenv("AGENT_COMPANY_ID", "0") or "0")
     agent_code: str = os.getenv("AGENT_CODE", socket.gethostname())
     server_code: str = os.getenv("SERVER_CODE", socket.gethostname())
     server_name: str = os.getenv("SERVER_NAME", socket.gethostname())

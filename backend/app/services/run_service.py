@@ -38,35 +38,56 @@ def make_run_no() -> str:
     return f"RUN{now:%Y%m%d%H%M%S%f}-{suffix}"
 
 
-def choose_server(db: Session, task_id: int, required_capability: str) -> CrawlerServer:
+def choose_server(db: Session, task: CrawlerTask, required_capability: str) -> CrawlerServer:
+    project = db.get(CrawlerProject, task.project_id)
+    if not project or not project.company_id or task.company_id != project.company_id:
+        raise RunCreationError("任务项目不存在或公司归属异常")
+
     targets = db.scalars(
         select(CrawlerTaskTarget)
-        .where(CrawlerTaskTarget.task_id == task_id, CrawlerTaskTarget.enabled.is_(True))
+        .where(CrawlerTaskTarget.task_id == task.task_id, CrawlerTaskTarget.enabled.is_(True))
         .order_by(CrawlerTaskTarget.priority.asc(), CrawlerTaskTarget.target_id.asc())
     ).all()
-    if not targets:
-        raise RunCreationError("任务没有绑定 Agent 服务器")
+
+    if targets:
+        server_items = []
+        for target in targets:
+            server = db.get(CrawlerServer, target.server_id)
+            if server:
+                server_items.append((server, target.priority, target.target_id))
+        no_server_message = f"任务绑定的 Agent 均不可用、非本公司或不支持 {required_capability} 运行能力"
+    else:
+        servers = db.scalars(
+            select(CrawlerServer)
+            .where(
+                CrawlerServer.company_id == project.company_id,
+                CrawlerServer.status.in_(["ONLINE", "DEGRADED"]),
+            )
+            .order_by(CrawlerServer.server_id.asc())
+        ).all()
+        server_items = [(server, 1000, server.server_id) for server in servers]
+        no_server_message = f"公司 Agent 池没有可用服务器或不支持 {required_capability} 运行能力"
 
     candidates: list[tuple[tuple[int, float, int, int], CrawlerServer]] = []
-    for target in targets:
-        server = db.get(CrawlerServer, target.server_id)
-        if not server or server.status not in {"ONLINE", "DEGRADED"}:
+    for server, priority, stable_id in server_items:
+        if not server or server.company_id != project.company_id or server.status not in {"ONLINE", "DEGRADED"}:
             continue
         agent = db.scalar(select(CrawlerAgent).where(CrawlerAgent.server_id == server.server_id))
         if not agent or agent.status not in {"ONLINE", "DEGRADED"}:
             continue
         capabilities = set(agent.capabilities_json or [])
-        if required_capability not in capabilities:
+        if required_capability and required_capability not in capabilities:
             continue
         active = db.scalar(select(func.count(CrawlerTaskRun.run_id)).where(
             CrawlerTaskRun.server_id == server.server_id,
             CrawlerTaskRun.status.in_(ACTIVE_RUN_STATUSES),
         )) or 0
         capacity = max(1, server.max_container_slots)
-        score = (1 if active >= capacity else 0, active / capacity, target.priority, target.target_id)
+        score = (1 if active >= capacity else 0, active / capacity, priority, stable_id)
         candidates.append((score, server))
+
     if not candidates:
-        raise RunCreationError(f"任务绑定的 Agent 均不可用或不支持 {required_capability} 运行能力")
+        raise RunCreationError(no_server_message)
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
 
@@ -145,7 +166,7 @@ def create_run(
         if active_count >= schedule.max_concurrency and schedule.overlap_policy == "SKIP":
             raise RunCreationError("任务已达到最大并发，按重叠策略跳过")
     release, entry = resolve_release(db, task, runtime)
-    server = choose_server(db, task.task_id, entry.image_profile)
+    server = choose_server(db, task, entry.image_profile)
     timeout_seconds = schedule.timeout_seconds if schedule else entry.default_timeout_seconds
     max_attempts = (schedule.max_retry_count + 1) if schedule else 1
     try:
@@ -240,7 +261,7 @@ def create_retry(
     if not entry or not release:
         raise RunCreationError("原运行绑定的 SpiderRelease 或 SpiderEntry 不存在")
 
-    server = choose_server(db, task.task_id, entry.image_profile)
+    server = choose_server(db, task, entry.image_profile)
     now = utcnow()
     attempt = failed_run.attempt + 1
     task_spec = dict(failed_run.task_spec_json or {})
