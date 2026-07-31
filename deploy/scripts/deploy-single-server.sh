@@ -39,7 +39,7 @@ docker compose build api web migrate
 docker build -f agent/Dockerfile -t "${AGENT_IMAGE:-crawler_platform_agent:${APP_VERSION:-2.1.0}}" agent
 docker compose up -d mysql redis
 docker compose run --rm migrate
-docker compose up -d api scheduler maintenance web
+docker compose up -d --force-recreate api scheduler maintenance web
 docker rm -f "${AGENT_CONTAINER_NAME:-crawler-agent}" >/dev/null 2>&1 || true
 docker run -d --name "${AGENT_CONTAINER_NAME:-crawler-agent}" --restart=always --network host --env-file agent/.env.local -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/crawler-agent:/var/lib/crawler-agent "${AGENT_IMAGE:-crawler_platform_agent:${APP_VERSION:-2.1.0}}"
 echo "✅ 单机部署完成：平台 http://127.0.0.1:${WEB_PORT:-8080}，Agent 容器 ${AGENT_CONTAINER_NAME:-crawler-agent} 已启动"

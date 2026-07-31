@@ -15,7 +15,7 @@ fi
 docker compose "${BUILD_ARGS[@]}"
 docker compose up -d mysql redis
 docker compose run --rm migrate
-docker compose up -d api scheduler maintenance web
+docker compose up -d --force-recreate api scheduler maintenance web
 
 PORT=$(awk -F= '/^WEB_PORT=/{print $2}' .env | tail -1)
 PORT=${PORT:-8080}
