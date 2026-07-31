@@ -77,7 +77,10 @@ def bootstrap_register_release(
     project = db.get(CrawlerProject, token.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
-    if token.allowed_repo and token.allowed_repo not in {payload.image_repository, project.repository, f"{project.registry}/{project.repository}".strip("/")}:
+    expected_repo = f"{project.registry}/{project.repository}".strip("/")
+    payload_repo = payload.image_repository.strip().rstrip("/")
+    allowed_repo = (token.allowed_repo or expected_repo).strip().rstrip("/")
+    if payload_repo != allowed_repo:
         raise HTTPException(status_code=403, detail="当前 token 不允许登记该镜像仓库")
     try:
         release = import_release(
