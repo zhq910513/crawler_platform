@@ -1,6 +1,10 @@
 name: crawler_platform
 
 x-backend-common: &backend-common
+  build:
+    context: ./backend
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
   image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
   restart: unless-stopped
   env_file: .env
@@ -55,20 +59,11 @@ services:
     logging: *default-logging
 
   migrate:
-    build:
-      context: ./backend
-      args:
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-    image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
+    <<: *backend-common
     restart: "no"
-    env_file: .env
-    environment:
-      TZ: ${TZ:-Asia/Shanghai}
     command: ["python", "-m", "app.migration_main"]
     depends_on:
       mysql: { condition: service_healthy }
-    networks: [backend]
-    logging: *default-logging
 
   api:
     <<: *backend-common
