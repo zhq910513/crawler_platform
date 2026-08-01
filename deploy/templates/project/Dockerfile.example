@@ -1,7 +1,8 @@
 # 示例爬虫业务镜像。生产任务由平台下发 entryModule / entryFunction，并通过 crawler-runtime 调用。
 FROM python:3.12-slim
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app PIP_INDEX_URL=${PIP_INDEX_URL} PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # 业务依赖
 COPY requirements.txt ./

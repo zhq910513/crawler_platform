@@ -4,8 +4,9 @@ x-backend-common: &backend-common
   build:
     context: ./backend
     args:
-      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
-  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-latest}
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+      APT_MIRROR: ${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
+  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-1.0.0}
   restart: unless-stopped
   env_file: .env
   environment:
@@ -98,8 +99,9 @@ services:
     build:
       context: ./frontend
       args:
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
-    image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-latest}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+        APK_MIRROR: ${APK_MIRROR:-mirrors.aliyun.com}
+    image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-1.0.0}
     restart: unless-stopped
     depends_on:
       api: { condition: service_healthy }

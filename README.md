@@ -17,17 +17,17 @@
 
 ## 上线检查命令
 
-所有命令均为单行。
+所有命令均为单行。宿主机最小依赖为 Docker + Docker Compose；Python/npm 等复杂能力优先通过工具容器或平台容器执行。
 
-复制配置：`cp .env.example .env`
+环境体检：`./deploy/scripts/doctor.sh`
 
-检查配置：`docker compose config`
+国内镜像源配置：`./deploy/scripts/prepare-cn-mirrors.sh --yes`
 
-构建镜像：`docker compose build --pull`
+零数据测试服验收：`./deploy/scripts/test-server-validate.sh --yes --prepare-cn-mirrors`
 
-初始化数据库：`docker compose run --rm migrate`
+只跑 smoke-test：`./deploy/scripts/test-server-validate.sh --yes --skip-reset`
 
-启动服务：`docker compose up -d`
+生产部署：`./deploy/scripts/deploy.sh`
 
 查看容器：`docker compose ps`
 
@@ -39,7 +39,7 @@
 
 查看前端日志：`docker compose logs --tail=200 web`
 
-进入后台健康检查：`curl -fsS http://127.0.0.1:8080/health`
+后台健康检查：`curl -fsS http://127.0.0.1:8080/health`
 
 ## API 约定
 
@@ -102,4 +102,4 @@
 ./deploy/scripts/test-server-validate.sh --yes --skip-reset
 ```
 
-详细步骤见：`docs/零数据测试服验收步骤.md`。
+详细步骤见：`docs/部署工程化核心要点.md`。

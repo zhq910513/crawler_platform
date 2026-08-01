@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -11,14 +9,13 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 TERMINAL = {"SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT", "LOST", "SKIPPED"}
 
 
-def load_env(path: Path) -> dict[str, str]:
-    env: dict[str, str] = {}
+def load_env(path):
+    env = {}
     if not path.exists():
         return env
     for raw in path.read_text(encoding="utf-8").splitlines():
@@ -31,18 +28,18 @@ def load_env(path: Path) -> dict[str, str]:
 
 
 class ApiError(RuntimeError):
-    def __init__(self, status: int, payload: dict[str, Any] | str):
+    def __init__(self, status, payload):
         self.status = status
         self.payload = payload
         super().__init__(f"HTTP {status}: {payload}")
 
 
 class PlatformClient:
-    def __init__(self, base_url: str):
+    def __init__(self, base_url):
         self.base_url = base_url.rstrip("/")
         self.token = ""
 
-    def request(self, method: str, path: str, data: dict[str, Any] | None = None, token: str | None = None, discovery_token: str | None = None) -> Any:
+    def request(self, method, path, data=None, token=None, discovery_token=None):
         body = None if data is None else json.dumps(data, ensure_ascii=False).encode("utf-8")
         headers = {"Content-Type": "application/json", "User-Agent": "crawler-platform-smoke-test/1.0"}
         bearer = token if token is not None else self.token
@@ -67,7 +64,7 @@ class PlatformClient:
             raise ApiError(200, payload)
         return payload.get("data")
 
-    def login(self, username: str, password: str) -> dict[str, Any]:
+    def login(self, username, password):
         body = {"userName": username, "password": password}
         try:
             data = self.request("POST", "/sessions", body, token="")
@@ -82,7 +79,7 @@ class PlatformClient:
         return data
 
 
-def run(cmd: list[str], cwd: Path = ROOT, check: bool = True) -> str:
+def run(cmd, cwd=ROOT, check=True):
     print("$ " + " ".join(cmd))
     proc = subprocess.run(cmd, cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if proc.stdout:
@@ -92,7 +89,7 @@ def run(cmd: list[str], cwd: Path = ROOT, check: bool = True) -> str:
     return proc.stdout
 
 
-def docker_available() -> bool:
+def docker_available():
     try:
         run(["docker", "version"], check=True)
         return True
@@ -100,7 +97,7 @@ def docker_available() -> bool:
         return False
 
 
-def ensure_registry(name: str, port: int) -> None:
+def ensure_registry(name, port):
     existing = run(["docker", "ps", "-a", "--format", "{{.Names}}"], check=True).splitlines()
     if name not in existing:
         run(["docker", "run", "-d", "--name", name, "--restart=always", "-p", f"{port}:5000", "registry:2"])
@@ -110,10 +107,10 @@ def ensure_registry(name: str, port: int) -> None:
             run(["docker", "start", name])
 
 
-def build_smoke_image(registry: str, tag: str) -> tuple[str, str]:
+def build_smoke_image(registry, tag, pip_index_url):
     image_repo = f"{registry}/crawler-platform-smoke-spider"
     image_tag = f"{image_repo}:{tag}"
-    run(["docker", "build", "-f", "examples/smoke_spider/Dockerfile", "-t", image_tag, "."])
+    run(["docker", "build", "--build-arg", "PIP_INDEX_URL=" + pip_index_url, "-f", "examples/smoke_spider/Dockerfile", "-t", image_tag, "."])
     run(["docker", "push", image_tag])
     run(["docker", "pull", image_tag])
     inspect = run(["docker", "image", "inspect", image_tag])
@@ -132,8 +129,8 @@ def build_smoke_image(registry: str, tag: str) -> tuple[str, str]:
     return image_repo, digest
 
 
-def start_agent_container(agent_token: str, agent_code: str, server_code: str, base_url: str, capabilities: dict[str, Any], image: str, container_name: str, max_slots: int) -> None:
-    run(["docker", "build", "-f", "agent/Dockerfile", "-t", image, "agent"])
+def start_agent_container(agent_token, agent_code, server_code, base_url, capabilities, image, container_name, max_slots, pip_index_url):
+    run(["docker", "build", "--build-arg", "PIP_INDEX_URL=" + pip_index_url, "-f", "agent/Dockerfile", "-t", image, "agent"])
     run(["docker", "rm", "-f", container_name], check=False)
     Path("/data/crawler-platform/projects").mkdir(parents=True, exist_ok=True)
     Path("/var/lib/crawler-agent/runs").mkdir(parents=True, exist_ok=True)
@@ -163,7 +160,7 @@ def start_agent_container(agent_token: str, agent_code: str, server_code: str, b
     ])
 
 
-def terminal_status(client: PlatformClient, task_id: int, run_id: int, timeout_seconds: int) -> str:
+def terminal_status(client, task_id, run_id, timeout_seconds):
     deadline = time.time() + timeout_seconds
     last = ""
     while time.time() < deadline:
@@ -187,7 +184,27 @@ def terminal_status(client: PlatformClient, task_id: int, run_id: int, timeout_s
     raise RuntimeError(f"等待 runId={run_id} 进入终态超时，最后状态：{last}")
 
 
-def main() -> int:
+
+def print_failure_diagnostics(agent_container):
+    commands = [
+        ["docker", "ps", "-a", "--format", "{{.Names}} {{.Status}}"],
+        ["docker", "logs", "--tail", "120", agent_container],
+        ["docker", "compose", "ps"],
+        ["docker", "compose", "logs", "--tail", "120", "api"],
+        ["docker", "compose", "logs", "--tail", "120", "scheduler"],
+    ]
+    print("---- smoke-test diagnostics ----", file=sys.stderr)
+    for cmd in commands:
+        try:
+            print("$ " + " ".join(cmd), file=sys.stderr)
+            proc = subprocess.run(cmd, cwd=str(ROOT), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+            if proc.stdout:
+                print(proc.stdout[-12000:], file=sys.stderr)
+        except Exception as diag_exc:
+            print("diagnostic command failed: %s" % diag_exc, file=sys.stderr)
+    print("---- end diagnostics ----", file=sys.stderr)
+
+def main():
     parser = argparse.ArgumentParser(description="爬虫管理平台零数据测试服端到端 smoke-test")
     parser.add_argument("--base-url", default=os.getenv("SMOKE_BASE_URL", "http://127.0.0.1:8080"))
     parser.add_argument("--env-file", default=".env")
@@ -215,7 +232,7 @@ def main() -> int:
             raise RuntimeError("当前服务器不可用 Docker，无法构建 smoke 镜像")
         ensure_registry(args.registry_container, args.registry_port)
         tag = datetime.now().strftime("%Y%m%d%H%M%S")
-        args.image_repository, args.image_digest = build_smoke_image(args.registry, tag)
+        args.image_repository, args.image_digest = build_smoke_image(args.registry, tag, env.get("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple"))
     if not args.image_repository or not args.image_digest:
         raise RuntimeError("必须提供 --image-repository / --image-digest，或使用 --build-smoke-image")
 
@@ -249,7 +266,7 @@ def main() -> int:
 
     if args.start_agent:
         print("启动真实 Agent 容器...")
-        start_agent_container(agent_token, agent_code, server_code, args.base_url.rstrip("/"), {"smoke": True, "browser": False, "proxy": False}, args.agent_image, args.agent_container, args.max_slots)
+        start_agent_container(agent_token, agent_code, server_code, args.base_url.rstrip("/"), {"smoke": True, "browser": False, "proxy": False}, args.agent_image, args.agent_container, args.max_slots, env.get("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple"))
 
     print("创建公司级项目接入凭证...")
     discovery = client.request("POST", f"/companies/{company_id}/discovery-tokens")
@@ -356,4 +373,9 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         print(f"❌ smoke-test 失败：{exc}", file=sys.stderr)
+        try:
+            container = os.environ.get("SMOKE_AGENT_CONTAINER", "crawler-agent-smoke")
+            print_failure_diagnostics(container)
+        except Exception:
+            pass
         raise

@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")/../.."
+set -Eeuo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT_DIR/deploy/scripts/lib/host.sh"
+cd "$ROOT_DIR"
+cp_trap_diagnostics
 ./deploy/scripts/prepare.sh
+cp_require_docker
+cp_warn_cn_mirrors
 
-MYSQL_ID=$(docker compose ps -q mysql 2>/dev/null || true)
-if [[ -n "$MYSQL_ID" && "$(docker inspect -f '{{.State.Running}}' "$MYSQL_ID" 2>/dev/null || true)" == "true" && "${SKIP_BACKUP:-0}" != "1" ]]; then
+MYSQL_ID=$(cp_compose ps -q mysql 2>/dev/null || true)
+if [ -n "$MYSQL_ID" ] && [ "$(docker inspect -f '{{.State.Running}}' "$MYSQL_ID" 2>/dev/null || true)" = "true" ] && [ "${SKIP_BACKUP:-0}" != "1" ]; then
   ./deploy/scripts/backup.sh
 fi
 
-BUILD_ARGS=(build --progress=plain)
-if [[ "${NO_CACHE:-0}" == "1" ]]; then
-  BUILD_ARGS+=(--no-cache)
+if [ "${NO_CACHE:-0}" = "1" ]; then
+  cp_compose build --progress=plain --no-cache
+else
+  cp_compose build --progress=plain
 fi
-docker compose "${BUILD_ARGS[@]}"
-docker compose up -d mysql redis
-docker compose run --rm migrate
-docker compose up -d --force-recreate api scheduler maintenance web
+cp_compose up -d mysql redis
+cp_compose run --rm migrate
+cp_compose up -d --force-recreate api scheduler maintenance web
 
-PORT=$(awk -F= '/^WEB_PORT=/{print $2}' .env | tail -1)
-PORT=${PORT:-8080}
-for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null; then
-    docker compose ps
-    echo "crawler_platform 部署完成：http://服务器IP:${PORT}"
-    exit 0
-  fi
-  sleep 2
-done
-docker compose ps
-docker compose logs --tail=200 api web
-echo "部署后健康检查失败。" >&2
-exit 1
+PORT="$(cp_env_value .env WEB_PORT)"; PORT="${PORT:-8080}"
+if cp_wait_http "http://127.0.0.1:${PORT}/health" 120 2; then
+  cp_compose ps
+  echo "crawler_platform 部署完成：http://服务器IP:${PORT}"
+  exit 0
+fi
+cp_compose ps
+cp_compose logs --tail=200 api web
+cp_die "部署后健康检查失败。"

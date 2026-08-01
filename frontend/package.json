@@ -1,7 +1,7 @@
 {
   "name": "crawler_platform_frontend",
   "private": true,
-  "version": "3.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

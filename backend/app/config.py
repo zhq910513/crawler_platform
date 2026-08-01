@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     app_name: str = "crawler_platform"
     app_env: str = "production"
-    app_version: str = "3.0.0"
+    app_version: str = "1.0.0"
     timezone: str = "Asia/Shanghai"
     api_prefix: str = "/api/v1"
     platform_public_url: str = ""
