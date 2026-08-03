@@ -2,7 +2,7 @@
 
 ## 1. 首次部署失败
 
-优先收集：`doctor.sh` 输出、`.env` 脱敏副本、`docker compose ps`、API 容器日志、MySQL/Redis 容器日志、磁盘和 inode 使用率。
+优先收集：`doctor.sh` 输出、`.env` 脱敏副本、`docker compose ps`、API 容器日志、MySQL/Redis 容器日志、磁盘和 inode 使用率。注意：宿主机 Python/npm 旧版本或缺失通常只是 WARNING，不应作为部署失败根因，发布检查应使用 Docker 工具容器。
 
 处理顺序：
 
@@ -13,6 +13,13 @@
 5. 迁移体检：Alembic head 是否唯一，MySQL 标识符是否超过 64 字符。
 
 不可直接手工改数据库结构；必须先确认迁移脚本和发布版本。
+
+
+## 1.1 宿主机旧版本兼容原则
+
+客户服务器只要求满足最低部署条件：bash、Docker daemon 可用、Docker Compose 可用、当前用户有 Docker 权限和部署目录写权限。Python、pip、npm、node、curl、git、jq、ss/netstat、timedatectl 都是可选工具；缺失时预检只提示 WARNING，后续流程通过工具容器或降级逻辑处理。
+
+不要用 `python3 -m compileall backend agent` 直接判断平台代码是否可上线。客户宿主机可能是 Python 3.6 或更旧版本，而平台后端/Agent 在 Python 3.12 容器内运行。正确检查命令是：`deploy/scripts/container-compile-check.sh` 或 `deploy/scripts/commercial-release-gate.sh`。
 
 ## 2. Agent 离线或不可调度
 

@@ -26,6 +26,7 @@ if [ "$YES" != "1" ]; then
 fi
 
 cp_fix_project_permissions
+./deploy/scripts/doctor.sh
 cp_require_docker
 cp_warn_cn_mirrors
 

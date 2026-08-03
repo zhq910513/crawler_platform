@@ -11,6 +11,8 @@
 
 ## 升级前检查
 
+- 运行 `deploy/scripts/doctor.sh`，确认最低部署条件满足；warnings 不阻断升级。
+- 运行 `deploy/scripts/container-compile-check.sh`，用 Docker 工具容器确认代码编译，不使用宿主机 Python。
 - 备份 MySQL 数据库。
 - 记录当前镜像 tag 和 digest。
 - 记录当前 `.env` 脱敏副本。
@@ -20,6 +22,7 @@
 ## 升级后检查
 
 - `/health` 返回 `version=1.0.2`。
+- `deploy/scripts/commercial-release-gate.sh` 使用 Docker 工具容器通过，不能因宿主机缺 Python/npm 误失败。
 - Alembic head 为 `0003_expand_schedule_cron_expression`。
 - admin 用户仍可登录。
 - 已有公司、Agent、项目、任务和历史运行记录可查看。

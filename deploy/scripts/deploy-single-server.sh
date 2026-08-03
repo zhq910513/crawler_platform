@@ -4,6 +4,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/deploy/scripts/lib/host.sh"
 cd "$ROOT_DIR"
 cp_trap_diagnostics
+./deploy/scripts/doctor.sh
 ./deploy/scripts/check-env.sh .env
 cp_require_docker
 cp_warn_cn_mirrors

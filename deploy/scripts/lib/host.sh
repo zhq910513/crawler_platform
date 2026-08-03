@@ -59,8 +59,73 @@ cp_version_ge_20_10() {
   return 1
 }
 
+
+cp_docker_server_version() {
+  docker version --format '{{.Server.Version}}' 2>/dev/null | sed 's/[^0-9.].*$//' || true
+}
+
+cp_warn_min_docker() {
+  if cp_version_ge_20_10; then
+    cp_info "Docker 版本满足建议值 20.10+：$(cp_docker_server_version || echo unknown)"
+    return 0
+  fi
+  cp_warn "Docker 版本低于建议值 20.10：$(cp_docker_server_version || echo unknown)。不会阻断部署；若后续构建/运行失败，请优先升级 Docker/Compose。"
+  return 0
+}
+
 cp_require_min_docker() {
-  cp_version_ge_20_10 || cp_die "Docker 版本过低。最低建议 Docker 20.10+，当前：$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown)。" || return 1
+  if [ "${STRICT_DOCKER_VERSION:-0}" = "1" ]; then
+    cp_version_ge_20_10 || cp_die "Docker 版本低于强制最低要求 20.10：$(cp_docker_server_version || echo unknown)。" || return 1
+  else
+    cp_warn_min_docker
+  fi
+}
+
+cp_tool_python_image() { printf '%s\n' "${PYTHON_TOOL_IMAGE:-python:3.12-slim}"; }
+cp_tool_node_image() { printf '%s\n' "${NODE_TOOL_IMAGE:-node:22-alpine}"; }
+cp_tool_curl_image() { printf '%s\n' "${CURL_TOOL_IMAGE:-curlimages/curl:8.10.1}"; }
+
+cp_host_python_modern() {
+  local py="${1:-python3}"
+  cp_command_exists "$py" || return 1
+  "$py" - <<'PYCHECK' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+PYCHECK
+}
+
+cp_python_tool() {
+  # Run Python tooling in a container by default. Host Python is used only when explicitly enabled
+  # and modern enough, so old customer hosts do not break deployment checks.
+  if [ "${CP_USE_HOST_TOOLS:-0}" = "1" ] && cp_host_python_modern python3; then
+    python3 "$@"
+    return $?
+  fi
+  cp_require_docker || return 1
+  docker run --rm -v "${ROOT_DIR:-$(pwd)}:/workspace" -w /workspace -e PYTHONPATH=/workspace/backend "$(cp_tool_python_image)" python "$@"
+}
+
+cp_python_tool_sh() {
+  if [ "${CP_USE_HOST_TOOLS:-0}" = "1" ] && cp_host_python_modern python3; then
+    sh -lc "$*"
+    return $?
+  fi
+  cp_require_docker || return 1
+  docker run --rm -v "${ROOT_DIR:-$(pwd)}:/workspace" -w /workspace -e PYTHONPATH=/workspace/backend "$(cp_tool_python_image)" sh -lc "$*"
+}
+
+cp_node_tool_sh() {
+  cp_require_docker || return 1
+  docker run --rm -v "${ROOT_DIR:-$(pwd)}:/workspace" -w /workspace/frontend -e NPM_CONFIG_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}" "$(cp_tool_node_image)" sh -lc "$*"
+}
+
+cp_curl_tool() {
+  if cp_command_exists curl; then
+    curl "$@"
+    return $?
+  fi
+  cp_require_docker || return 1
+  docker run --rm --network host -v "${ROOT_DIR:-$(pwd)}:${ROOT_DIR:-$(pwd)}" -w "${ROOT_DIR:-$(pwd)}" "$(cp_tool_curl_image)" "$@"
 }
 
 cp_env_value() {

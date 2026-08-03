@@ -21,6 +21,10 @@
 
 环境体检：`./deploy/scripts/doctor.sh`
 
+容器化 Python 编译检查：`./deploy/scripts/container-compile-check.sh`
+
+商业发布门禁：`./deploy/scripts/commercial-release-gate.sh`
+
 国内镜像源配置：`./deploy/scripts/prepare-cn-mirrors.sh --yes`
 
 零数据测试服验收：`./deploy/scripts/test-server-validate.sh --yes --prepare-cn-mirrors`
@@ -40,6 +44,15 @@
 查看前端日志：`docker compose logs --tail=200 web`
 
 后台健康检查：`curl -fsS http://127.0.0.1:8080/health`
+
+
+## 宿主机兼容策略
+
+宿主机最低部署条件只包括：bash、Docker daemon 可用、Docker Compose 可用、当前用户具备 Docker 权限。Python、pip、npm、node、jq、curl、git、ss、netstat、timedatectl 等均属于可选工具；缺失或版本过旧时，预检只给出 WARNING，不打断部署流程。
+
+发布门禁、Python 编译、后端测试、前端构建、smoke-test 默认使用 Docker 工具容器执行。不要在客户服务器上直接执行 `python3 -m compileall backend agent` 作为上线判断，因为客户宿主机可能是 Python 3.6 或更旧版本，会对容器内可正常运行的代码产生误判。
+
+需要强制使用宿主机工具时可显式设置 `CP_USE_HOST_TOOLS=1`，但仅建议研发机使用，测试服和客户服务器默认不启用。
 
 ## API 约定
 

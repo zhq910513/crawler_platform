@@ -7,18 +7,19 @@
 发布前执行商业发布门禁脚本。正式发布必须使用严格模式，不能跳过前端构建。
 
 - `git diff --check`：检查空白和换行问题。
-- Python 编译：覆盖 backend、agent、runtime、migrations、tests。
+- Python 编译：覆盖 backend、agent、runtime、migrations、tests；必须通过 Docker Python 工具容器执行，不允许用客户宿主机旧 Python 作为发布判断。
 - Shell `bash -n`：覆盖 deploy、agent 安装脚本和 smoke 脚本。
 - 后端契约/回归测试：覆盖账号安全、调度、Agent、日志 V2、高频审计过滤。
 - MySQL 标识符长度检查：所有表、索引、外键名必须不超过 64 字符。
 - 商业契约扫描：禁止 `SELECT *`、组件内直接网络请求、动词路径、硬编码敏感值。
-- 前端构建：`npm run build` 必须通过。
+- 宿主机兼容扫描：禁止新增部署脚本对宿主机 Python/npm/jq 的硬依赖。
+- 前端构建：通过 Node Docker 工具容器执行 `npm ci && npm run build`，不依赖宿主机 npm/node_modules。
 
-门禁脚本：`deploy/scripts/commercial-release-gate.sh`。
+门禁脚本：`deploy/scripts/commercial-release-gate.sh`。单独编译检查可执行：`deploy/scripts/container-compile-check.sh`。
 
 ## 2. Fresh Install 验收
 
-- 安装前运行 `deploy/scripts/doctor.sh`，必须能识别 Docker、Compose、权限、端口、磁盘、inode、SELinux、时间同步和镜像源问题。
+- 安装前运行 `deploy/scripts/doctor.sh`，必须能识别 Docker、Compose、权限、端口、磁盘、inode、SELinux、时间同步和镜像源问题；只有 Docker/Compose/权限等最低部署条件不满足时才阻断，Python/npm/curl/git 等缺失只记录 WARNING。
 - 使用空数据库初始化，必须保留 admin 登录能力，不能写入测试业务数据。
 - 安装完成后输出访问地址、默认账号提示和修改默认密码建议。
 - 重复执行安装脚本不得破坏已有数据或产生混乱容器。

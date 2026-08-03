@@ -34,18 +34,6 @@ if [ "$AUTO_MIRRORS" = "1" ]; then
   ./deploy/scripts/prepare-cn-mirrors.sh --yes || cp_warn "国内镜像源自动配置未完成，请检查权限。"
 fi
 
-run_py() {
-  if command -v python3 >/dev/null 2>&1 && python3 - <<'PY' >/dev/null 2>&1
-import sys
-raise SystemExit(0 if sys.version_info >= (3, 6) else 1)
-PY
-  then
-    python3 "$@"
-  else
-    docker run --rm -v "$ROOT_DIR":"$ROOT_DIR" -w "$ROOT_DIR" python:3.12-alpine python "$@"
-  fi
-}
-
 random_secret() {
   if command -v openssl >/dev/null 2>&1; then openssl rand -base64 36 | tr -d '=+/\n' | cut -c1-36; return 0; fi
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-36; echo
@@ -68,7 +56,7 @@ fi
 chmod 0600 .env || true
 
 ./deploy/scripts/check-env.sh .env
-run_py deploy/scripts/check-mysql-identifiers.py
+cp_python_tool deploy/scripts/check-mysql-identifiers.py
 
 WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-8080}"
 

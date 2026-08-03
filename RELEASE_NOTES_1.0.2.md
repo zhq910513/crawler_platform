@@ -62,3 +62,13 @@
 - 后端契约/回归测试：`21 passed`。
 - 商业发布门禁非严格模式：`PASS_WITH_RISK`，风险仅为当前离线环境缺少 git 工作树与 frontend/node_modules，未执行前端构建。
 - 前端构建：当前离线环境缺少 `node_modules/vue-tsc/vite`，未完成 `npm run build`；正式发布门禁中该项为强制项。
+
+## 2026-08-03 宿主机旧版本兼容加固
+
+- 将 `doctor.sh` 调整为“最低部署条件阻断、可选工具警告”模型：只有 Docker、Docker Compose、Docker 权限等最低条件失败才退出；Python/npm/curl/git 等缺失或版本过旧只输出 WARNING。
+- 新增 `deploy/scripts/container-compile-check.sh`，用 Python Docker 工具容器执行编译检查，避免客户宿主机 Python 3.6/2.7 对容器化代码产生误判。
+- 新增 `deploy/scripts/host-compat-scan.py`，发布门禁会扫描部署脚本是否重新引入宿主机 Python/npm/jq 硬依赖。
+- 重写 `commercial-release-gate.sh`：Python 编译、商业契约扫描、MySQL 标识符检查、后端测试、前端构建均改为 Docker 工具容器执行，不再依赖宿主机 Python/npm/node_modules。
+- `smoke-test.sh` 默认改用 Python 3.12 工具容器执行；仅显式设置 `CP_USE_HOST_TOOLS=1` 且宿主机 Python 足够新时才走宿主机。
+- 项目接入模板 `bootstrap.sh` / `preflight.sh` 调整为 Docker 优先：`python3`、`curl`、`git` 缺失不再直接阻断，manifest 解析和 JSON 格式化通过 Python 工具容器完成。
+- `deploy.sh`、`deploy-single-server.sh`、`test-server-validate.sh` 增加体检入口，warnings 不阻断部署流程。
