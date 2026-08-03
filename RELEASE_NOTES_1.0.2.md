@@ -72,3 +72,11 @@
 - `smoke-test.sh` 默认改用 Python 3.12 工具容器执行；仅显式设置 `CP_USE_HOST_TOOLS=1` 且宿主机 Python 足够新时才走宿主机。
 - 项目接入模板 `bootstrap.sh` / `preflight.sh` 调整为 Docker 优先：`python3`、`curl`、`git` 缺失不再直接阻断，manifest 解析和 JSON 格式化通过 Python 工具容器完成。
 - `deploy.sh`、`deploy-single-server.sh`、`test-server-validate.sh` 增加体检入口，warnings 不阻断部署流程。
+
+## 2026-08-03 迁移恢复修复
+
+- 修复 `0002_platform_1_0_2_observability.py` 在 MySQL 下 `alter_column` 缺少 `existing_type` 导致迁移失败的问题。
+- 将 0002 改为幂等恢复迁移：字段、表、索引存在时自动跳过，可恢复“字段已部分添加但 alembic_version 仍停留在 0001”的半迁移状态。
+- `diagnosis_json` 迁移流程调整为先补 `{}`，再执行 NOT NULL 约束变更。
+- `0003_expand_schedule_cron_expression.py` 增加当前字段长度判断，已扩展到 1000 时自动跳过，避免重复执行风险。
+- 新增迁移回归测试 `backend/tests/test_migration_observability_recovery.py`，覆盖 0002 半迁移恢复与 0003 幂等执行。
