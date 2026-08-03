@@ -91,3 +91,9 @@
   - `backend/migrations/versions/0003_expand_schedule_cron_expression.py`
 - 新增 `deploy/scripts/migrate-database.sh`，作为官方数据库迁移入口：清理废弃迁移文件、检查迁移图、重建 migrate 镜像、执行迁移并输出当前版本。
 - `app.migration_main` 增加迁移图自检和废弃迁移文件防御性清理，避免旧包残留再次引发多 head。
+
+### 迁移门禁二次修复
+
+- `deploy/scripts/check-alembic-graph.py` 改为纯 Python 标准库实现，不再依赖 `alembic` 包。
+- `deploy/scripts/migrate-database.sh` 可在镜像重建前执行迁移图检查，不再因通用 Python 工具容器缺少后端依赖而失败。
+- 新增回归测试，防止部署脚本重新引入第三方 Python 包依赖。

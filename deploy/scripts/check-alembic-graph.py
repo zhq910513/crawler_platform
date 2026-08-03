@@ -1,32 +1,90 @@
 #!/usr/bin/env python3
 """Validate Alembic migration graph before release/deploy.
 
-This script intentionally checks the migration *files* rather than the target
-DB. It catches the production issue where obsolete migration files remained in
-backend/migrations/versions and Alembic reported "Multiple head revisions".
+This checker is deliberately standard-library only. It must run in the generic
+Python tool container used by deployment gates, before the project images are
+rebuilt and before backend dependencies such as Alembic are installed. The goal
+is to catch file-level migration graph problems on old customer hosts without
+adding a host Python/npm/jq dependency.
 """
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import sys
-
-from alembic.config import Config
-from alembic.script import ScriptDirectory
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
-BACKEND = ROOT / "backend"
-VERSIONS = BACKEND / "migrations" / "versions"
+VERSIONS = ROOT / "backend" / "migrations" / "versions"
 EXPECTED_HEAD = "0003_schedule_cron_len"
 MAX_ALEMBIC_VERSION_LEN = 32
 OBSOLETE_FILES = {
     "0002_platform_1_0_2_observability.py",
     "0003_expand_schedule_cron_expression.py",
 }
+EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py"]
 
 
 def fail(message: str) -> int:
     print(f"FAIL: {message}", file=sys.stderr)
     return 1
+
+
+def _literal_assignments(path: Path) -> Dict[str, object]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    values: Dict[str, object] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in {"revision", "down_revision"}:
+                try:
+                    values[target.id] = ast.literal_eval(node.value)
+                except Exception as exc:  # pragma: no cover - defensive error formatting
+                    raise ValueError(f"{path.name}: {target.id} 必须是 Python 字面量") from exc
+    return values
+
+
+def _normalize_down_revision(value: object) -> Tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (tuple, list)):
+        result: List[str] = []
+        for item in value:
+            if item is None:
+                continue
+            if not isinstance(item, str):
+                raise ValueError(f"down_revision 包含非字符串值：{item!r}")
+            result.append(item)
+        return tuple(result)
+    raise ValueError(f"down_revision 类型不支持：{type(value).__name__}")
+
+
+def _load_revisions() -> Tuple[Dict[str, str], Dict[str, Tuple[str, ...]]]:
+    revisions: Dict[str, str] = {}
+    downs: Dict[str, Tuple[str, ...]] = {}
+    for path in sorted(VERSIONS.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        values = _literal_assignments(path)
+        revision = values.get("revision")
+        if not isinstance(revision, str) or not revision:
+            raise ValueError(f"{path.name}: 缺少有效 revision")
+        if revision in revisions:
+            raise ValueError(f"重复 revision：{revision}，文件：{revisions[revision]} 与 {path.name}")
+        revisions[revision] = path.name
+        downs[revision] = _normalize_down_revision(values.get("down_revision"))
+    return revisions, downs
+
+
+def _format_mapping(revisions: Dict[str, str], downs: Dict[str, Tuple[str, ...]]) -> str:
+    lines = []
+    for revision in sorted(revisions):
+        down = downs.get(revision, ())
+        lines.append(f"  - {revision} ({revisions[revision]}) <- {down or 'base'}")
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -41,37 +99,52 @@ def main() -> int:
         print("请执行：bash deploy/scripts/cleanup-obsolete-migrations.sh，然后 git add -A && git commit。", file=sys.stderr)
         return 1
 
-    cfg = Config(str(BACKEND / "alembic.ini"))
-    cfg.set_main_option("script_location", str(BACKEND / "migrations"))
-    script = ScriptDirectory.from_config(cfg)
-
-    heads = list(script.get_heads())
-    if heads != [EXPECTED_HEAD]:
-        print(f"检测到异常 Alembic heads：{heads}", file=sys.stderr)
-        print(f"期望唯一 head：{EXPECTED_HEAD}", file=sys.stderr)
+    filenames = sorted(path.name for path in VERSIONS.glob("*.py") if path.name != "__init__.py")
+    if filenames != EXPECTED_FILES:
+        print("迁移文件清单不符合当前 1.0.2 发布基线：", file=sys.stderr)
+        print(f"  当前：{filenames}", file=sys.stderr)
+        print(f"  期望：{EXPECTED_FILES}", file=sys.stderr)
         return 1
 
-    revisions = list(script.walk_revisions())
-    for revision in revisions:
-        values = [revision.revision]
-        down_revision = revision.down_revision
-        if isinstance(down_revision, tuple):
-            values.extend(v for v in down_revision if v)
-        elif down_revision:
-            values.append(down_revision)
-        for value in values:
-            if len(value) > MAX_ALEMBIC_VERSION_LEN:
+    try:
+        revisions, downs = _load_revisions()
+    except Exception as exc:
+        return fail(str(exc))
+
+    for revision, filename in revisions.items():
+        if len(revision) > MAX_ALEMBIC_VERSION_LEN:
+            return fail(
+                f"Alembic revision id 超过 {MAX_ALEMBIC_VERSION_LEN} 字符：{revision}，文件：{filename}。"
+                "MySQL 默认 alembic_version.version_num 无法保存。"
+            )
+        for down_revision in downs.get(revision, ()):  # validate referenced values too
+            if len(down_revision) > MAX_ALEMBIC_VERSION_LEN:
                 return fail(
-                    f"Alembic revision id 超过 {MAX_ALEMBIC_VERSION_LEN} 字符：{value}。"
+                    f"Alembic down_revision 超过 {MAX_ALEMBIC_VERSION_LEN} 字符：{down_revision}，文件：{filename}。"
                     "MySQL 默认 alembic_version.version_num 无法保存。"
                 )
 
-    filenames = sorted(path.name for path in VERSIONS.glob("*.py"))
-    expected_files = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py"]
-    if filenames != expected_files:
-        print("迁移文件清单不符合当前 1.0.2 发布基线：", file=sys.stderr)
-        print(f"  当前：{filenames}", file=sys.stderr)
-        print(f"  期望：{expected_files}", file=sys.stderr)
+    referenced: Set[str] = set()
+    roots: List[str] = []
+    for revision, down_values in downs.items():
+        if not down_values:
+            roots.append(revision)
+        for down_revision in down_values:
+            if down_revision not in revisions:
+                return fail(f"迁移 {revision} 引用了不存在的 down_revision：{down_revision}\n当前迁移图：\n{_format_mapping(revisions, downs)}")
+            referenced.add(down_revision)
+
+    heads = sorted(set(revisions) - referenced)
+    if heads != [EXPECTED_HEAD]:
+        print(f"检测到异常 Alembic heads：{heads}", file=sys.stderr)
+        print(f"期望唯一 head：{EXPECTED_HEAD}", file=sys.stderr)
+        print(f"当前迁移图：\n{_format_mapping(revisions, downs)}", file=sys.stderr)
+        return 1
+
+    if roots != ["0001_initial_platform"]:
+        print(f"检测到异常 Alembic roots：{roots}", file=sys.stderr)
+        print("期望唯一 root：0001_initial_platform", file=sys.stderr)
+        print(f"当前迁移图：\n{_format_mapping(revisions, downs)}", file=sys.stderr)
         return 1
 
     print("Alembic 迁移图检查通过：唯一 head=0003_schedule_cron_len，revision id 均 <= 32，未发现废弃迁移文件。")

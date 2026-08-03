@@ -68,3 +68,10 @@ def test_stale_legacy_files_would_create_multiple_heads(tmp_path: Path) -> None:
     cfg.set_main_option("script_location", str(tmp_path))
     script = ScriptDirectory.from_config(cfg)
     assert sorted(script.get_heads()) == ["0003_expand_schedule_cron_expression", "0003_schedule_cron_len"]
+
+
+def test_deploy_alembic_graph_checker_has_no_third_party_dependency() -> None:
+    checker = ROOT.parent / "deploy" / "scripts" / "check-alembic-graph.py"
+    source = checker.read_text(encoding="utf-8")
+    assert "from alembic" not in source
+    assert "import alembic" not in source
