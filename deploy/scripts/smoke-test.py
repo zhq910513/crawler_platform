@@ -10,8 +10,14 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(line_buffering=True)
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(line_buffering=True)
+
 ROOT = Path(__file__).resolve().parents[2]
 TERMINAL = {"SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELLED", "TIMED_OUT", "LOST", "SKIPPED"}
+DEFAULT_COMMAND_TIMEOUT = int(os.getenv("SMOKE_COMMAND_TIMEOUT_SECONDS", "600"))
 
 
 def load_env(path):
@@ -79,13 +85,29 @@ class PlatformClient:
         return data
 
 
-def run(cmd, cwd=ROOT, check=True):
-    print("$ " + " ".join(cmd))
-    proc = subprocess.run(cmd, cwd=str(cwd), universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+def run(cmd, cwd=ROOT, check=True, timeout=None):
+    timeout = DEFAULT_COMMAND_TIMEOUT if timeout is None else timeout
+    print("$ " + " ".join(cmd), flush=True)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            universal_newlines=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = exc.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode("utf-8", errors="replace")
+        if partial:
+            print(partial.rstrip(), flush=True)
+        raise RuntimeError(f"命令超时({timeout}s)：{' '.join(cmd)}") from exc
     if proc.stdout:
-        print(proc.stdout.rstrip())
+        print(proc.stdout.rstrip(), flush=True)
     if check and proc.returncode != 0:
-        raise RuntimeError(f"命令执行失败：{' '.join(cmd)}")
+        raise RuntimeError(f"命令执行失败({proc.returncode})：{' '.join(cmd)}")
     return proc.stdout
 
 
@@ -176,7 +198,7 @@ def terminal_status(client, task_id, run_id, timeout_seconds):
             server = target.get("serverId")
             msg = f"runId={run_id} runStatus={status} routingStatus={routing} serverId={server}"
             if msg != last:
-                print(msg)
+                print(msg, flush=True)
                 last = msg
             if status in TERMINAL:
                 return status

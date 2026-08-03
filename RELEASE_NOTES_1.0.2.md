@@ -104,3 +104,15 @@
 - 新增 `check-version-consistency.sh`，商业发布门禁会检查 `.env` 运行版本、镜像 tag、Compose 配置和源码默认版本风险。
 - 新增 `release-upgrade.sh` 官方升级入口，串联体检、版本同步、门禁、备份、迁移、构建、启动和健康检查。
 - `/health` 增加 `gitCommit`、`buildTime`、`migrationVersion`，方便确认代码、镜像和数据库迁移是否一致。
+
+## 2026-08-03 smoke-test 与前端版本元信息加固
+
+- `deploy/scripts/smoke-test.sh` 不再使用 `exec docker run` 替换父进程，避免 Ctrl+C/timeout 难以退出。
+- smoke-test 优先使用宿主 `python3 >= 3.6` 运行标准库脚本；缺失时才使用受控工具容器。
+- 工具容器执行增加容器名、总超时、日志透出、失败清理和强制终止机制。
+- `deploy/scripts/smoke-test.py` 增加命令级超时和行缓冲输出，避免长时间无日志。
+- 前端 Dockerfile 支持 `APP_VERSION`、`APP_GIT_COMMIT`、`APP_BUILD_TIME` 构建参数。
+- 前端构建产物新增 `/version.json`，可独立查看前端版本、Git commit 和构建时间。
+- 前端侧边栏展示前端/后端版本，鼠标悬停可查看 commit、buildTime、migrationVersion。
+- `release-upgrade.sh` 发布完成后会校验后端 `/health` 与前端 `/version.json` 的版本一致性。
+- 商业发布门禁改为构建真实 web 镜像并检查镜像内 `/version.json`，避免前端版本元信息漏注入。

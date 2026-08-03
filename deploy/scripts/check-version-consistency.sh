@@ -30,9 +30,14 @@ fi
 
 if [ -f frontend/package.json ]; then
   frontend_version="$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' frontend/package.json | head -n 1)"
-  [ -z "$frontend_version" ] || [ "$frontend_version" = "$RELEASE_VERSION" ] || warn "frontend/package.json version=${frontend_version} 与当前发布版本 ${RELEASE_VERSION} 不一致；前端运行版本以后端 /health 为准。"
+  if [ -n "$frontend_version" ] && [ "$frontend_version" != "$RELEASE_VERSION" ]; then
+    if grep -q 'no-git-tag-version' frontend/Dockerfile 2>/dev/null; then
+      cp_info "frontend/package.json baseline=${frontend_version}；Dockerfile 构建时会注入发布版本 ${RELEASE_VERSION} 并生成 /version.json。"
+    else
+      warn "frontend/package.json version=${frontend_version} 与当前发布版本 ${RELEASE_VERSION} 不一致，且未检测到 Dockerfile 版本注入。"
+    fi
+  fi
 fi
-
 if [ -f backend/app/config.py ]; then
   backend_default="$(sed -nE 's/^[[:space:]]*app_version:[^=]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' backend/app/config.py | head -n 1)"
   [ -z "$backend_default" ] || [ "$backend_default" = "$RELEASE_VERSION" ] || warn "backend 默认 app_version=${backend_default} 与当前发布版本 ${RELEASE_VERSION} 不一致；生产运行以 .env APP_VERSION 为准。"

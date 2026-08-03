@@ -14,6 +14,10 @@ risk() { printf 'RISK: %s\n' "$*" >&2; RISK=1; }
 run_step() { local name="$1"; shift; log "$name"; "$@" || fail "$name 未通过"; }
 
 cd "$ROOT_DIR" || exit 1
+release_env="$(bash deploy/scripts/resolve-release-version.sh --export 2>/dev/null || true)"
+if [ -n "$release_env" ]; then
+  eval "$release_env"
+fi
 
 # 商业发布门禁必须只依赖最低宿主机能力：Docker + Compose + bash。
 # Python/npm 等检查全部通过工具容器执行，避免客户旧宿主机 Python 3.6/2.7、无 npm、无 node_modules 时误失败。
@@ -52,11 +56,19 @@ fi
 
 if [ -f frontend/package.json ]; then
   if [ "$STRICT_FRONTEND_BUILD" = "1" ]; then
-    log "前端构建测试（Node Docker 工具容器）"
-    cp_node_tool_sh "npm ci --no-audit --no-fund && npm run build" || fail "前端构建未通过"
+    log "前端镜像构建测试（Dockerfile 注入版本元信息）"
+    cp_compose build web || fail "前端镜像构建未通过"
+    log "前端 /version.json 镜像产物检查"
+    image_tag="$(cp_env_value .env PLATFORM_IMAGE_TAG)"
+    image_tag="${image_tag:-${RELEASE_VERSION:-latest}}"
+    version_json="$(docker run --rm --entrypoint cat "crawler_platform_web:${image_tag}" /usr/share/nginx/html/version.json 2>/dev/null || true)"
+    printf '%s\n' "$version_json"
+    if ! printf '%s' "$version_json" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"${RELEASE_VERSION:-}"'"'; then
+      fail "前端 /version.json 未正确写入发布版本"
+    fi
   else
     log "前端构建测试（非严格模式）"
-    cp_node_tool_sh "npm ci --no-audit --no-fund && npm run build" || risk "前端构建未通过，非严格模式记录为风险"
+    cp_compose build web || risk "前端镜像构建未通过，非严格模式记录为风险"
   fi
 fi
 

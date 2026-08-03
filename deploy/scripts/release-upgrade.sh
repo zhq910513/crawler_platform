@@ -37,13 +37,34 @@ for i in $(seq 1 60); do
 done
 
 printf '%s\n' "$health_json"
-if ! printf '%s' "$health_json" | grep -q '"version":"'"$RELEASE_VERSION"'"'; then
+if ! printf '%s' "$health_json" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$RELEASE_VERSION"'"'; then
   cp_print_diagnostics || true
   cp_die "/health 版本与发布版本不一致，期望 ${RELEASE_VERSION}。"
   exit 1
 fi
-if ! printf '%s' "$health_json" | grep -q '"gitCommit":"'"$RELEASE_GIT_COMMIT"'"'; then
+if ! printf '%s' "$health_json" | grep -Eq '"gitCommit"[[:space:]]*:[[:space:]]*"'"$RELEASE_GIT_COMMIT"'"'; then
   cp_warn "/health gitCommit 与当前 Git commit 不一致；请确认镜像是否完成重建。"
+fi
+
+web_port="$(cp_env_value .env WEB_PORT)"
+web_port="${web_port:-8080}"
+cp_info "校验前端版本文件 /version.json。"
+version_json=""
+for i in $(seq 1 30); do
+  version_json="$(cp_curl_tool -fsS "http://127.0.0.1:${web_port}/version.json" 2>/dev/null || true)"
+  if printf '%s' "$version_json" | grep -q '"appName"'; then
+    break
+  fi
+  sleep 2
+done
+printf '%s\n' "$version_json"
+if ! printf '%s' "$version_json" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$RELEASE_VERSION"'"'; then
+  cp_print_diagnostics || true
+  cp_die "/version.json 版本与发布版本不一致，期望 ${RELEASE_VERSION}。"
+  exit 1
+fi
+if ! printf '%s' "$version_json" | grep -Eq '"gitCommit"[[:space:]]*:[[:space:]]*"'"$RELEASE_GIT_COMMIT"'"'; then
+  cp_warn "/version.json gitCommit 与当前 Git commit 不一致；请确认 web 镜像是否完成重建。"
 fi
 
 cp_info "发布升级完成：RELEASE_UPGRADE=PASS version=${RELEASE_VERSION}"
