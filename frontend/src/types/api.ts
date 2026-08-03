@@ -1,3 +1,16 @@
+
+export interface SystemVersionInfo {
+  appName: string
+  version: string
+  gitCommit: string
+  buildTime: string
+}
+
+export interface BackendHealthData extends SystemVersionInfo {
+  status: string
+  migrationVersion: string
+}
+
 export interface ApiResponse<T> {
   code: number
   message: string

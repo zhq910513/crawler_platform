@@ -5,6 +5,10 @@
       <el-menu router :default-active="$route.path" background-color="#111827" text-color="#cbd5e1" active-text-color="#ffffff">
         <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">{{ item.title }}</el-menu-item>
       </el-menu>
+      <div class="version-box">
+        <div :title="frontendVersionTitle">前端 v{{ frontendVersion.version }}</div>
+        <div :title="backendVersionTitle">后端 v{{ backendVersion?.version || '-' }}</div>
+      </div>
     </el-aside>
     <el-container>
       <el-header class="header">
@@ -39,6 +43,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { changeOwnPassword } from '../api/platform'
+import { getBackendHealth, getFrontendVersion } from '../api/health'
+import { frontendBuildVersion } from '../config/version'
+import type { BackendHealthData, SystemVersionInfo } from '../types/api'
 import { deleteSession } from '../api/sessions'
 import { clearSession, sessionState } from '../stores/session'
 
@@ -59,10 +66,20 @@ const passwordDialogVisible = ref(false)
 const passwordSaving = ref(false)
 const passwordRequired = computed(() => Boolean(sessionState.user?.passwordChangeRequired))
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const frontendVersion = ref<SystemVersionInfo>(frontendBuildVersion)
+const backendVersion = ref<BackendHealthData | null>(null)
+const frontendVersionTitle = computed(() => `commit: ${frontendVersion.value.gitCommit}\nbuild: ${frontendVersion.value.buildTime}`)
+const backendVersionTitle = computed(() => backendVersion.value ? `commit: ${backendVersion.value.gitCommit}\nbuild: ${backendVersion.value.buildTime}\nmigration: ${backendVersion.value.migrationVersion}` : '后端版本加载中')
 
 onMounted(() => {
   if (passwordRequired.value) passwordDialogVisible.value = true
+  loadVersionInfo()
 })
+
+async function loadVersionInfo() {
+  frontendVersion.value = await getFrontendVersion()
+  backendVersion.value = await getBackendHealth().catch(() => null)
+}
 
 function openPasswordDialog() {
   passwordForm.oldPassword = ''
@@ -93,10 +110,11 @@ async function logout() {
 
 <style scoped>
 .layout { min-height: 100vh; }
-.aside { background: #111827; }
+.aside { background: #111827; position: relative; }
 .brand { color: #fff; font-size: 20px; font-weight: 700; height: 56px; display: flex; align-items: center; padding-left: 22px; border-bottom: 1px solid #243142; }
 .header { background: #fff; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e5e7eb; font-size: 16px; font-weight: 600; }
 .user-box { display: flex; gap: 12px; align-items: center; font-weight: 400; }
 .password-alert { margin-bottom: 12px; }
 .el-menu { border-right: none; }
+.version-box { position: absolute; left: 16px; right: 16px; bottom: 14px; color: #94a3b8; font-size: 12px; line-height: 1.7; border-top: 1px solid #243142; padding-top: 10px; word-break: break-all; }
 </style>
