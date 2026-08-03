@@ -68,13 +68,13 @@ class AlertService:
             raise AppError("资源不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         try:
             self._send(channel, payload.title, payload.content)
-            write_operation_log(self.db, user, None, operation_type="TEST_NOTIFICATION_CHANNEL", resource_type="notification_channel", resource_id=str(channel.channel_id), after_data={"success": True})
+            write_operation_log(self.db, user, None, operation_type="CHECK_NOTIFICATION_CHANNEL", resource_type="notification_channel", resource_id=str(channel.channel_id), after_data={"success": True})
             channel.last_test_at = utcnow()
             channel.last_test_result = "测试发送成功"
             self.db.commit()
             return {"success": True, "message": channel.last_test_result}
         except Exception as exc:
-            write_operation_log(self.db, user, None, operation_type="TEST_NOTIFICATION_CHANNEL", resource_type="notification_channel", resource_id=str(channel.channel_id), after_data={"success": False, "error": str(exc)[:500]}, status="FAILED", error_message=str(exc)[:1000])
+            write_operation_log(self.db, user, None, operation_type="CHECK_NOTIFICATION_CHANNEL", resource_type="notification_channel", resource_id=str(channel.channel_id), after_data={"success": False, "error": str(exc)[:500]}, status="FAILED", error_message=str(exc)[:1000])
             channel.last_test_at = utcnow()
             channel.last_test_result = f"测试失败：{exc}"
             self.db.commit()

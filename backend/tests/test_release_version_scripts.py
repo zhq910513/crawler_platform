@@ -57,3 +57,19 @@ def test_frontend_dockerfile_injects_package_version_after_copy_all() -> None:
     copy_all = max(index for index, line in enumerate(lines, start=1) if line.strip() == 'COPY . .')
     npm_version = max(index for index, line in enumerate(lines, start=1) if 'npm version "$APP_VERSION"' in line)
     assert npm_version > copy_all
+
+
+def test_ci_and_docs_do_not_use_test_prefixed_server_secrets() -> None:
+    checked = [
+        ROOT / '.github/workflows/deploy-test-server.yml',
+        ROOT / 'docs/auto-deploy-test-server.md',
+        ROOT / 'backend/app/services/alert_service.py',
+    ]
+    for path in checked:
+        source = path.read_text(encoding='utf-8')
+        assert ('TE' + 'ST_SERVER_') not in source
+        assert ('TE' + 'ST_NOTIFICATION_CHANNEL') not in source
+
+    workflow = (ROOT / '.github/workflows/deploy-test-server.yml').read_text(encoding='utf-8')
+    for secret in ['SERVER_HOST', 'SERVER_USER', 'SERVER_SSH_KEY', 'SERVER_PORT', 'SERVER_PROJECT_DIR']:
+        assert f'secrets.{secret}' in workflow
