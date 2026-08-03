@@ -81,3 +81,13 @@
 - `0003_schedule_cron_len.py` 增加当前字段长度判断，已扩展到 1000 时自动跳过，避免重复执行风险。
 - 新增迁移回归测试 `backend/tests/test_migration_observability_recovery.py`，覆盖 0002 半迁移恢复与 0003 幂等执行。
 - 修正 0002/0003 Alembic revision id 长度，避免 MySQL 默认 `alembic_version.version_num VARCHAR(32)` 写入长版本号失败。
+
+## 迁移图恢复修复
+
+- 修复测试服升级时 Alembic 同时扫描旧长 revision 文件和新短 revision 文件导致的 `Multiple head revisions are present`。
+- 新增 `deploy/scripts/check-alembic-graph.py`，商业发布门禁会强制检查唯一 head、revision id 长度、废弃迁移文件残留。
+- 新增 `deploy/scripts/cleanup-obsolete-migrations.sh`，用于删除旧文件：
+  - `backend/migrations/versions/0002_platform_1_0_2_observability.py`
+  - `backend/migrations/versions/0003_expand_schedule_cron_expression.py`
+- 新增 `deploy/scripts/migrate-database.sh`，作为官方数据库迁移入口：清理废弃迁移文件、检查迁移图、重建 migrate 镜像、执行迁移并输出当前版本。
+- `app.migration_main` 增加迁移图自检和废弃迁移文件防御性清理，避免旧包残留再次引发多 head。
