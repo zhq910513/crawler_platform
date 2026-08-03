@@ -97,3 +97,10 @@
 - `deploy/scripts/check-alembic-graph.py` 改为纯 Python 标准库实现，不再依赖 `alembic` 包。
 - `deploy/scripts/migrate-database.sh` 可在镜像重建前执行迁移图检查，不再因通用 Python 工具容器缺少后端依赖而失败。
 - 新增回归测试，防止部署脚本重新引入第三方 Python 包依赖。
+## 版本一致性与自动化发布入口补强
+
+- 新增 `VERSION` 文件和 `resolve-release-version.sh`，发布版本优先从当前 Git tag 解析，其次从最新 commit message 解析，最后回退到 `VERSION`。
+- 新增 `sync-runtime-version.sh`，自动同步 `.env` 中的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT`、`APP_BUILD_TIME`，避免代码已更新但运行镜像仍是旧版本。
+- 新增 `check-version-consistency.sh`，商业发布门禁会检查 `.env` 运行版本、镜像 tag、Compose 配置和源码默认版本风险。
+- 新增 `release-upgrade.sh` 官方升级入口，串联体检、版本同步、门禁、备份、迁移、构建、启动和健康检查。
+- `/health` 增加 `gitCommit`、`buildTime`、`migrationVersion`，方便确认代码、镜像和数据库迁移是否一致。

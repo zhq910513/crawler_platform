@@ -5,6 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from sqlalchemy import text
 
 from app.api import routers
 from app.config import settings
@@ -109,9 +110,25 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content={"code": 50000, "message": "服务器内部错误", "data": None})
 
 
+def _read_migration_version() -> str:
+    try:
+        with SessionLocal() as db:
+            value = db.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar()
+            return str(value or "unknown")
+    except Exception:
+        return "unknown"
+
+
 @app.get("/health")
 def health():
-    return ok({"status": "ok", "appName": settings.app_name, "version": settings.app_version})
+    return ok({
+        "status": "ok",
+        "appName": settings.app_name,
+        "version": settings.app_version,
+        "gitCommit": settings.app_git_commit,
+        "buildTime": settings.app_build_time,
+        "migrationVersion": _read_migration_version(),
+    })
 
 
 for router in routers:

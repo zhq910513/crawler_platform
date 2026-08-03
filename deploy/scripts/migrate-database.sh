@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 cp_require_docker
 cp_fix_project_permissions || true
+bash deploy/scripts/sync-runtime-version.sh
 bash deploy/scripts/cleanup-obsolete-migrations.sh >/tmp/crawler_platform_migration_cleanup.log
 cp_python_tool deploy/scripts/check-alembic-graph.py
 cp_info "重建 migrate 镜像，确保容器内迁移文件与当前 Git 代码一致。"
