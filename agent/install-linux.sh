@@ -5,7 +5,8 @@ AGENT_HOME="${AGENT_HOME:-/opt/crawler-agent}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-/var/lib/crawler-agent}"
 AGENT_PROJECT_DATA_ROOT="${AGENT_PROJECT_DATA_ROOT:-/data/crawler-platform/projects}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.1}"
+AGENT_VERSION="${AGENT_VERSION:-${AGENT_AGENT_VERSION:-1.0.2}}"
+AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:${AGENT_VERSION}}"
 ENV_FILE="${ENV_FILE:-$AGENT_HOME/.env}"
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
@@ -30,7 +31,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 if [ -f Dockerfile ] && [ -d crawler_agent ]; then
-  docker build --build-arg "PIP_INDEX_URL=$PIP_INDEX_URL" -f Dockerfile -t "$AGENT_IMAGE" .
+  docker build --build-arg "PIP_INDEX_URL=$PIP_INDEX_URL" --build-arg "APP_VERSION=$AGENT_VERSION" --build-arg "APP_GIT_COMMIT=${AGENT_GIT_COMMIT:-unknown}" --build-arg "APP_BUILD_TIME=${AGENT_BUILD_TIME:-unknown}" -f Dockerfile -t "$AGENT_IMAGE" .
 fi
 
 docker rm -f "$AGENT_CONTAINER_NAME" >/dev/null 2>&1 || true

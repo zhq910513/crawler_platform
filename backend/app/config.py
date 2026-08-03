@@ -8,15 +8,17 @@ import secrets
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.version import default_build_time, default_git_commit, default_version
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "crawler_platform"
     app_env: str = "production"
-    app_version: str = "1.0.2"
-    app_git_commit: str = "unknown"
-    app_build_time: str = "unknown"
+    app_version: str = Field(default_factory=default_version)
+    app_git_commit: str = Field(default_factory=default_git_commit)
+    app_build_time: str = Field(default_factory=default_build_time)
     timezone: str = "Asia/Shanghai"
     api_prefix: str = "/api/v1"
     platform_public_url: str = ""

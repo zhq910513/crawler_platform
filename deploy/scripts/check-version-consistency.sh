@@ -3,9 +3,10 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/deploy/scripts/lib/host.sh"
+. "$ROOT_DIR/deploy/scripts/lib/version.sh"
 cd "$ROOT_DIR"
 
-release_env="$(bash deploy/scripts/resolve-release-version.sh --export)"
+release_env="$(cp_resolve_release_version)"
 eval "$release_env"
 : "${RELEASE_VERSION:?}"
 
@@ -13,6 +14,7 @@ failures=0
 warnings=0
 fail() { cp_error "$*"; failures=$((failures + 1)); }
 warn() { cp_warn "$*"; warnings=$((warnings + 1)); }
+info() { cp_info "$*"; }
 
 if [ ! -f .env ]; then
   fail ".env 不存在，无法确认运行版本。"
@@ -25,27 +27,50 @@ fi
 
 if [ -f VERSION ]; then
   version_file="$(tr -d '[:space:]' < VERSION)"
-  [ "$version_file" = "$RELEASE_VERSION" ] || warn "VERSION=${version_file} 与当前发布版本 ${RELEASE_VERSION} 不一致；发布版本来源=${RELEASE_VERSION_SOURCE:-unknown}。"
+  if [ "$version_file" != "$RELEASE_VERSION" ]; then
+    warn "VERSION=${version_file} 与当前发布版本 ${RELEASE_VERSION} 不一致；发布版本来源=${RELEASE_VERSION_SOURCE:-unknown}。VERSION 仅作为无 Git 版本信息时的 fallback。"
+  fi
+fi
+
+if [ -f deploy/scripts/lib/version.sh ] && grep -q 'cp_resolve_release_version' deploy/scripts/lib/version.sh; then
+  info "公共 Shell 版本模块存在：deploy/scripts/lib/version.sh"
+else
+  fail "缺少公共 Shell 版本模块 deploy/scripts/lib/version.sh。"
+fi
+
+if [ -f backend/app/version.py ] && grep -q 'def release_metadata' backend/app/version.py && grep -q 'default_version' backend/app/config.py; then
+  info "后端使用公共运行版本适配器：backend/app/version.py"
+else
+  fail "后端未接入公共运行版本适配器。"
+fi
+
+if [ -f agent/crawler_agent/version.py ] && grep -q 'def release_metadata' agent/crawler_agent/version.py && grep -q 'default_version' agent/crawler_agent/config.py; then
+  info "Agent 使用公共运行版本适配器：agent/crawler_agent/version.py"
+else
+  fail "Agent 未接入公共运行版本适配器。"
+fi
+
+if [ -f frontend/src/config/version.ts ] && grep -q 'VITE_APP_VERSION' frontend/src/config/version.ts && grep -q 'version.json' frontend/Dockerfile; then
+  info "前端使用构建注入版本与 /version.json。"
+else
+  fail "前端未接入构建注入版本与 /version.json。"
+fi
+
+if grep -q 'npm version "\$APP_VERSION"' frontend/Dockerfile 2>/dev/null; then
+  copy_line="$(grep -n '^COPY \. \.' frontend/Dockerfile | tail -n 1 | cut -d: -f1 || true)"
+  version_line="$(grep -n 'npm version "\$APP_VERSION"' frontend/Dockerfile | tail -n 1 | cut -d: -f1 || true)"
+  if [ -n "$copy_line" ] && [ -n "$version_line" ] && [ "$version_line" -gt "$copy_line" ]; then
+    info "前端 package.json 构建版本会在 COPY . . 后注入，避免被源码覆盖。"
+  else
+    fail "frontend/Dockerfile 中 npm version 必须在 COPY . . 之后执行。"
+  fi
+else
+  fail "frontend/Dockerfile 未检测到 npm version APP_VERSION 注入。"
 fi
 
 if [ -f frontend/package.json ]; then
   frontend_version="$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' frontend/package.json | head -n 1)"
-  if [ -n "$frontend_version" ] && [ "$frontend_version" != "$RELEASE_VERSION" ]; then
-    if grep -q 'no-git-tag-version' frontend/Dockerfile 2>/dev/null; then
-      cp_info "frontend/package.json baseline=${frontend_version}；Dockerfile 构建时会注入发布版本 ${RELEASE_VERSION} 并生成 /version.json。"
-    else
-      warn "frontend/package.json version=${frontend_version} 与当前发布版本 ${RELEASE_VERSION} 不一致，且未检测到 Dockerfile 版本注入。"
-    fi
-  fi
-fi
-if [ -f backend/app/config.py ]; then
-  backend_default="$(sed -nE 's/^[[:space:]]*app_version:[^=]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' backend/app/config.py | head -n 1)"
-  [ -z "$backend_default" ] || [ "$backend_default" = "$RELEASE_VERSION" ] || warn "backend 默认 app_version=${backend_default} 与当前发布版本 ${RELEASE_VERSION} 不一致；生产运行以 .env APP_VERSION 为准。"
-fi
-
-if [ -f agent/crawler_agent/__init__.py ]; then
-  agent_version="$(sed -nE 's/^__version__[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)"/\1/p' agent/crawler_agent/__init__.py | head -n 1)"
-  [ -z "$agent_version" ] || [ "$agent_version" = "$RELEASE_VERSION" ] || warn "agent __version__=${agent_version} 与当前发布版本 ${RELEASE_VERSION} 不一致；Agent 镜像 tag 以发布版本为准。"
+  [ -z "$frontend_version" ] || info "frontend/package.json baseline=${frontend_version}；Docker 构建时统一注入发布版本 ${RELEASE_VERSION}。"
 fi
 
 if grep -R "crawler_platform_.*:1\.0\.1" -n docker-compose.yml deploy/compose 2>/dev/null; then

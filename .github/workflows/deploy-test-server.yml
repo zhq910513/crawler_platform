@@ -1,0 +1,54 @@
+name: Deploy crawler_platform to test server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: crawler-platform-test-server
+  cancel-in-progress: false
+
+jobs:
+  release-gate:
+    name: Commercial release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync runtime version for CI gate
+        run: bash deploy/scripts/sync-runtime-version.sh
+
+      - name: Run commercial release gate
+        run: bash deploy/scripts/commercial-release-gate.sh
+
+  deploy-test-server:
+    name: Deploy test server by SSH
+    runs-on: ubuntu-latest
+    needs: release-gate
+    timeout-minutes: 60
+    steps:
+      - name: Deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.TEST_SERVER_HOST }}
+          username: ${{ secrets.TEST_SERVER_USER }}
+          key: ${{ secrets.TEST_SERVER_SSH_KEY }}
+          port: ${{ secrets.TEST_SERVER_PORT || '22' }}
+          script_stop: true
+          command_timeout: 60m
+          script: |
+            set -Eeuo pipefail
+            cd "${{ secrets.TEST_SERVER_PROJECT_DIR }}"
+            if [ ! -x deploy/scripts/remote-auto-deploy.sh ]; then
+              if [ -n "$(git status --porcelain)" ]; then git status --short; exit 1; fi
+              git fetch origin main --tags
+              git checkout main
+              git pull --ff-only origin main
+            fi
+            CP_DEPLOY_BRANCH="main" CP_DEPLOY_COMMIT="${{ github.sha }}" bash deploy/scripts/remote-auto-deploy.sh

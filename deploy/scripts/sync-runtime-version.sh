@@ -3,9 +3,10 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/deploy/scripts/lib/host.sh"
+. "$ROOT_DIR/deploy/scripts/lib/version.sh"
 cd "$ROOT_DIR"
 
-release_env="$(bash deploy/scripts/resolve-release-version.sh --export)"
+release_env="$(cp_resolve_release_version)"
 eval "$release_env"
 : "${RELEASE_VERSION:?}"
 : "${RELEASE_GIT_COMMIT:?}"
@@ -37,6 +38,23 @@ set_env_key APP_VERSION "$RELEASE_VERSION"
 set_env_key PLATFORM_IMAGE_TAG "$RELEASE_VERSION"
 set_env_key APP_GIT_COMMIT "$RELEASE_GIT_COMMIT"
 set_env_key APP_BUILD_TIME "$build_time"
+# AgentConfig uses AGENT_ prefix; keep platform release metadata available to dockerized/standalone agents.
+set_env_key AGENT_AGENT_VERSION "$RELEASE_VERSION"
+set_env_key AGENT_GIT_COMMIT "$RELEASE_GIT_COMMIT"
+set_env_key AGENT_BUILD_TIME "$build_time"
+
+mkdir -p .release
+cp_runtime_metadata_json "crawler_platform" "$RELEASE_VERSION" "$RELEASE_GIT_COMMIT" "$build_time" > .release/version.json
+cat > .release/version.env <<EOF_ENV
+APP_VERSION=$RELEASE_VERSION
+PLATFORM_IMAGE_TAG=$RELEASE_VERSION
+APP_GIT_COMMIT=$RELEASE_GIT_COMMIT
+APP_BUILD_TIME=$build_time
+AGENT_AGENT_VERSION=$RELEASE_VERSION
+AGENT_GIT_COMMIT=$RELEASE_GIT_COMMIT
+AGENT_BUILD_TIME=$build_time
+EOF_ENV
 
 cp_info "运行版本已同步：version=${RELEASE_VERSION} source=${RELEASE_VERSION_SOURCE:-unknown} gitCommit=${RELEASE_GIT_COMMIT} buildTime=${build_time}"
 cp_info ".env 已备份：${backup}"
+cp_info "公共发布元数据已生成：.release/version.json"

@@ -45,7 +45,7 @@ AGENT_ENV
   chmod 600 agent/.env.local
 fi
 cp_compose build api web migrate
-docker build -f agent/Dockerfile -t "${AGENT_IMAGE:-crawler_platform_agent:${APP_VERSION_VALUE}}" agent
+docker build --build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}" --build-arg "APP_VERSION=${APP_VERSION_VALUE}" --build-arg "APP_GIT_COMMIT=$(cp_env_value .env APP_GIT_COMMIT)" --build-arg "APP_BUILD_TIME=$(cp_env_value .env APP_BUILD_TIME)" -f agent/Dockerfile -t "${AGENT_IMAGE:-crawler_platform_agent:${APP_VERSION_VALUE}}" agent
 cp_compose up -d mysql redis
 cp_compose run --rm migrate
 cp_compose up -d --force-recreate api scheduler maintenance web

@@ -116,3 +116,14 @@
 - 前端侧边栏展示前端/后端版本，鼠标悬停可查看 commit、buildTime、migrationVersion。
 - `release-upgrade.sh` 发布完成后会校验后端 `/health` 与前端 `/version.json` 的版本一致性。
 - 商业发布门禁改为构建真实 web 镜像并检查镜像内 `/version.json`，避免前端版本元信息漏注入。
+
+## 自动部署与公共版本模块补丁（1.0.6）
+
+- 新增 GitHub Actions 测试服自动部署工作流 `.github/workflows/deploy-test-server.yml`。
+- 新增 `deploy/scripts/remote-auto-deploy.sh`，测试服自动部署前检查工作区干净、禁止覆盖本地未推送提交、按 GitHub 传入 commit 精确部署。
+- 新增公共 Shell 版本模块 `deploy/scripts/lib/version.sh`，统一 Git tag / commit message / VERSION 解析逻辑。
+- 后端新增 `backend/app/version.py`，`/health` 版本元信息统一从运行版本元数据读取。
+- Agent 新增 `agent/crawler_agent/version.py`，Agent 版本统一从 `AGENT_AGENT_VERSION` / 公共运行版本读取。
+- 前端 Dockerfile 调整版本注入顺序，确保 `npm run build` 阶段的 package version 不会被 `COPY . .` 覆盖。
+- `sync-runtime-version.sh` 生成 `.release/version.json` 和 `.release/version.env`，作为统一运行版本元数据。
+- `check-version-consistency.sh` 增强为检查前端、后端、Agent 是否接入公共版本契约。

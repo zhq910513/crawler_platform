@@ -14,3 +14,5 @@ agent/state.json
 !**/.env.example
 agent/.env.local
 crawler_agent.env
+
+.release/

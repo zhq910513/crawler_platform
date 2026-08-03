@@ -7,6 +7,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from crawler_agent.version import default_build_time, default_git_commit, default_version
+
 
 class AgentConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AGENT_", extra="ignore")
@@ -15,7 +17,9 @@ class AgentConfig(BaseSettings):
     agent_token: str = Field(default="")
     agent_code: str = Field(default="")
     server_code: str = Field(default="")
-    agent_version: str = Field(default="1.0.2")
+    agent_version: str = Field(default_factory=default_version)
+    git_commit: str = Field(default_factory=default_git_commit)
+    build_time: str = Field(default_factory=default_build_time)
     protocol_version: str = Field(default="1.0")
     instance_id: str = Field(default_factory=lambda: f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}")
     max_slots: int = Field(default=2, ge=1, le=100)

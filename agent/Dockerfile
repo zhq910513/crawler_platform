@@ -4,11 +4,17 @@ FROM python:3.12-slim
 WORKDIR /opt/crawler-agent
 
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG APP_VERSION=unknown
+ARG APP_GIT_COMMIT=unknown
+ARG APP_BUILD_TIME=unknown
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    AGENT_AGENT_VERSION=${APP_VERSION} \
+    AGENT_GIT_COMMIT=${APP_GIT_COMMIT} \
+    AGENT_BUILD_TIME=${APP_BUILD_TIME}
 
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 

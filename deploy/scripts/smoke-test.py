@@ -152,7 +152,7 @@ def build_smoke_image(registry, tag, pip_index_url):
 
 
 def start_agent_container(agent_token, agent_code, server_code, base_url, capabilities, image, container_name, max_slots, pip_index_url):
-    run(["docker", "build", "--build-arg", "PIP_INDEX_URL=" + pip_index_url, "-f", "agent/Dockerfile", "-t", image, "agent"])
+    run(["docker", "build", "--build-arg", "PIP_INDEX_URL=" + pip_index_url, "--build-arg", "APP_VERSION=smoke-test", "--build-arg", "APP_GIT_COMMIT=smoke-test", "--build-arg", "APP_BUILD_TIME=smoke-test", "-f", "agent/Dockerfile", "-t", image, "agent"])
     run(["docker", "rm", "-f", container_name], check=False)
     Path("/data/crawler-platform/projects").mkdir(parents=True, exist_ok=True)
     Path("/var/lib/crawler-agent/runs").mkdir(parents=True, exist_ok=True)

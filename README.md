@@ -132,3 +132,11 @@
 只需要检查版本一致性时，可执行：
 
 `bash deploy/scripts/check-version-consistency.sh`
+
+## 测试服自动部署
+
+项目已内置 GitHub Actions 自动部署测试服的标准入口：`.github/workflows/deploy-test-server.yml`。推送 `main` 后，流水线会先执行商业发布门禁，再通过 SSH 调用测试服本地脚本 `deploy/scripts/remote-auto-deploy.sh` 和 `deploy/scripts/release-upgrade.sh` 完成发布。
+
+详细配置见：`docs/auto-deploy-test-server.md`。
+
+版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
