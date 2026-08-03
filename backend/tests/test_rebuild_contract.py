@@ -5,6 +5,11 @@ from pathlib import Path
 
 os.environ['APP_ENV'] = 'development'
 os.environ['DATABASE_URL'] = 'sqlite+pysqlite:////tmp/crawler_platform_pytest.db'
+os.environ['REDIS_URL'] = 'redis://localhost:6379/15'
+os.environ['ADMIN_USERNAME'] = 'admin'
+os.environ['ADMIN_PASSWORD'] = 'Admin@123456'
+os.environ['JWT_SECRET'] = 'pytest-jwt-secret-for-crawler-platform-1-0-1'
+os.environ['SECRET_ENCRYPTION_KEY'] = 'pytest-secret-encryption-key-for-crawler-platform-1-0-1'
 Path('/tmp/crawler_platform_pytest.db').unlink(missing_ok=True)
 
 from fastapi.testclient import TestClient
@@ -50,7 +55,7 @@ def test_full_platform_flow() -> None:
         'repositoryUrl': 'git@example/project-a',
         'imageRepository': 'repo/project-a',
         'imageDigest': 'sha256:' + 'a' * 64,
-        'releaseVersion': '1.0.0',
+        'releaseVersion': '1.0.1',
         'releaseChannel': 'stable',
         'taskDefinitions': [{'definitionKey': 'task_one', 'taskName': '任务一', 'entryModule': 'spiders.task_one', 'entryFunction': 'run'}],
     }
@@ -97,7 +102,7 @@ def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: li
     manifest = {
         'manifestVersion': '1', 'projectKey': f'project-{suffix}', 'projectName': f'项目{suffix}', 'projectCode': f'project_{suffix}',
         'repositoryUrl': 'git@example/project', 'imageRepository': f'repo/project-{suffix}', 'imageDigest': 'sha256:' + ('b' * 64),
-        'releaseVersion': '1.0.0', 'releaseChannel': 'stable',
+        'releaseVersion': '1.0.1', 'releaseChannel': 'stable',
         'taskDefinitions': [{'definitionKey': 'task_one', 'taskName': '任务一', 'entryModule': 'spiders.task_one', 'entryFunction': 'run'}],
     }
     discovered = None
@@ -329,7 +334,7 @@ def test_static_sch_parser_rejects_dynamic_tasks(tmp_path) -> None:
         '--output', str(tmp_path / 'manifest.json'),
         '--project-key', 'p', '--project-code', 'p', '--project-name', '项目',
         '--image-repository', 'repo/p', '--image-digest', 'sha256:' + '1' * 64,
-        '--release-version', '1.0.0',
+        '--release-version', '1.0.1',
     ], text=True, capture_output=True)
     assert result.returncode != 0
     assert 'TASKS 必须是纯静态字面量' in result.stderr
@@ -348,7 +353,7 @@ def test_static_sch_parser_accepts_literal_tasks_and_agent_capabilities(monkeypa
         '--output', str(manifest_path),
         '--project-key', 'p', '--project-code', 'p', '--project-name', '项目',
         '--image-repository', 'repo/p', '--image-digest', 'sha256:' + '2' * 64,
-        '--release-version', '1.0.0',
+        '--release-version', '1.0.1',
     ], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert manifest_path.exists()

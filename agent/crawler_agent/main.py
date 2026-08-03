@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -13,11 +14,16 @@ from crawler_agent.api import PlatformAPI
 from crawler_agent.config import config
 from crawler_agent.docker_runner import RunExecutor
 
+LOG_LEVEL = os.getenv("AGENT_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("crawler_agent.main")
+
 
 class AgentApp:
     def __init__(self) -> None:
         config.validate_runtime()
         self.api = PlatformAPI(config)
+        self.last_error = ""
         self.executor = RunExecutor(config, self.api)
         self.pool = ThreadPoolExecutor(max_workers=config.max_slots)
         self.futures: dict[int, Any] = {}
@@ -28,8 +34,17 @@ class AgentApp:
         with self.lock:
             done = [run_id for run_id, future in self.futures.items() if future.done()]
             for run_id in done:
-                self.futures.pop(run_id, None)
+                future = self.futures.pop(run_id, None)
+                if not future:
+                    continue
+                exc = future.exception()
+                if exc:
+                    self.last_error = f"run_id={run_id} worker future failed: {exc}"[:4000]
+                    logger.error("run_id=%s worker future failed", run_id, exc_info=(type(exc), exc, exc.__traceback__))
+                else:
+                    logger.info("run_id=%s worker future completed", run_id)
             return len(self.futures)
+
 
     def heartbeat_payload(self) -> dict[str, Any]:
         running = self.active_count()
@@ -52,24 +67,32 @@ class AgentApp:
             "availableSlots": max(0, config.max_slots - running),
             "capabilities": config.capabilities(),
             "currentRuns": {"runIds": list(self.futures.keys())},
-            "lastError": "",
+            "lastError": self.last_error,
         }
 
     def loop(self) -> None:
         last_heartbeat = 0.0
+        logger.info("agent loop started instance_id=%s server_code=%s agent_code=%s version=%s", config.instance_id, config.server_code, config.agent_code, config.agent_version)
         while True:
-            now = time.monotonic()
-            if now - last_heartbeat >= config.heartbeat_interval_seconds:
-                self.api.heartbeat(self.heartbeat_payload())
-                last_heartbeat = now
-            if self.active_count() < config.max_slots:
-                claim = self.api.claim()
-                if claim:
-                    run_id = int(claim["runId"])
-                    with self.lock:
-                        if run_id not in self.futures:
-                            self.futures[run_id] = self.pool.submit(self.executor.execute, claim)
+            try:
+                now = time.monotonic()
+                if now - last_heartbeat >= config.heartbeat_interval_seconds:
+                    self.api.heartbeat(self.heartbeat_payload())
+                    last_heartbeat = now
+                if self.active_count() < config.max_slots:
+                    claim = self.api.claim()
+                    if claim:
+                        run_id = int(claim["runId"])
+                        with self.lock:
+                            if run_id not in self.futures:
+                                logger.info("claim received run_id=%s project=%s task=%s", run_id, claim.get("projectCode"), claim.get("taskCode"))
+                                self.futures[run_id] = self.pool.submit(self.executor.execute, claim)
+            except Exception as exc:
+                self.last_error = f"Agent 主循环异常：{exc}"[:4000]
+                logger.exception("agent loop failed")
+                time.sleep(max(5, config.poll_interval_seconds))
             time.sleep(config.poll_interval_seconds)
+
 
 
 def main() -> None:

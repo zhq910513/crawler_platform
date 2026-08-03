@@ -15,7 +15,7 @@ class AgentConfig(BaseSettings):
     agent_token: str = Field(default="")
     agent_code: str = Field(default="")
     server_code: str = Field(default="")
-    agent_version: str = Field(default="1.0.0")
+    agent_version: str = Field(default="1.0.1")
     protocol_version: str = Field(default="1.0")
     instance_id: str = Field(default_factory=lambda: f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}")
     max_slots: int = Field(default=2, ge=1, le=100)

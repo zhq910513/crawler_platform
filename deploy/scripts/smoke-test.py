@@ -81,7 +81,7 @@ class PlatformClient:
 
 def run(cmd, cwd=ROOT, check=True):
     print("$ " + " ".join(cmd))
-    proc = subprocess.run(cmd, cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    proc = subprocess.run(cmd, cwd=str(cwd), universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if proc.stdout:
         print(proc.stdout.rstrip())
     if check and proc.returncode != 0:
@@ -197,7 +197,7 @@ def print_failure_diagnostics(agent_container):
     for cmd in commands:
         try:
             print("$ " + " ".join(cmd), file=sys.stderr)
-            proc = subprocess.run(cmd, cwd=str(ROOT), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+            proc = subprocess.run(cmd, cwd=str(ROOT), universal_newlines=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
             if proc.stdout:
                 print(proc.stdout[-12000:], file=sys.stderr)
         except Exception as diag_exc:

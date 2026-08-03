@@ -66,7 +66,7 @@
   "repositoryUrl": "git@example.com:spiders/baidu_shop_detail.git",
   "imageRepository": "registry.example.com/spiders/baidu_shop_detail",
   "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "releaseVersion": "1.0.0",
+  "releaseVersion": "1.0.1",
   "releaseChannel": "stable",
   "taskDefinitions": [
     {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import threading
@@ -16,6 +17,7 @@ from crawler_agent.api import LeaseLostError, PlatformAPI
 from crawler_agent.config import AgentConfig
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
+logger = logging.getLogger("crawler_agent.runner")
 
 
 def _safe(value: Any, default: str = "unknown") -> str:
@@ -107,13 +109,16 @@ class RunExecutor:
                         except Exception:
                             pass
                     return
-                except Exception:
+                except Exception as exc:
+                    logger.warning("run_id=%s heartbeat failed: %s", run_id, exc, exc_info=True)
                     continue
 
         thread = threading.Thread(target=keepalive, daemon=True)
         dirs: dict[str, Path] = {}
         try:
+            logger.info("run_id=%s pull start imageRepository=%s imageDigest=%s", run_id, claim.get("imageRepository"), claim.get("imageDigest"))
             image_ref = self._pull_digest(str(claim.get("imageRepository") or ""), str(claim.get("imageDigest") or ""))
+            logger.info("run_id=%s pull ok image_ref=%s", run_id, image_ref)
             self.api.run_heartbeat(run_id, lease_token, "镜像校验完成，准备启动共享环境隔离任务容器")
             entry_module = str(claim.get("entryModule") or "")
             entry_function = str(claim.get("entryFunction") or "run")
@@ -157,7 +162,7 @@ class RunExecutor:
                 "crawler.platform.task_id": str(claim.get("taskId") or ""),
                 "crawler.platform.task_code": str(claim.get("taskCode") or ""),
                 "crawler.platform.runtime_mode": str(claim.get("runtimeMode") or "SHARED_ENV_ISOLATED"),
-                "crawler.platform.image_digest": str(claim.get("imageDigest") or ""),
+                "crawler.platform.image_digest": str(claim.get('imageDigest') or ""),
             }
             run_kwargs: dict[str, Any] = {
                 "image": image_ref,
@@ -181,7 +186,10 @@ class RunExecutor:
                 run_kwargs["network"] = self.config.docker_network
             if self.config.container_user:
                 run_kwargs["user"] = self.config.container_user
+            logger.info("run_id=%s container create start name=%s", run_id, container_name)
             container = self.client.containers.run(**run_kwargs)
+            logger.info("run_id=%s container created id=%s", run_id, container.id[:12])
+            self.api.run_heartbeat(run_id, lease_token, "任务容器已创建并启动")
             thread.start()
             started = time.monotonic()
             while True:
@@ -199,14 +207,16 @@ class RunExecutor:
                 time.sleep(2)
             result = container.wait()
             exit_code = int((result or {}).get("StatusCode", 1))
+            logger.info("run_id=%s container exited status_code=%s", run_id, exit_code)
             logs = container.logs(tail=200).decode("utf-8", errors="replace")
             status = "SUCCEEDED" if exit_code == 0 else "FAILED"
             self.api.finish(run_id, lease_token, status, {"exitCode": exit_code, "tailLogs": logs, "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "" if exit_code == 0 else logs[-4000:])
         except Exception as exc:
+            logger.exception("run_id=%s execute failed: %s", run_id, exc)
             try:
                 self.api.finish(run_id, lease_token, "FAILED", {"workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, str(exc))
             except Exception:
-                pass
+                logger.exception("run_id=%s finish callback failed after execute exception", run_id)
         finally:
             stop_event.set()
             if container:

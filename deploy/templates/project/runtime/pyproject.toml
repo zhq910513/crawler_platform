@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crawler-runtime"
-version = "1.0.0"
+version = "1.0.1"
 description = "统一的爬虫容器任务方法执行器"
 requires-python = ">=3.10"
 
