@@ -94,7 +94,7 @@ class AuthService:
         self.db.add(SysLoginLog(user_id=user.user_id, user_name=user.user_name, ip_address=ip, user_agent=user_agent, status="SUCCESS", message="登录成功"))
         self.db.commit()
         token = create_access_token(user.user_id, session_id, user.role_type, user.company_id)
-        return {"accessToken": token, "tokenType": "bearer", "sessionId": session_id, "user": self.user_payload(user)}
+        return {"accessToken": token, "tokenType": "bearer", "sessionId": session_id, "passwordChangeRequired": bool(user.must_change_password), "user": self.user_payload(user)}
 
     def current_profile(self, user: SysUser, session: SysUserSession) -> dict:
         return {"session": session, "user": self.user_payload(user)}
@@ -140,4 +140,6 @@ class AuthService:
             "roleType": user.role_type,
             "status": user.status,
             "isSuperAdmin": user.role_type == "SUPER_ADMIN",
+            "passwordChangeRequired": bool(user.must_change_password),
+            "passwordUpdatedAt": user.password_updated_at,
         }

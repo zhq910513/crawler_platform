@@ -80,18 +80,42 @@
               <el-radio-button label="EVERY_N_MINUTES">每 N 分钟</el-radio-button>
               <el-radio-button label="EVERY_N_HOURS">每 N 小时</el-radio-button>
               <el-radio-button label="DAILY">每天</el-radio-button>
+              <el-radio-button label="DAILY_TIMES">每天多时间点</el-radio-button>
               <el-radio-button label="WEEKLY">每周</el-radio-button>
+              <el-radio-button label="WEEKLY_TIMES">每周多日期/时间</el-radio-button>
               <el-radio-button label="MONTHLY">每月</el-radio-button>
+              <el-radio-button label="MONTHLY_TIMES">每月多日期/时间</el-radio-button>
               <el-radio-button label="ADVANCED">高级 Cron</el-radio-button>
             </el-radio-group>
           </el-form-item>
-          <el-row v-if="scheduleMode === 'EVERY_N_MINUTES'" :gutter="16"><el-col :span="8"><el-form-item label="间隔分钟"><el-input-number v-model="intervalMinutes" :min="5" :max="1440" @change="applyScheduleMode" /></el-form-item></el-col></el-row>
+          <el-row v-if="scheduleMode === 'EVERY_N_MINUTES'" :gutter="16"><el-col :span="8"><el-form-item label="间隔分钟"><el-input-number v-model="intervalMinutes" :min="5" :max="59" @change="applyScheduleMode" /></el-form-item></el-col></el-row>
           <el-row v-if="scheduleMode === 'EVERY_N_HOURS'" :gutter="16"><el-col :span="8"><el-form-item label="间隔小时"><el-input-number v-model="intervalHours" :min="1" :max="24" @change="applyScheduleMode" /></el-form-item></el-col></el-row>
           <el-row v-if="['DAILY','WEEKLY','MONTHLY'].includes(scheduleMode)" :gutter="16">
             <el-col v-if="scheduleMode === 'WEEKLY'" :span="8"><el-form-item label="星期"><el-select v-model="weekday" @change="applyScheduleMode"><el-option v-for="day in weekdayOptions" :key="day.value" :label="day.label" :value="day.value" /></el-select></el-form-item></el-col>
             <el-col v-if="scheduleMode === 'MONTHLY'" :span="8"><el-form-item label="日期"><el-input-number v-model="monthDay" :min="1" :max="31" @change="applyScheduleMode" /></el-form-item></el-col>
             <el-col :span="8"><el-form-item label="时间"><el-time-picker v-model="dayTime" format="HH:mm" value-format="HH:mm" @change="applyScheduleMode" /></el-form-item></el-col>
           </el-row>
+          <div v-if="['DAILY_TIMES','WEEKLY_TIMES','MONTHLY_TIMES'].includes(scheduleMode)" class="daily-times-box">
+            <el-form-item v-if="scheduleMode === 'WEEKLY_TIMES'" label="每周执行日期">
+              <el-select v-model="weeklyDays" multiple clearable placeholder="选择一个或多个星期" @change="applyScheduleMode">
+                <el-option v-for="day in weekdayOptions" :key="day.value" :label="day.label" :value="day.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="scheduleMode === 'MONTHLY_TIMES'" label="每月执行日期">
+              <el-select v-model="monthlyDays" multiple clearable placeholder="选择一个或多个日期" @change="applyScheduleMode">
+                <el-option v-for="day in monthlyDayOptions" :key="day" :label="`${day} 日`" :value="day" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="执行时间点">
+              <div class="time-tags">
+                <el-tag v-for="item in dailyTimes" :key="item" closable @close="removeDailyTime(item)">{{ item }}</el-tag>
+              </div>
+            </el-form-item>
+            <el-row :gutter="16">
+              <el-col :span="8"><el-form-item label="新增时间"><el-time-picker v-model="newDailyTime" format="HH:mm" value-format="HH:mm" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label=" "><el-button @click="addDailyTime">添加时间点</el-button></el-form-item></el-col>
+            </el-row>
+          </div>
           <el-form-item label="Cron 表达式"><el-input v-model="scheduleForm.cronExpression" @input="scheduleMode = 'ADVANCED'" /></el-form-item>
           <el-form-item label="时区"><el-input v-model="scheduleForm.scheduleTimezone" /></el-form-item>
           <el-button @click="loadCronPreview">校验并预览最近 5 次</el-button>
@@ -130,9 +154,14 @@ const scheduleMode = ref('DAILY')
 const intervalMinutes = ref(30)
 const intervalHours = ref(1)
 const weekday = ref(1)
+const weeklyDays = ref<number[]>([1, 3, 5])
 const monthDay = ref(1)
+const monthlyDays = ref<number[]>([1, 15])
 const dayTime = ref('08:00')
+const dailyTimes = ref<string[]>(['07:00', '09:00', '12:00'])
+const newDailyTime = ref('08:00')
 const weekdayOptions = [{ label: '周一', value: 1 }, { label: '周二', value: 2 }, { label: '周三', value: 3 }, { label: '周四', value: 4 }, { label: '周五', value: 5 }, { label: '周六', value: 6 }, { label: '周日', value: 0 }]
+const monthlyDayOptions = Array.from({ length: 31 }, (_, index) => index + 1)
 
 async function loadCompaniesAndProjects() { companies.value = await listCompanies(); companyId.value = sessionState.user?.isSuperAdmin ? (companyId.value || companies.value[0]?.companyId) : sessionState.user?.companyId || undefined; await loadProjectsForCompany() }
 async function loadProjectsForCompany() { projects.value = await listProjects(companyId.value); projectId.value = projects.value[0]?.projectId; await loadAllForProject() }
@@ -142,9 +171,104 @@ function openCreate(row: TaskDefinition) { form.definitionId = row.definitionId;
 async function saveTask() { form.parameters = JSON.parse(paramsText.value || '{}'); form.resourceLocks = locksText.value.split(',').map((item) => item.trim()).filter(Boolean); await createTask(form); dialogVisible.value = false; ElMessage.success('正式任务已创建'); await loadAllForProject() }
 async function manualRun(taskId: number) { await createRun(taskId); ElMessage.success('已创建运行实例') }
 function scheduleText(task: Task) { if (task.scheduleType !== 'CRON') return '手动执行'; return task.scheduleLabel || task.cronExpression || '-' }
-function openSchedule(task: Task) { selectedTask.value = task; scheduleForm.scheduleStatus = task.scheduleStatus || 'PAUSED'; scheduleForm.scheduleType = task.scheduleType || 'MANUAL'; scheduleForm.cronExpression = task.cronExpression || '0 8 * * *'; scheduleForm.scheduleTimezone = task.scheduleTimezone || 'Asia/Shanghai'; scheduleForm.overlapPolicy = task.overlapPolicy || 'QUEUE'; scheduleForm.scheduleConfig = task.scheduleConfig || {}; scheduleForm.scheduleLabel = task.scheduleLabel || ''; cronPreview.value = []; scheduleVisible.value = true; if (scheduleForm.scheduleType === 'CRON') void loadCronPreview() }
-function applyScheduleMode() { const [hour, minute] = dayTime.value.split(':'); if (scheduleMode.value === 'EVERY_N_MINUTES') { scheduleForm.cronExpression = `*/${intervalMinutes.value} * * * *`; scheduleForm.scheduleConfig = { mode: 'EVERY_N_MINUTES', intervalMinutes: intervalMinutes.value }; scheduleForm.scheduleLabel = `每 ${intervalMinutes.value} 分钟执行一次` } else if (scheduleMode.value === 'EVERY_N_HOURS') { scheduleForm.cronExpression = `0 */${intervalHours.value} * * *`; scheduleForm.scheduleConfig = { mode: 'EVERY_N_HOURS', intervalHours: intervalHours.value }; scheduleForm.scheduleLabel = `每 ${intervalHours.value} 小时执行一次` } else if (scheduleMode.value === 'DAILY') { scheduleForm.cronExpression = `${Number(minute)} ${Number(hour)} * * *`; scheduleForm.scheduleConfig = { mode: 'DAILY', time: dayTime.value }; scheduleForm.scheduleLabel = `每天 ${dayTime.value} 执行` } else if (scheduleMode.value === 'WEEKLY') { scheduleForm.cronExpression = `${Number(minute)} ${Number(hour)} * * ${weekday.value}`; scheduleForm.scheduleConfig = { mode: 'WEEKLY', weekday: weekday.value, time: dayTime.value }; scheduleForm.scheduleLabel = `每周${weekdayOptions.find((item) => item.value === weekday.value)?.label.replace('周', '') || ''} ${dayTime.value} 执行` } else if (scheduleMode.value === 'MONTHLY') { scheduleForm.cronExpression = `${Number(minute)} ${Number(hour)} ${monthDay.value} * *`; scheduleForm.scheduleConfig = { mode: 'MONTHLY', day: monthDay.value, time: dayTime.value }; scheduleForm.scheduleLabel = `每月 ${monthDay.value} 日 ${dayTime.value} 执行` } }
-async function loadCronPreview() { if (scheduleForm.scheduleType !== 'CRON' || !scheduleForm.cronExpression) { cronPreview.value = []; return } const result = await previewCronExpression({ cronExpression: scheduleForm.cronExpression, timezone: scheduleForm.scheduleTimezone || 'Asia/Shanghai', count: 5 }); cronPreview.value = result.nextTimes; scheduleForm.cronExpression = result.cronExpression }
+function openSchedule(task: Task) {
+  selectedTask.value = task
+  scheduleForm.scheduleStatus = task.scheduleStatus || 'PAUSED'
+  scheduleForm.scheduleType = task.scheduleType || 'MANUAL'
+  scheduleForm.cronExpression = task.cronExpression || '0 8 * * *'
+  scheduleForm.scheduleTimezone = task.scheduleTimezone || 'Asia/Shanghai'
+  scheduleForm.overlapPolicy = task.overlapPolicy || 'QUEUE'
+  scheduleForm.scheduleConfig = task.scheduleConfig || {}
+  scheduleForm.scheduleLabel = task.scheduleLabel || ''
+  const mode = String(scheduleForm.scheduleConfig?.mode || '')
+  if (mode === 'daily_times') {
+    scheduleMode.value = 'DAILY_TIMES'
+    dailyTimes.value = normalizeDailyTimes(scheduleForm.scheduleConfig?.times as string[] | undefined)
+  } else if (mode === 'weekly_times') {
+    scheduleMode.value = 'WEEKLY_TIMES'
+    dailyTimes.value = normalizeDailyTimes(scheduleForm.scheduleConfig?.times as string[] | undefined)
+    weeklyDays.value = ((scheduleForm.scheduleConfig?.weekdays as number[] | undefined) || [1]).map(Number)
+  } else if (mode === 'monthly_times') {
+    scheduleMode.value = 'MONTHLY_TIMES'
+    dailyTimes.value = normalizeDailyTimes(scheduleForm.scheduleConfig?.times as string[] | undefined)
+    monthlyDays.value = ((scheduleForm.scheduleConfig?.days as number[] | undefined) || [1]).map(Number)
+  } else {
+    scheduleMode.value = mode ? mode.toUpperCase() : 'ADVANCED'
+  }
+  cronPreview.value = []
+  scheduleVisible.value = true
+  if (scheduleForm.scheduleType === 'CRON') void loadCronPreview()
+}
+function normalizeDailyTimes(values?: string[]) {
+  const pattern = /^([01]\d|2[0-3]):[0-5]\d$/
+  const times = (values || []).filter((item) => pattern.test(item))
+  return Array.from(new Set(times)).sort()
+}
+function addDailyTime() {
+  dailyTimes.value = normalizeDailyTimes([...dailyTimes.value, newDailyTime.value])
+  applyScheduleMode()
+}
+function removeDailyTime(value: string) {
+  dailyTimes.value = dailyTimes.value.filter((item) => item !== value)
+  applyScheduleMode()
+}
+function applyScheduleMode() {
+  const [hour, minute] = dayTime.value.split(':')
+  if (scheduleMode.value === 'EVERY_N_MINUTES') {
+    scheduleForm.cronExpression = `*/${intervalMinutes.value} * * * *`
+    scheduleForm.scheduleConfig = { mode: 'EVERY_N_MINUTES', intervalMinutes: intervalMinutes.value }
+    scheduleForm.scheduleLabel = `每 ${intervalMinutes.value} 分钟执行一次`
+  } else if (scheduleMode.value === 'EVERY_N_HOURS') {
+    scheduleForm.cronExpression = `0 */${intervalHours.value} * * *`
+    scheduleForm.scheduleConfig = { mode: 'EVERY_N_HOURS', intervalHours: intervalHours.value }
+    scheduleForm.scheduleLabel = `每 ${intervalHours.value} 小时执行一次`
+  } else if (scheduleMode.value === 'DAILY') {
+    scheduleForm.cronExpression = `${Number(minute)} ${Number(hour)} * * *`
+    scheduleForm.scheduleConfig = { mode: 'DAILY', time: dayTime.value }
+    scheduleForm.scheduleLabel = `每天 ${dayTime.value} 执行`
+  } else if (scheduleMode.value === 'DAILY_TIMES') {
+    dailyTimes.value = normalizeDailyTimes(dailyTimes.value)
+    scheduleForm.cronExpression = ''
+    scheduleForm.scheduleConfig = { mode: 'daily_times', times: dailyTimes.value, timezone: scheduleForm.scheduleTimezone || 'Asia/Shanghai' }
+    scheduleForm.scheduleLabel = `每天 ${dailyTimes.value.join('、')} 执行`
+  } else if (scheduleMode.value === 'WEEKLY_TIMES') {
+    dailyTimes.value = normalizeDailyTimes(dailyTimes.value)
+    weeklyDays.value = Array.from(new Set(weeklyDays.value.map(Number))).sort((a, b) => a - b)
+    scheduleForm.cronExpression = ''
+    scheduleForm.scheduleConfig = { mode: 'weekly_times', weekdays: weeklyDays.value, times: dailyTimes.value, timezone: scheduleForm.scheduleTimezone || 'Asia/Shanghai' }
+    scheduleForm.scheduleLabel = `每周 ${weeklyDays.value.join('、')} 的 ${dailyTimes.value.join('、')} 执行`
+  } else if (scheduleMode.value === 'MONTHLY_TIMES') {
+    dailyTimes.value = normalizeDailyTimes(dailyTimes.value)
+    monthlyDays.value = Array.from(new Set(monthlyDays.value.map(Number))).sort((a, b) => a - b)
+    scheduleForm.cronExpression = ''
+    scheduleForm.scheduleConfig = { mode: 'monthly_times', days: monthlyDays.value, times: dailyTimes.value, timezone: scheduleForm.scheduleTimezone || 'Asia/Shanghai' }
+    scheduleForm.scheduleLabel = `每月 ${monthlyDays.value.join('、')} 日 ${dailyTimes.value.join('、')} 执行`
+  } else if (scheduleMode.value === 'WEEKLY') {
+    scheduleForm.cronExpression = `${Number(minute)} ${Number(hour)} * * ${weekday.value}`
+    scheduleForm.scheduleConfig = { mode: 'WEEKLY', weekday: weekday.value, time: dayTime.value }
+    scheduleForm.scheduleLabel = `每周${weekdayOptions.find((item) => item.value === weekday.value)?.label.replace('周', '') || ''} ${dayTime.value} 执行`
+  } else if (scheduleMode.value === 'MONTHLY') {
+    scheduleForm.cronExpression = `${Number(minute)} ${Number(hour)} ${monthDay.value} * *`
+    scheduleForm.scheduleConfig = { mode: 'MONTHLY', day: monthDay.value, time: dayTime.value }
+    scheduleForm.scheduleLabel = `每月 ${monthDay.value} 日 ${dayTime.value} 执行`
+  }
+}
+async function loadCronPreview() {
+  if (scheduleForm.scheduleType !== 'CRON') {
+    cronPreview.value = []
+    return
+  }
+  if (['DAILY_TIMES','WEEKLY_TIMES','MONTHLY_TIMES'].includes(scheduleMode.value)) applyScheduleMode()
+  if (!scheduleForm.cronExpression && !['daily_times','weekly_times','monthly_times'].includes(String(scheduleForm.scheduleConfig?.mode || ''))) {
+    cronPreview.value = []
+    return
+  }
+  const result = await previewCronExpression({ cronExpression: scheduleForm.cronExpression || undefined, scheduleConfig: scheduleForm.scheduleConfig, timezone: scheduleForm.scheduleTimezone || 'Asia/Shanghai', count: 5 })
+  cronPreview.value = result.nextTimes
+  scheduleForm.cronExpression = result.cronExpression
+  scheduleForm.scheduleConfig = result.scheduleConfig || scheduleForm.scheduleConfig
+  scheduleForm.scheduleLabel = result.scheduleLabel || scheduleForm.scheduleLabel
+}
 async function saveSchedule() { if (!selectedTask.value) return; if (scheduleForm.scheduleType === 'CRON') await loadCronPreview(); await ElMessageBox.confirm(`确认修改任务“${selectedTask.value.taskName}”的调度时间？\n修改后：${scheduleForm.scheduleLabel || scheduleForm.cronExpression || '手动执行'}\n重叠策略：${zh(scheduleForm.overlapPolicy || '')}`, '调度变更确认', { type: 'warning' }); await updateTaskSchedule(selectedTask.value.taskId, scheduleForm); scheduleVisible.value = false; ElMessage.success('调度已更新'); await loadAllForProject() }
 onMounted(loadCompaniesAndProjects)
 </script>
@@ -153,4 +277,6 @@ onMounted(loadCompaniesAndProjects)
 .schedule-form { margin-top: 16px; }
 .preview-box { margin-top: 12px; padding: 12px 16px; background: #f7f8fa; border-radius: 6px; }
 .preview-box ul { margin: 8px 0 0; }
+.daily-times-box { padding: 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 12px; }
+.time-tags { display: flex; gap: 8px; flex-wrap: wrap; }
 </style>

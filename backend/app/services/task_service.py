@@ -36,6 +36,18 @@ class TaskService:
             rows = self.tasks.list_tasks(company_id=scoped, user_id=user.user_id)
         return [self._task_payload(row) for row in rows]
 
+    def _prepare_schedule_fields(self, schedule_type: str, cron_expression: str, schedule_config: dict | None, timezone: str, current_user: SysUser) -> tuple[str, dict, str]:
+        if schedule_type != "CRON":
+            return "", schedule_config or {}, "手动执行"
+        config = schedule_config or {}
+        if config.get("mode"):
+            expr, normalized, label = CronService.normalize_config(config, timezone)
+            if expr:
+                expr = CronService.validate(expr, timezone, is_super_admin=is_super_admin(current_user))
+                return expr, normalized, label
+        expr = CronService.validate(cron_expression, timezone, is_super_admin=is_super_admin(current_user))
+        return expr, config, CronService.label_from_config(config, expr)
+
     def create_from_definition(self, user: SysUser, payload: TaskFromDefinitionCreate) -> CrawlerTask:
         definition = self.definitions.get(payload.definition_id)
         if not definition:
@@ -80,9 +92,7 @@ class TaskService:
         self.db.add(task)
         self.db.flush()
         next_run_at = None
-        cron_expression = payload.cron_expression
-        if payload.schedule_type == "CRON":
-            cron_expression = CronService.validate(payload.cron_expression, payload.schedule_timezone, is_super_admin=is_super_admin(user))
+        cron_expression, schedule_config, schedule_label = self._prepare_schedule_fields(payload.schedule_type, payload.cron_expression, payload.schedule_config, payload.schedule_timezone, user)
         if payload.schedule_status == "ENABLED" and payload.schedule_type == "CRON":
             next_run_at = CronService.next_time(cron_expression, payload.schedule_timezone, is_super_admin=is_super_admin(user))
         schedule = CrawlerTaskSchedule(
@@ -94,8 +104,8 @@ class TaskService:
             cron_expression=cron_expression,
             schedule_timezone=payload.schedule_timezone,
             overlap_policy=payload.overlap_policy,
-            schedule_config=payload.schedule_config,
-            schedule_label=payload.schedule_label or CronService.label_from_config(payload.schedule_config, cron_expression),
+            schedule_config=schedule_config,
+            schedule_label=payload.schedule_label or schedule_label,
             next_run_at=next_run_at,
         )
         self.db.add(schedule)
@@ -141,11 +151,11 @@ class TaskService:
         for key, value in updates.items():
             setattr(schedule, key, value)
         if schedule.schedule_type == "CRON":
-            schedule.cron_expression = CronService.validate(schedule.cron_expression, schedule.schedule_timezone, is_super_admin=is_super_admin(user))
-            schedule.schedule_label = schedule.schedule_label or CronService.label_from_config(schedule.schedule_config, schedule.cron_expression)
+            schedule.cron_expression, schedule.schedule_config, generated_label = self._prepare_schedule_fields(schedule.schedule_type, schedule.cron_expression, schedule.schedule_config, schedule.schedule_timezone, user)
+            schedule.schedule_label = schedule.schedule_label or generated_label
         else:
             schedule.next_run_at = None
-            schedule.cron_expression = schedule.cron_expression or ""
+            schedule.cron_expression = ""
             schedule.schedule_label = schedule.schedule_label or "手动执行"
         if schedule.schedule_status == "ENABLED" and schedule.schedule_type == "CRON" and schedule.cron_expression:
             schedule.next_run_at = CronService.next_time(schedule.cron_expression, schedule.schedule_timezone, is_super_admin=is_super_admin(user))

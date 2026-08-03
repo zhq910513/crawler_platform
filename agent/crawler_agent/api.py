@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import time
+from pathlib import Path
 from typing import Any
 
 import requests
@@ -23,6 +26,7 @@ class PlatformAPI:
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self.session = requests.Session()
+        self.config.spool_dir.mkdir(parents=True, exist_ok=True)
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
         headers = dict(kwargs.pop("headers", {}))
@@ -49,8 +53,29 @@ class PlatformAPI:
             raise PlatformUnavailable(str(payload))
         return payload.get("data")
 
+    def _spool(self, path: str, payload: dict[str, Any]) -> None:
+        safe_name = f"{int(time.time() * 1000)}-{payload.get('runId', 'run')}-{path.strip('/').replace('/', '_')}.json"
+        target = self.config.spool_dir / safe_name
+        target.write_text(json.dumps({"path": path, "payload": payload}, ensure_ascii=False), encoding="utf-8")
+
+    def flush_spool(self, limit: int = 50) -> int:
+        sent = 0
+        for item in sorted(self.config.spool_dir.glob("*.json"))[:limit]:
+            try:
+                data = json.loads(item.read_text(encoding="utf-8"))
+                self._request("POST", data["path"], json=data["payload"])
+                item.unlink(missing_ok=True)
+                sent += 1
+            except LeaseLostError:
+                item.unlink(missing_ok=True)
+            except Exception:
+                break
+        return sent
+
     def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", "/agent-heartbeats", json=payload) or {}
+        data = self._request("POST", "/agent-heartbeats", json=payload) or {}
+        self.flush_spool()
+        return data
 
     def claim(self) -> dict[str, Any] | None:
         return self._request("POST", "/agent-run-claims", json={"agentInstanceId": self.config.instance_id})
@@ -60,3 +85,25 @@ class PlatformAPI:
 
     def finish(self, run_id: int, lease_token: str, status: str, result: dict[str, Any] | None = None, error: str = "") -> dict[str, Any]:
         return self._request("POST", "/agent-run-results", json={"runId": run_id, "leaseToken": lease_token, "runStatus": status, "resultPayload": result or {}, "errorMessage": error, "agentInstanceId": self.config.instance_id}) or {}
+
+    def run_event(self, run_id: int, lease_token: str, event_type: str, stage: str, message: str = "", event_level: str = "INFO", payload: dict[str, Any] | None = None) -> None:
+        body = {"runId": run_id, "leaseToken": lease_token, "eventType": event_type, "eventLevel": event_level, "stage": stage, "message": message, "payload": payload or {}, "agentInstanceId": self.config.instance_id}
+        try:
+            self._request("POST", "/agent-run-events", json=body)
+        except PlatformUnavailable:
+            self._spool("/agent-run-events", body)
+
+    def log_chunk(self, run_id: int, lease_token: str, stream: str, seq: int, offset_start: int, content: str) -> None:
+        encoded_len = len(content.encode("utf-8", errors="replace"))
+        body = {"runId": run_id, "leaseToken": lease_token, "stream": stream, "seq": seq, "offsetStart": offset_start, "offsetEnd": offset_start + encoded_len, "content": content, "agentInstanceId": self.config.instance_id}
+        try:
+            self._request("POST", "/agent-run-log-chunks", json=body)
+        except PlatformUnavailable:
+            self._spool("/agent-run-log-chunks", body)
+
+    def finalize_logs(self, run_id: int, lease_token: str, status: str = "COMPLETE", **kwargs: Any) -> None:
+        body = {"runId": run_id, "leaseToken": lease_token, "logStatus": status, "agentInstanceId": self.config.instance_id, **kwargs}
+        try:
+            self._request("POST", "/agent-run-log-finalizations", json=body)
+        except PlatformUnavailable:
+            self._spool("/agent-run-log-finalizations", body)

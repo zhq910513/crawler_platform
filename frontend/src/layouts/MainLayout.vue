@@ -10,18 +10,35 @@
       <el-header class="header">
         <div>{{ $route.meta.title }}</div>
         <div class="user-box">
+          <el-tag v-if="sessionState.user?.passwordChangeRequired" type="warning">需修改密码</el-tag>
           <span>{{ sessionState.user?.nickName }}</span>
+          <el-button size="small" @click="openPasswordDialog">修改密码</el-button>
           <el-button size="small" @click="logout">退出</el-button>
         </div>
       </el-header>
       <el-main><router-view /></el-main>
     </el-container>
   </el-container>
+
+  <el-dialog v-model="passwordDialogVisible" title="修改密码" width="460px" :close-on-click-modal="!passwordRequired" :show-close="!passwordRequired">
+    <el-alert v-if="passwordRequired" title="当前账号必须先修改密码，修改成功后需要重新登录。" type="warning" show-icon :closable="false" class="password-alert" />
+    <el-form label-position="top">
+      <el-form-item label="当前密码"><el-input v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" show-password /></el-form-item>
+      <el-form-item label="新密码"><el-input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" show-password /></el-form-item>
+      <el-form-item label="确认新密码"><el-input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" show-password /></el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button v-if="!passwordRequired" @click="passwordDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="passwordSaving" @click="submitPasswordChange">保存并重新登录</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
+import { changeOwnPassword } from '../api/platform'
 import { deleteSession } from '../api/sessions'
 import { clearSession, sessionState } from '../stores/session'
 
@@ -38,6 +55,34 @@ const menus = [
   { path: '/settings', title: '系统设置', adminOnly: true },
 ]
 const visibleMenus = computed(() => menus.filter((item) => !item.adminOnly || sessionState.user?.isSuperAdmin))
+const passwordDialogVisible = ref(false)
+const passwordSaving = ref(false)
+const passwordRequired = computed(() => Boolean(sessionState.user?.passwordChangeRequired))
+const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+
+onMounted(() => {
+  if (passwordRequired.value) passwordDialogVisible.value = true
+})
+
+function openPasswordDialog() {
+  passwordForm.oldPassword = ''
+  passwordForm.newPassword = ''
+  passwordForm.confirmPassword = ''
+  passwordDialogVisible.value = true
+}
+
+async function submitPasswordChange() {
+  passwordSaving.value = true
+  try {
+    await changeOwnPassword(passwordForm)
+    ElMessage.success('密码已修改，请重新登录')
+    clearSession()
+    await router.push('/login')
+  } finally {
+    passwordSaving.value = false
+  }
+}
+
 async function logout() {
   const sessionId = sessionState.sessionId
   if (sessionId) await deleteSession(sessionId).catch(() => undefined)
@@ -52,5 +97,6 @@ async function logout() {
 .brand { color: #fff; font-size: 20px; font-weight: 700; height: 56px; display: flex; align-items: center; padding-left: 22px; border-bottom: 1px solid #243142; }
 .header { background: #fff; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e5e7eb; font-size: 16px; font-weight: 600; }
 .user-box { display: flex; gap: 12px; align-items: center; font-weight: 400; }
+.password-alert { margin-bottom: 12px; }
 .el-menu { border-right: none; }
 </style>

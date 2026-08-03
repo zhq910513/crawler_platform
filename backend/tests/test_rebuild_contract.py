@@ -411,3 +411,124 @@ def test_resource_lock_blocks_conflicting_runs() -> None:
     second = client.post('/api/v1/runs', headers=headers, json={'taskId': b['taskId']}).json()['data']
     assert second['routingStatus'] == 'WAITING_RESOURCE'
     assert '资源锁被占用' in second['routingReason']
+
+
+def test_102_password_change_reset_and_camel_contract() -> None:
+    migrate()
+    client = TestClient(app)
+    _, admin_headers = login(client)
+    company = client.post('/api/v1/companies', headers=admin_headers, json={'companyCode': 'pwd102', 'companyName': '密码公司'}).json()['data']
+    user = client.post('/api/v1/users', headers=admin_headers, json={'companyId': company['companyId'], 'userName': 'normal_pwd_102', 'nickName': '密码用户', 'password': 'Normal@123456', 'roleType': 'NORMAL_USER'}).json()['data']
+    assert user['mustChangePassword'] is True
+    normal_login = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_102', 'password': 'Normal@123456'}).json()['data']
+    assert normal_login['passwordChangeRequired'] is True
+    normal_headers = {'Authorization': 'Bearer ' + normal_login['accessToken']}
+    changed = client.patch('/api/v1/users/current/passwords', headers=normal_headers, json={'oldPassword': 'Normal@123456', 'newPassword': 'Normal@654321', 'confirmPassword': 'Normal@654321'}).json()['data']
+    assert changed['reloginRequired'] is True
+    reset = client.post(f"/api/v1/users/{user['userId']}/password-resets", headers=admin_headers, json={'newPassword': 'Reset@123456', 'mustChangePassword': True}).json()['data']
+    assert reset['mustChangePassword'] is True
+    from app.db import SessionLocal
+    from app.models import SysOperationLog
+    with SessionLocal() as db:
+        payload_text = '\n'.join(str(row.after_data) for row in db.query(SysOperationLog).all())
+        assert 'Normal@654321' not in payload_text
+        assert 'Reset@123456' not in payload_text
+
+
+def test_102_daily_times_preview_contract() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    payload = {'scheduleConfig': {'mode': 'daily_times', 'times': ['12:00', '07:00', '09:00', '07:00'], 'timezone': 'Asia/Shanghai'}, 'timezone': 'Asia/Shanghai', 'count': 5}
+    body = client.post('/api/v1/cron-previews', headers=headers, json=payload).json()['data']
+    assert body['cronExpression'] == '0 7,9,12 * * *'
+    assert body['scheduleConfig']['times'] == ['07:00', '09:00', '12:00']
+    assert len(body['nextTimes']) == 5
+
+
+def test_102_run_log_v2_and_audit_filter_contract() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, _ = create_flow(client, headers, 'log102')
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'task_log_102', 'taskName': '日志任务', 'status': 'ENABLED'}).json()['data']
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']}).json()['data']
+    client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={'agentInstanceId': 'inst-log-102', 'dockerStatus': 'OK', 'availableSlots': 2, 'cpuUsage': 10, 'memoryUsage': 20, 'diskUsage': 30, 'inodeUsage': 5, 'maxSlots': 4, 'projectDataRootWritable': True, 'dockerSockAccessible': True})
+    claim = client.post('/api/v1/agent-run-claims', headers=agents[0]['headers'], json={'agentInstanceId': 'inst-log-102'}).json()['data']
+    from app.db import SessionLocal
+    from app.models import SysOperationLog
+    with SessionLocal() as db:
+        before_count = db.query(SysOperationLog).count()
+    event_payload = {'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'eventType': 'SPIDER_STARTED', 'eventLevel': 'INFO', 'stage': 'BOOT', 'message': 'started', 'agentInstanceId': 'inst-log-102'}
+    client.post('/api/v1/agent-run-events', headers=agents[0]['headers'], json=event_payload)
+    client.post('/api/v1/agent-run-log-chunks', headers=agents[0]['headers'], json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'stream': 'stdout', 'seq': 1, 'offsetStart': 0, 'offsetEnd': 12, 'content': 'hello log\n', 'agentInstanceId': 'inst-log-102'})
+    client.post('/api/v1/agent-run-log-finalizations', headers=agents[0]['headers'], json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'logStatus': 'COMPLETE', 'logPath': '/logs/run.log', 'logTruncated': False, 'agentInstanceId': 'inst-log-102'})
+    events = client.get(f"/api/v1/runs/{run['runId']}/events", headers=headers).json()['data']
+    tail = client.get(f"/api/v1/runs/{run['runId']}/log-tails", headers=headers).json()['data']
+    diagnosis = client.get(f"/api/v1/runs/{run['runId']}/diagnoses", headers=headers).json()['data']
+    assert any(item['eventType'] == 'SPIDER_STARTED' for item in events)
+    assert tail['chunks'][0]['content'] == 'hello log\n'
+    assert diagnosis['logStatus'] == 'COMPLETE'
+    with SessionLocal() as db:
+        after_count = db.query(SysOperationLog).count()
+        assert after_count == before_count
+
+
+def test_102_business_multi_time_cron_supports_distinct_minutes_and_weekly_monthly() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+
+    daily = client.post('/api/v1/cron-previews', headers=headers, json={
+        'scheduleConfig': {'mode': 'daily_times', 'times': ['09:45', '07:15', '12:00', '07:15']},
+        'timezone': 'Asia/Shanghai',
+        'count': 5,
+    }).json()['data']
+    assert daily['cronExpression'] == '15 7 * * * ; 45 9 * * * ; 0 12 * * *'
+    assert daily['scheduleConfig']['times'] == ['07:15', '09:45', '12:00']
+    assert len(daily['nextTimes']) == 5
+
+    weekly = client.post('/api/v1/cron-previews', headers=headers, json={
+        'scheduleConfig': {'mode': 'weekly_times', 'weekdays': [5, 1, 1], 'times': ['08:10', '20:40']},
+        'timezone': 'Asia/Shanghai',
+        'count': 5,
+    }).json()['data']
+    assert weekly['scheduleConfig']['mode'] == 'weekly_times'
+    assert weekly['scheduleConfig']['weekdays'] == [1, 5]
+    assert weekly['cronExpression'] == '10 8 * * 1,5 ; 40 20 * * 1,5'
+
+    monthly = client.post('/api/v1/cron-previews', headers=headers, json={
+        'scheduleConfig': {'mode': 'monthly_times', 'days': [15, 1, 1], 'times': ['06:00', '18:30']},
+        'timezone': 'Asia/Shanghai',
+        'count': 5,
+    }).json()['data']
+    assert monthly['scheduleConfig']['mode'] == 'monthly_times'
+    assert monthly['scheduleConfig']['days'] == [1, 15]
+    assert monthly['cronExpression'] == '0 6 1,15 * * ; 30 18 1,15 * *'
+
+
+def test_102_password_change_canonical_me_route_and_old_token_revoked() -> None:
+    migrate()
+    client = TestClient(app)
+    _, admin_headers = login(client)
+    company = client.post('/api/v1/companies', headers=admin_headers, json={'companyCode': 'pwdme102', 'companyName': '密码路由公司'}).json()['data']
+    user = client.post('/api/v1/users', headers=admin_headers, json={'companyId': company['companyId'], 'userName': 'normal_pwd_me_102', 'nickName': '密码路由用户', 'password': 'Normal@123456', 'roleType': 'NORMAL_USER'}).json()['data']
+    login_body = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_me_102', 'password': 'Normal@123456'}).json()['data']
+    normal_headers = {'Authorization': 'Bearer ' + login_body['accessToken']}
+    changed = client.patch('/api/v1/users/me/password', headers=normal_headers, json={'oldPassword': 'Normal@123456', 'newPassword': 'Normal@987654', 'confirmPassword': 'Normal@987654'}).json()
+    assert changed['code'] == 200
+    assert changed['data']['reloginRequired'] is True
+    # 修改密码会撤销当前 token，旧 token 不应再能访问业务接口。
+    assert client.get('/api/v1/projects', headers=normal_headers).status_code == 401
+    reset = client.post(f"/api/v1/users/{user['userId']}/password-resets", headers=admin_headers, json={'newPassword': 'Reset@987654', 'mustChangePassword': True}).json()['data']
+    assert reset['mustChangePassword'] is True
+
+
+def test_102_frontend_run_log_routes_match_backend_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    api_source = (root / 'frontend' / 'src' / 'api' / 'platform.ts').read_text(encoding='utf-8')
+    assert '/log-tails' in api_source
+    assert '/diagnoses' in api_source
+    assert '/logs/tail' not in api_source
+    assert '/diagnosis`' not in api_source

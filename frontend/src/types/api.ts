@@ -12,6 +12,8 @@ export interface UserInfo {
   roleType: 'SUPER_ADMIN' | 'NORMAL_USER'
   status: string
   isSuperAdmin: boolean
+  passwordChangeRequired?: boolean
+  passwordUpdatedAt?: string | null
 }
 
 export interface LoginRequest {
@@ -31,6 +33,7 @@ export interface LoginResponse {
   accessToken: string
   tokenType: string
   sessionId: string
+  passwordChangeRequired?: boolean
   user: UserInfo
 }
 
@@ -52,6 +55,27 @@ export interface UserAccount {
   roleType: string
   status: string
   lastLoginAt?: string
+  mustChangePassword?: boolean
+  passwordUpdatedAt?: string | null
+}
+
+
+export interface AgentMetrics {
+  dockerStatus?: string
+  cpuUsage?: number | null
+  memoryUsage?: number | null
+  diskUsage?: number | null
+  inodeUsage?: number | null
+  loadAverage?: number | null
+  runningContainers?: number
+  availableSlots?: number
+  maxSlots?: number
+  currentRuns?: number[]
+  projectDataRootWritable?: boolean | null
+  dockerSockAccessible?: boolean | null
+  timezone?: string
+  lastError?: string
+  lastHeartbeatAt?: string
 }
 
 export interface ServerNode {
@@ -65,7 +89,7 @@ export interface ServerNode {
   manageStatus: string
   healthStatus: string
   capacityStatus: string
-  metrics: Record<string, unknown>
+  metrics: AgentMetrics
   description: string
 }
 
@@ -217,6 +241,15 @@ export interface RunRecord {
   startedAt: string | null
   finishedAt: string | null
   errorMessage: string
+  logStatus?: string
+  logBytes?: number
+  logLines?: number
+  lastLogSeq?: number
+  logTruncated?: boolean
+  failedStage?: string
+  errorType?: string
+  errorSummary?: string
+  retryable?: boolean | null
   createdAt: string
 }
 
@@ -270,5 +303,12 @@ export interface TaskUpdateRequest { taskName?: string; parameters?: Record<stri
 export interface NotificationChannelCreateRequest { scopeType: string; companyId?: number | null; projectId?: number | null; channelName: string; channelType: string; channelStatus: string; config: Record<string, unknown>; p0Only?: boolean; cooldownSeconds?: number }
 
 export interface ScheduleUpdateRequest { scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string }
-export interface CronPreviewRequest { cronExpression: string; timezone?: string; count?: number }
-export interface CronPreviewResult { valid: boolean; cronExpression: string; timezone: string; nextTimes: string[] }
+export interface CronPreviewRequest { cronExpression?: string; scheduleConfig?: Record<string, unknown>; timezone?: string; count?: number }
+export interface CronPreviewResult { valid: boolean; cronExpression: string; timezone: string; nextTimes: string[]; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string }
+
+export interface OwnPasswordUpdateRequest { oldPassword: string; newPassword: string; confirmPassword: string }
+export interface UserPasswordResetRequest { newPassword: string; mustChangePassword: boolean }
+export interface RunEvent { eventId: number; runId: number; eventType: string; eventLevel: string; stage: string; message: string; payloadJson: Record<string, unknown>; createdAt: string }
+export interface RunLogChunk { chunkId: number; runId: number; stream: string; seq: number; offsetStart: number; offsetEnd: number; content: string; contentSize: number; createdAt: string }
+export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: boolean; chunks: RunLogChunk[] }
+export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }

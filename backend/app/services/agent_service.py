@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError
-from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectServer, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
+from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
 from app.schemas import AgentHeartbeat, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
 from app.services.routing_service import RoutingService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_run_status, set_routing_status
@@ -47,7 +47,7 @@ class AgentService:
         if payload.agent_instance_id and payload.agent_instance_id != agent.agent_instance_id:
             raise AppError("Agent 实例已被替代，禁止领取任务", code=40373, http_status=status.HTTP_403_FORBIDDEN)
         server = self.db.get(CrawlerServer, agent.server_id)
-        if not server or server.manage_status != "ENABLED" or server.health_status == "UNHEALTHY" or server.capacity_status == "EXHAUSTED" or agent.connection_status != "ONLINE":
+        if not server or server.manage_status != "ENABLED" or server.health_status == "UNHEALTHY" or server.capacity_status in {"EXHAUSTED", "FULL", "DRAINED"} or agent.connection_status != "ONLINE":
             return None
         run = self.db.scalar(select(CrawlerTaskRun).where(CrawlerTaskRun.server_id == server.server_id, CrawlerTaskRun.run_status == "QUEUED", CrawlerTaskRun.routing_status == "ROUTED").order_by(CrawlerTaskRun.created_at.asc()))
         if not run:
@@ -70,6 +70,7 @@ class AgentService:
         lease_token = secrets.token_hex(24)
         run.agent_id = agent.agent_id
         set_run_status(run, "ASSIGNED")
+        self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="Agent 已领取运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id}))
         run.lease_token = lease_token
         run.lease_expires_at = utcnow() + timedelta(seconds=settings.agent_lease_seconds)
         run.heartbeat_at = utcnow()
@@ -112,9 +113,11 @@ class AgentService:
             return {"cancelRequested": True}
         if run.run_status == "ASSIGNED":
             safe_set_run_status(run, "STARTING")
+            self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="CONTAINER_STARTING", event_level="INFO", stage="DOCKER", message=payload.message or "任务容器准备启动", payload_json={}))
         elif run.run_status == "STARTING":
             safe_set_run_status(run, "RUNNING")
             run.started_at = run.started_at or utcnow()
+            self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="SPIDER_STARTED", event_level="INFO", stage="BOOT", message=payload.message or "爬虫任务已开始运行", payload_json={}))
         elif run.run_status in RUN_TERMINAL:
             raise AppError("运行实例已结束", code=40374, http_status=status.HTTP_403_FORBIDDEN)
         run.heartbeat_at = utcnow()
@@ -139,6 +142,13 @@ class AgentService:
         run.lease_expires_at = None
         if payload.error_message:
             self.db.add(CrawlerRunLog(company_id=run.company_id, run_id=run.run_id, log_level="ERROR", message=payload.error_message))
+        self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type=f"RUN_{run.run_status}", event_level="INFO" if run.run_status in {"SUCCEEDED", "PARTIAL_SUCCESS"} else "ERROR", stage="FINISH", message=payload.error_message or "运行实例已结束", payload_json={"runStatus": run.run_status}))
+        if run.run_status not in {"SUCCEEDED", "PARTIAL_SUCCESS", "CANCELLED"}:
+            run.failed_stage = run.failed_stage or "FINISH"
+            run.error_type = run.error_type or self._infer_error_type(payload.error_message)
+            run.error_summary = run.error_summary or (payload.error_message[:1000] if payload.error_message else "任务执行失败")
+            run.retryable = run.retryable if run.retryable is not None else run.run_status in {"TIMED_OUT", "LOST"}
+            run.diagnosis_json = run.diagnosis_json or {"summary": run.error_summary, "suggestion": "请查看生命周期时间线和错误附近日志。"}
         from app.services.run_service import RunService
         run_service = RunService(self.db)
         run_service.maybe_retry(run)
@@ -156,10 +166,26 @@ class AgentService:
 
     def _update_server_health_capacity(self, server: CrawlerServer, payload: AgentHeartbeat) -> None:
         metrics = dict(server.metrics or {})
-        metrics.update({"dockerStatus": payload.docker_status, "cpuUsage": payload.cpu_usage, "memoryUsage": payload.memory_usage, "diskUsage": payload.disk_usage, "loadAverage": payload.load_average, "runningContainers": payload.running_containers, "availableSlots": payload.available_slots})
-        raw_unhealthy = payload.docker_status.upper() != "OK"
-        raw_exhausted = payload.available_slots <= 0
-        raw_pressure = 0 < payload.available_slots <= max(1, server.max_container_slots // 4)
+        metrics.update({
+            "dockerStatus": payload.docker_status,
+            "cpuUsage": payload.cpu_usage,
+            "memoryUsage": payload.memory_usage,
+            "diskUsage": payload.disk_usage,
+            "inodeUsage": payload.inode_usage,
+            "loadAverage": payload.load_average,
+            "runningContainers": payload.running_containers,
+            "availableSlots": payload.available_slots,
+            "maxSlots": payload.max_slots if payload.max_slots is not None else server.max_container_slots,
+            "currentRuns": payload.current_runs.get("runIds", []) if isinstance(payload.current_runs, dict) else [],
+            "projectDataRootWritable": payload.project_data_root_writable,
+            "dockerSockAccessible": payload.docker_sock_accessible,
+            "timezone": payload.timezone,
+            "lastError": payload.last_error,
+            "lastHeartbeatAt": utcnow().isoformat(),
+        })
+        raw_unhealthy = payload.health_status == "UNHEALTHY" or payload.docker_status.upper() != "OK" or payload.docker_sock_accessible is False
+        raw_exhausted = payload.capacity_status in {"FULL", "DRAINED", "EXHAUSTED"} or payload.available_slots <= 0
+        raw_pressure = payload.capacity_status == "BUSY" or 0 < payload.available_slots <= max(1, server.max_container_slots // 4)
         bad = int(metrics.get("badHealthCount") or 0)
         good = int(metrics.get("goodHealthCount") or 0)
         if raw_unhealthy:
@@ -196,8 +222,8 @@ class AgentService:
 
     def _sync_project_server_scheduling(self, server: CrawlerServer) -> None:
         items = list(self.db.scalars(select(CrawlerProjectServer).where(CrawlerProjectServer.server_id == server.server_id, CrawlerProjectServer.deployment_status == "DEPLOYED")).all())
-        unhealthy = server.health_status == "UNHEALTHY" or server.capacity_status == "EXHAUSTED" or server.manage_status != "ENABLED"
-        recovered = server.health_status in {"HEALTHY", "DEGRADED"} and server.capacity_status in {"NORMAL", "PRESSURE"} and server.manage_status == "ENABLED"
+        unhealthy = server.health_status == "UNHEALTHY" or server.capacity_status in {"EXHAUSTED", "FULL", "DRAINED"} or server.manage_status != "ENABLED"
+        recovered = server.health_status in {"HEALTHY", "DEGRADED"} and server.capacity_status in {"NORMAL", "PRESSURE", "BUSY"} and server.manage_status == "ENABLED"
         for ps in items:
             if unhealthy and ps.auto_eject_enabled and ps.scheduling_status in {"ENABLED", "RECOVERING"}:
                 before = {"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason}
@@ -214,6 +240,17 @@ class AgentService:
                 ps.scheduling_status = "ENABLED"
                 ps.disabled_reason = ""
                 write_operation_log(self.db, None, None, operation_type="ENABLE_RECOVERED_PROJECT_SERVER", resource_type="project_server", resource_id=str(ps.project_server_id), before_data=before, after_data={"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason})
+
+    @staticmethod
+    def _infer_error_type(message: str) -> str:
+        text = (message or "").lower()
+        if "timeout" in text or "超时" in text:
+            return "NETWORK_TIMEOUT"
+        if "docker" in text or "container" in text or "容器" in text:
+            return "DOCKER_ERROR"
+        if "permission" in text or "权限" in text:
+            return "PERMISSION_ERROR"
+        return "UNKNOWN_ERROR"
 
     def _mark_agent_runs_lost(self, agent: CrawlerAgent, message: str) -> None:
         runs = list(self.db.scalars(select(CrawlerTaskRun).where(CrawlerTaskRun.agent_id == agent.agent_id, CrawlerTaskRun.run_status.in_(["ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"]))).all())

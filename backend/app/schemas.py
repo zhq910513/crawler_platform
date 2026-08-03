@@ -37,10 +37,20 @@ class UserCreate(ApiModel):
 
 class UserUpdate(ApiModel):
     nick_name: str | None = Field(default=None, min_length=1, max_length=50)
-    password: str | None = Field(default=None, min_length=8, max_length=200)
     role_type: Literal["SUPER_ADMIN", "NORMAL_USER"] | None = None
     company_id: int | None = None
     status: Literal["ENABLED", "DISABLED"] | None = None
+
+
+class OwnPasswordUpdate(ApiModel):
+    old_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+    confirm_password: str = Field(min_length=8, max_length=200)
+
+
+class UserPasswordResetCreate(ApiModel):
+    new_password: str = Field(min_length=8, max_length=200)
+    must_change_password: bool = True
 
 
 class CompanyCreate(ApiModel):
@@ -195,7 +205,7 @@ class TaskFromDefinitionCreate(ApiModel):
     max_retry_count: int = Field(default=0, ge=0, le=20)
     schedule_status: Literal["ENABLED", "PAUSED", "DISABLED"] = "PAUSED"
     schedule_type: Literal["CRON", "MANUAL"] = "MANUAL"
-    cron_expression: str = Field(default="", max_length=100)
+    cron_expression: str = Field(default="", max_length=1000)
     schedule_timezone: str = Field(default="Asia/Shanghai", max_length=100)
     overlap_policy: Literal["SKIP", "QUEUE", "CONCURRENT", "CANCEL_OLD"] = "QUEUE"
     schedule_config: dict[str, Any] = Field(default_factory=dict)
@@ -216,8 +226,8 @@ class TaskFromDefinitionCreate(ApiModel):
     def validate_policy(self) -> "TaskFromDefinitionCreate":
         if self.image_policy == "PINNED" and not self.fixed_release_id:
             raise ValueError("fixedReleaseId is required when imagePolicy is PINNED")
-        if self.schedule_type == "CRON" and not self.cron_expression:
-            raise ValueError("cronExpression is required when scheduleType is CRON")
+        if self.schedule_type == "CRON" and not self.cron_expression and not self.schedule_config:
+            raise ValueError("cronExpression or scheduleConfig is required when scheduleType is CRON")
         return self
 
 
@@ -247,7 +257,7 @@ class TaskUpdate(ApiModel):
 class ScheduleUpdate(ApiModel):
     schedule_status: Literal["ENABLED", "PAUSED", "DISABLED", "ERROR"] | None = None
     schedule_type: Literal["CRON", "MANUAL"] | None = None
-    cron_expression: str | None = Field(default=None, max_length=100)
+    cron_expression: str | None = Field(default=None, max_length=1000)
     schedule_timezone: str | None = Field(default=None, max_length=100)
     overlap_policy: Literal["SKIP", "QUEUE", "CONCURRENT", "CANCEL_OLD"] | None = None
     schedule_config: dict[str, Any] | None = None
@@ -255,7 +265,8 @@ class ScheduleUpdate(ApiModel):
 
 
 class CronPreviewRequest(ApiModel):
-    cron_expression: str = Field(min_length=1, max_length=100)
+    cron_expression: str | None = Field(default=None, max_length=1000)
+    schedule_config: dict[str, Any] | None = None
     timezone: str = Field(default="Asia/Shanghai", max_length=100)
     count: int = Field(default=5, ge=1, le=20)
 
@@ -279,13 +290,20 @@ class AgentHeartbeat(ApiModel):
     agent_instance_id: str = Field(min_length=1, max_length=100)
     agent_version: str = Field(default="", max_length=50)
     protocol_version: str = Field(default="3.0", max_length=30)
-    docker_status: str = Field(default="UNKNOWN", max_length=30)
+    health_status: Literal["HEALTHY", "UNHEALTHY", "OFFLINE", "UNKNOWN"] | None = None
+    capacity_status: Literal["NORMAL", "BUSY", "FULL", "DRAINED", "EXHAUSTED", "UNKNOWN"] | None = None
+    docker_status: str = Field(default="UNKNOWN", max_length=500)
     cpu_usage: float | None = None
     memory_usage: float | None = None
     disk_usage: float | None = None
+    inode_usage: float | None = None
     load_average: float | None = None
     running_containers: int = Field(default=0, ge=0)
     available_slots: int = Field(default=0, ge=0)
+    max_slots: int | None = Field(default=None, ge=0)
+    project_data_root_writable: bool | None = None
+    docker_sock_accessible: bool | None = None
+    timezone: str = Field(default="", max_length=100)
     capabilities: dict[str, Any] = Field(default_factory=dict)
     current_runs: dict[str, Any] = Field(default_factory=dict)
     last_error: str = Field(default="", max_length=4000)
@@ -309,6 +327,51 @@ class AgentRunResult(ApiModel):
     result_payload: dict[str, Any] = Field(default_factory=dict)
     error_message: str = Field(default="", max_length=10000)
     agent_instance_id: str | None = Field(default=None, max_length=100)
+
+
+class AgentRunEventCreate(ApiModel):
+    run_id: int
+    lease_token: str = Field(min_length=1, max_length=64)
+    event_type: str = Field(min_length=1, max_length=100)
+    event_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    stage: str = Field(default="", max_length=80)
+    message: str = Field(default="", max_length=4000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    agent_instance_id: str | None = Field(default=None, max_length=100)
+
+
+class AgentRunLogChunkCreate(ApiModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid", str_strip_whitespace=False)
+
+    run_id: int
+    lease_token: str = Field(min_length=1, max_length=64)
+    stream: Literal["stdout", "stderr", "file"] = "stdout"
+    seq: int = Field(ge=1)
+    offset_start: int = Field(default=0, ge=0)
+    offset_end: int = Field(default=0, ge=0)
+    content: str = Field(default="", max_length=262144)
+    agent_instance_id: str | None = Field(default=None, max_length=100)
+
+
+class AgentRunLogFinalizeCreate(ApiModel):
+    run_id: int
+    lease_token: str = Field(min_length=1, max_length=64)
+    log_status: Literal["COMPLETE", "FAILED", "TRUNCATED"] = "COMPLETE"
+    log_path: str = Field(default="", max_length=500)
+    log_truncated: bool = False
+    failed_stage: str = Field(default="", max_length=80)
+    error_type: str = Field(default="", max_length=100)
+    error_summary: str = Field(default="", max_length=1000)
+    retryable: bool | None = None
+    diagnosis: dict[str, Any] = Field(default_factory=dict)
+    agent_instance_id: str | None = Field(default=None, max_length=100)
+
+
+class RunLogTailQuery(ApiModel):
+    after_seq: int = Field(default=0, ge=0)
+    limit: int = Field(default=200, ge=1, le=1000)
+    keyword: str = Field(default="", max_length=200)
+    stream: str = Field(default="", max_length=20)
 
 
 class NotificationChannelCreate(ApiModel):

@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -17,6 +18,28 @@ from crawler_agent.docker_runner import RunExecutor
 LOG_LEVEL = os.getenv("AGENT_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO), format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("crawler_agent.main")
+
+
+def disk_inode_usage(path: str) -> float:
+    try:
+        stat = os.statvfs(path)
+        total = stat.f_files or 0
+        free = stat.f_ffree or 0
+        return round((total - free) * 100 / total, 2) if total else 0.0
+    except Exception:
+        return 0.0
+
+
+def path_writable(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, f".write-test-{os.getpid()}")
+        with open(probe, "w", encoding="utf-8") as fp:
+            fp.write("ok")
+        os.remove(probe)
+        return True
+    except Exception:
+        return False
 
 
 class AgentApp:
@@ -54,17 +77,27 @@ class AgentApp:
             self.docker_client.ping()
         except Exception as exc:
             docker_status = f"ERROR:{exc}"
+        available_slots = max(0, config.max_slots - running)
+        health_status = "HEALTHY" if docker_status == "OK" else "UNHEALTHY"
+        capacity_status = "FULL" if available_slots <= 0 else ("BUSY" if available_slots <= max(1, config.max_slots // 4) else "NORMAL")
         return {
             "agentInstanceId": config.instance_id,
             "agentVersion": config.agent_version,
             "protocolVersion": config.protocol_version,
+            "healthStatus": health_status,
+            "capacityStatus": capacity_status,
             "dockerStatus": docker_status,
             "cpuUsage": psutil.cpu_percent(interval=None),
             "memoryUsage": psutil.virtual_memory().percent,
             "diskUsage": disk.percent,
+            "inodeUsage": disk_inode_usage(str(config.project_data_root)),
             "loadAverage": os.getloadavg()[0] if hasattr(os, "getloadavg") else 0,
             "runningContainers": running,
-            "availableSlots": max(0, config.max_slots - running),
+            "availableSlots": available_slots,
+            "maxSlots": config.max_slots,
+            "projectDataRootWritable": path_writable(str(config.project_data_root)),
+            "dockerSockAccessible": docker_status == "OK",
+            "timezone": datetime.now().astimezone().tzname() or "",
             "capabilities": config.capabilities(),
             "currentRuns": {"runIds": list(self.futures.keys())},
             "lastError": self.last_error,

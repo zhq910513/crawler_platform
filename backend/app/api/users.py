@@ -7,9 +7,10 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import SysUser
 from app.responses import ok
-from app.schemas import UserCreate, UserUpdate, UserSessionRevoke
+from app.schemas import OwnPasswordUpdate, UserCreate, UserPasswordResetCreate, UserUpdate, UserSessionRevoke
 from app.services.user_service import UserService
 from app.services.auth_service import AuthService
+from app.services.password_service import PasswordService
 
 router = APIRouter(prefix="/users", tags=["用户"])
 
@@ -27,6 +28,25 @@ def create_user(payload: UserCreate, user: SysUser = Depends(get_current_user), 
 @router.patch("/{user_id}")
 def update_user(user_id: int, payload: UserUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(UserService(db).update_user(user, user_id, payload))
+
+
+def _change_current_user_password(payload: OwnPasswordUpdate, user: SysUser, db: Session):
+    return ok(PasswordService(db).change_own_password(user, payload))
+
+
+@router.patch("/me/password")
+def update_me_password(payload: OwnPasswordUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _change_current_user_password(payload, user, db)
+
+
+@router.patch("/current/passwords")
+def update_current_user_password(payload: OwnPasswordUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _change_current_user_password(payload, user, db)
+
+
+@router.post("/{user_id}/password-resets")
+def create_user_password_reset(user_id: int, payload: UserPasswordResetCreate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(PasswordService(db).reset_user_password(user, user_id, payload))
 
 
 @router.post("/{user_id}/session-revocations")

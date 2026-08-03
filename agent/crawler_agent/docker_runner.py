@@ -87,6 +87,48 @@ class RunExecutor:
             volumes[str(dirs["cache"])] = {"bind": "/cache", "mode": "rw"}
         return volumes
 
+    def _upload_text_logs(self, run_id: int, lease_token: str, text: str, stream: str = "stdout", start_seq: int = 1) -> int:
+        if not text:
+            return start_seq - 1
+        chunk_bytes = 32 * 1024
+        encoded = text.encode("utf-8", errors="replace")
+        offset = 0
+        seq = start_seq
+        while offset < len(encoded):
+            part = encoded[offset:offset + chunk_bytes].decode("utf-8", errors="replace")
+            self.api.log_chunk(run_id, lease_token, stream, seq, offset, part)
+            offset += len(part.encode("utf-8", errors="replace"))
+            seq += 1
+        return seq - 1
+
+    def _container_logs_text(self, container: Any, tail: int | None = None) -> str:
+        data = container.logs(stdout=True, stderr=True, tail=tail) if tail is not None else container.logs(stdout=True, stderr=True)
+        return data.decode("utf-8", errors="replace")
+
+    def _diagnosis_from_logs(self, status: str, logs: str, stage: str = "FINISH") -> dict[str, Any]:
+        lower = logs.lower()
+        error_type = ""
+        if status == "TIMED_OUT":
+            error_type = "NETWORK_TIMEOUT"
+        elif "captcha" in lower or "验证码" in logs:
+            error_type = "CAPTCHA_BLOCKED"
+        elif "403" in lower:
+            error_type = "HTTP_403"
+        elif "429" in lower:
+            error_type = "HTTP_429"
+        elif "timeout" in lower or "timed out" in lower or "超时" in logs:
+            error_type = "NETWORK_TIMEOUT"
+        elif "traceback" in lower or "exception" in lower:
+            error_type = "UNKNOWN_ERROR"
+        summary = (logs[-1000:] if logs else status)
+        return {
+            "failedStage": stage if status not in {"SUCCEEDED", "PARTIAL_SUCCESS"} else "",
+            "errorType": error_type,
+            "errorSummary": summary if status not in {"SUCCEEDED", "PARTIAL_SUCCESS"} else "",
+            "retryable": status in {"TIMED_OUT"} or error_type in {"NETWORK_TIMEOUT", "HTTP_429"},
+            "diagnosis": {"summary": summary, "suggestion": "查看错误附近日志，确认目标站点、账号、网络和数据库状态。"},
+        }
+
     def execute(self, claim: dict[str, Any]) -> None:
         run_id = int(claim["runId"])
         lease_token = str(claim["leaseToken"])
@@ -117,8 +159,10 @@ class RunExecutor:
         dirs: dict[str, Path] = {}
         try:
             logger.info("run_id=%s pull start imageRepository=%s imageDigest=%s", run_id, claim.get("imageRepository"), claim.get("imageDigest"))
+            self.api.run_event(run_id, lease_token, "IMAGE_PULL_START", "DOCKER", "开始拉取并校验任务镜像")
             image_ref = self._pull_digest(str(claim.get("imageRepository") or ""), str(claim.get("imageDigest") or ""))
             logger.info("run_id=%s pull ok image_ref=%s", run_id, image_ref)
+            self.api.run_event(run_id, lease_token, "IMAGE_PULL_OK", "DOCKER", "镜像拉取和 digest 校验完成", payload={"imageRef": image_ref})
             self.api.run_heartbeat(run_id, lease_token, "镜像校验完成，准备启动共享环境隔离任务容器")
             entry_module = str(claim.get("entryModule") or "")
             entry_function = str(claim.get("entryFunction") or "run")
@@ -187,8 +231,10 @@ class RunExecutor:
             if self.config.container_user:
                 run_kwargs["user"] = self.config.container_user
             logger.info("run_id=%s container create start name=%s", run_id, container_name)
+            self.api.run_event(run_id, lease_token, "CONTAINER_CREATE_START", "DOCKER", "开始创建任务容器", payload={"containerName": container_name})
             container = self.client.containers.run(**run_kwargs)
             logger.info("run_id=%s container created id=%s", run_id, container.id[:12])
+            self.api.run_event(run_id, lease_token, "CONTAINER_CREATED", "DOCKER", "任务容器已创建并启动", payload={"containerId": container.id[:12], "containerName": container_name})
             self.api.run_heartbeat(run_id, lease_token, "任务容器已创建并启动")
             thread.start()
             started = time.monotonic()
@@ -201,20 +247,33 @@ class RunExecutor:
                         container.stop(timeout=10)
                     except Exception:
                         pass
-                    logs = container.logs(tail=200).decode("utf-8", errors="replace")
-                    self.api.finish(run_id, lease_token, "TIMED_OUT", {"tailLogs": logs, "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "任务运行超时")
+                    logs = self._container_logs_text(container)
+                    self._upload_text_logs(run_id, lease_token, logs, "stdout", 1)
+                    diagnosis = self._diagnosis_from_logs("TIMED_OUT", logs, "DOCKER")
+                    self.api.finalize_logs(run_id, lease_token, "TRUNCATED" if len(logs.encode("utf-8", errors="replace")) > log_limit_mb * 1024 * 1024 else "COMPLETE", logPath=str(dirs.get("logs", "")), logTruncated=False, **diagnosis)
+                    self.api.run_event(run_id, lease_token, "RUN_TIMED_OUT", "DOCKER", "任务运行超时", "ERROR", {"timeoutSeconds": timeout_seconds})
+                    self.api.finish(run_id, lease_token, "TIMED_OUT", {"tailLogs": logs[-4000:], "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "任务运行超时")
                     return
                 time.sleep(2)
             result = container.wait()
             exit_code = int((result or {}).get("StatusCode", 1))
             logger.info("run_id=%s container exited status_code=%s", run_id, exit_code)
-            logs = container.logs(tail=200).decode("utf-8", errors="replace")
+            logs = self._container_logs_text(container)
             status = "SUCCEEDED" if exit_code == 0 else "FAILED"
-            self.api.finish(run_id, lease_token, status, {"exitCode": exit_code, "tailLogs": logs, "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "" if exit_code == 0 else logs[-4000:])
+            self._upload_text_logs(run_id, lease_token, logs, "stdout", 1)
+            diagnosis = self._diagnosis_from_logs(status, logs, "FINISH")
+            self.api.finalize_logs(run_id, lease_token, "COMPLETE", logPath=str(dirs.get("logs", "")), logTruncated=False, **diagnosis)
+            self.api.run_event(run_id, lease_token, "RUN_SUCCEEDED" if exit_code == 0 else "RUN_FAILED", "FINISH", "任务执行成功" if exit_code == 0 else "任务执行失败", "INFO" if exit_code == 0 else "ERROR", {"exitCode": exit_code})
+            self.api.finish(run_id, lease_token, status, {"exitCode": exit_code, "tailLogs": logs[-4000:], "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "" if exit_code == 0 else logs[-4000:])
         except Exception as exc:
             logger.exception("run_id=%s execute failed: %s", run_id, exc)
             try:
-                self.api.finish(run_id, lease_token, "FAILED", {"workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, str(exc))
+                message = str(exc)
+                diagnosis = self._diagnosis_from_logs("FAILED", message, "AGENT")
+                self.api.run_event(run_id, lease_token, "AGENT_EXECUTE_FAILED", "AGENT", message, "ERROR", {"errorType": diagnosis.get("errorType") or "UNKNOWN_ERROR", "retryable": True})
+                self.api.log_chunk(run_id, lease_token, "stderr", 1, 0, message)
+                self.api.finalize_logs(run_id, lease_token, "FAILED", logPath=str(dirs.get("logs", "")), logTruncated=False, **diagnosis)
+                self.api.finish(run_id, lease_token, "FAILED", {"workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, message)
             except Exception:
                 logger.exception("run_id=%s finish callback failed after execute exception", run_id)
         finally:

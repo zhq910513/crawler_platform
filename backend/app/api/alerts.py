@@ -39,11 +39,13 @@ def list_alerts(user: SysUser = Depends(get_current_user), db: Session = Depends
     return ok(AlertService(db).list_events(user))
 
 
+@alert_router.patch("/{alert_id}/acknowledgements")
 @alert_router.patch("/{alert_id}/acknowledgement")
 def update_alert_acknowledgement(alert_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(AlertService(db).ack_event(user, alert_id))
 
 
+@alert_router.patch("/{alert_id}/resolutions")
 @alert_router.patch("/{alert_id}/resolution")
 def update_alert_resolution(alert_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(AlertService(db).resolve_event(user, alert_id))

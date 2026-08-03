@@ -29,6 +29,8 @@ class SysUser(Base, TimestampMixin):
     last_login_ip: Mapped[str] = mapped_column(String(128), default="", nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
     current_session_id: Mapped[str] = mapped_column(String(64), default="", index=True, nullable=False)
+    password_updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class SysUserSession(Base, TimestampMixin):
@@ -377,7 +379,7 @@ class CrawlerTaskSchedule(Base, TimestampMixin):
     task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="CASCADE"), unique=True, index=True, nullable=False)
     schedule_status: Mapped[str] = mapped_column(String(20), default="PAUSED", index=True, nullable=False)
     schedule_type: Mapped[str] = mapped_column(String(20), default="MANUAL", nullable=False)
-    cron_expression: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    cron_expression: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
     schedule_timezone: Mapped[str] = mapped_column(String(100), default="Asia/Shanghai", nullable=False)
     overlap_policy: Mapped[str] = mapped_column(String(30), default="QUEUE", nullable=False)
     schedule_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -447,7 +449,48 @@ class CrawlerTaskRun(Base, TimestampMixin):
     parameters_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     result_payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     retry_reason: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    log_status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True, nullable=False)
+    log_storage_type: Mapped[str] = mapped_column(String(30), default="DB_CHUNK", nullable=False)
+    log_path: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    log_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    log_lines: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_log_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_log_at: Mapped[datetime | None] = mapped_column(DateTime)
+    log_truncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    failed_stage: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    error_type: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    error_summary: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    retryable: Mapped[bool | None] = mapped_column(Boolean)
+    diagnosis_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class CrawlerRunEvent(Base):
+    __tablename__ = "crawler_run_event"
+    event_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="CASCADE"), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    event_level: Mapped[str] = mapped_column(String(20), default="INFO", index=True, nullable=False)
+    stage: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class CrawlerRunLogChunk(Base):
+    __tablename__ = "crawler_run_log_chunk"
+    __table_args__ = (UniqueConstraint("run_id", "stream", "seq", name="uk_run_log_chunk_seq"),)
+    chunk_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="CASCADE"), index=True, nullable=False)
+    stream: Mapped[str] = mapped_column(String(20), default="stdout", index=True, nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    offset_start: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    offset_end: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    content_size: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
 
 
 class CrawlerRunLog(Base):
@@ -515,4 +558,6 @@ Index("idx_task_company_status", CrawlerTask.company_id, CrawlerTask.status)
 Index("idx_task_group_limits", CrawlerTask.company_id, CrawlerTask.project_id, CrawlerTask.task_group)
 Index("idx_run_route", CrawlerTaskRun.run_status, CrawlerTaskRun.routing_status, CrawlerTaskRun.server_id)
 Index("idx_run_task_group_active", CrawlerTaskRun.project_id, CrawlerTaskRun.task_group, CrawlerTaskRun.run_status)
+Index("idx_run_event_run_created", CrawlerRunEvent.run_id, CrawlerRunEvent.created_at)
+Index("idx_run_log_chunk_run_seq", CrawlerRunLogChunk.run_id, CrawlerRunLogChunk.seq)
 Index("idx_session_user_status", SysUserSession.user_id, SysUserSession.session_status, SysUserSession.last_active_at)

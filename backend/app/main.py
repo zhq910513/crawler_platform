@@ -18,6 +18,26 @@ from app.utils import api_data
 
 settings.validate_runtime()
 
+HIGH_FREQUENCY_AUDIT_PREFIXES = (
+    "/agent-heartbeats",
+    "/agent-run-claims",
+    "/agent-run-heartbeats",
+    "/agent-run-results",
+    "/agent-run-events",
+    "/agent-run-log-chunks",
+    "/agent-run-log-finalizations",
+)
+
+
+def should_write_operation_audit(path: str, method: str) -> bool:
+    if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return False
+    if not path.startswith(settings.api_prefix):
+        return False
+    relative = path.replace(settings.api_prefix, "", 1) or "/"
+    return not relative.startswith(HIGH_FREQUENCY_AUDIT_PREFIXES)
+
+
 app = FastAPI(
     title="爬虫管理平台",
     version=settings.app_version,
@@ -31,7 +51,7 @@ app = FastAPI(
 @app.middleware("http")
 async def operation_audit_middleware(request: Request, call_next):
     response = await call_next(request)
-    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith(settings.api_prefix):
+    if should_write_operation_audit(request.url.path, request.method):
         try:
             auth = request.headers.get("authorization", "")
             user = None

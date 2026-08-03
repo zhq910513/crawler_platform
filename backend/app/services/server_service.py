@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from datetime import timedelta
 from fastapi import status
 from sqlalchemy.orm import Session
 
@@ -11,7 +12,8 @@ from app.schemas import AgentRegistration, ServerCreate, ServerUpdate
 from app.security import hash_password
 from app.services.permissions import require_company_scope, require_super_admin, scoped_company_id
 from app.services.audit import write_operation_log
-from app.utils import sha256_text
+from app.config import settings
+from app.utils import sha256_text, utcnow
 
 
 class ServerService:
@@ -23,7 +25,22 @@ class ServerService:
 
     def list_servers(self, user: SysUser, company_id: int | None = None) -> list[CrawlerServer]:
         scoped = scoped_company_id(user, company_id)
-        return self.servers.list_servers(scoped)
+        servers = self.servers.list_servers(scoped)
+        offline_before = utcnow() - timedelta(seconds=max(30, settings.agent_lease_seconds * 2))
+        changed = False
+        for server in servers:
+            agent = server.agent
+            if agent and agent.last_heartbeat_at and agent.last_heartbeat_at < offline_before:
+                if agent.connection_status != "OFFLINE" or server.health_status != "OFFLINE":
+                    agent.connection_status = "OFFLINE"
+                    server.health_status = "OFFLINE"
+                    metrics = dict(server.metrics or {})
+                    metrics["lastError"] = metrics.get("lastError") or "Agent 心跳超时，节点已离线"
+                    server.metrics = metrics
+                    changed = True
+        if changed:
+            self.db.commit()
+        return servers
 
     def create_server(self, user: SysUser, payload: ServerCreate) -> CrawlerServer:
         require_super_admin(user)
