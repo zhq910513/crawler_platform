@@ -6,8 +6,8 @@
 
 数据库迁移：
 
-- `0002_platform_1_0_2_observability.py`：新增密码字段、运行日志字段、运行事件表、日志分片表。
-- `0003_expand_schedule_cron_expression.py`：将 `crawler_task_schedule.cron_expression` 扩展到 1000 字符，用于保存业务多时间点组合表达式。
+- `0002_observability.py`：新增密码字段、运行日志字段、运行事件表、日志分片表。
+- `0003_schedule_cron_len.py`：将 `crawler_task_schedule.cron_expression` 扩展到 1000 字符，用于保存业务多时间点组合表达式。
 
 ## 升级前检查
 
@@ -23,7 +23,7 @@
 
 - `/health` 返回 `version=1.0.2`。
 - `deploy/scripts/commercial-release-gate.sh` 使用 Docker 工具容器通过，不能因宿主机缺 Python/npm 误失败。
-- Alembic head 为 `0003_expand_schedule_cron_expression`。
+- Alembic head 为 `0003_schedule_cron_len`。
 - admin 用户仍可登录。
 - 已有公司、Agent、项目、任务和历史运行记录可查看。
 - 新建普通用户首次登录要求改密。

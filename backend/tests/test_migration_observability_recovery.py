@@ -64,10 +64,10 @@ def test_observability_migration_recovers_half_migrated_database(tmp_path: Path)
         connection.execute(sa.text("CREATE TABLE crawler_task_schedule (schedule_id INTEGER PRIMARY KEY, cron_expression VARCHAR(100) NOT NULL)"))
         connection.execute(sa.text("INSERT INTO crawler_task_run (run_id, diagnosis_json) VALUES (1, NULL)"))
 
-        _run_revision_upgrade(connection, "0002_platform_1_0_2_observability.py")
-        _run_revision_upgrade(connection, "0002_platform_1_0_2_observability.py")
-        _run_revision_upgrade(connection, "0003_expand_schedule_cron_expression.py")
-        _run_revision_upgrade(connection, "0003_expand_schedule_cron_expression.py")
+        _run_revision_upgrade(connection, "0002_observability.py")
+        _run_revision_upgrade(connection, "0002_observability.py")
+        _run_revision_upgrade(connection, "0003_schedule_cron_len.py")
+        _run_revision_upgrade(connection, "0003_schedule_cron_len.py")
 
         inspector = sa.inspect(connection)
         assert "crawler_run_event" in inspector.get_table_names()
@@ -78,3 +78,12 @@ def test_observability_migration_recovers_half_migrated_database(tmp_path: Path)
         assert getattr(schedule_columns["cron_expression"]["type"], "length", None) == 1000
         diagnosis = connection.execute(sa.text("SELECT diagnosis_json FROM crawler_task_run WHERE run_id = 1")).scalar_one()
         assert diagnosis in ("{}", {})
+
+
+def test_migration_revision_ids_fit_default_alembic_version_column() -> None:
+    """Alembic's default MySQL alembic_version.version_num is VARCHAR(32)."""
+    revision_0002 = _load_revision("0002_observability.py")
+    revision_0003 = _load_revision("0003_schedule_cron_len.py")
+    for value in [revision_0002.revision, revision_0002.down_revision, revision_0003.revision, revision_0003.down_revision]:
+        assert len(value) <= 32
+    assert revision_0003.down_revision == revision_0002.revision
