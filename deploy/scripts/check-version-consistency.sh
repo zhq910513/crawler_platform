@@ -73,7 +73,7 @@ if [ -f frontend/package.json ]; then
   [ -z "$frontend_version" ] || info "frontend/package.json baseline=${frontend_version}；Docker 构建时统一注入发布版本 ${RELEASE_VERSION}。"
 fi
 
-if grep -R "crawler_platform_.*:1\.0\.1" -n docker-compose.yml deploy/compose 2>/dev/null; then
+if grep -R -E "crawler_platform_.*:1\.0\.1([^0-9.]|$)" -n docker-compose.yml deploy/compose 2>/dev/null; then
   fail "Compose 文件仍存在写死的 1.0.1 镜像标签。"
 fi
 

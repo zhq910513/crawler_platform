@@ -340,6 +340,7 @@ class CrawlerTask(Base, TimestampMixin):
     company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
     project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
     definition_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_project_task_definition.definition_id", ondelete="SET NULL"), index=True)
+    owner_user_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"), index=True)
     task_code: Mapped[str] = mapped_column(String(120), index=True, nullable=False)
     task_name: Mapped[str] = mapped_column(String(200), nullable=False)
     entry_module: Mapped[str] = mapped_column(String(300), nullable=False)

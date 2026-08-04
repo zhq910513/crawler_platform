@@ -1,4 +1,4 @@
-from app.api import agents, alerts, companies, cron_previews, dashboard, operations, projects, releases, runs, sessions, servers, tasks, users
+from app.api import agents, alerts, companies, cron_previews, dashboard, operations, projects, releases, runs, sessions, servers, task_schedule_panels, tasks, users
 
 routers = [
     sessions.router,
@@ -8,6 +8,7 @@ routers = [
     agents.router,
     projects.router,
     tasks.router,
+    task_schedule_panels.router,
     runs.router,
     cron_previews.router,
     releases.router,

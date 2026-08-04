@@ -553,3 +553,124 @@ def test_102_frontend_run_log_routes_match_backend_contract() -> None:
     assert '/diagnoses' in api_source
     assert '/logs/tail' not in api_source
     assert '/diagnosis`' not in api_source
+
+
+def test_pinned_release_must_belong_to_task_project() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company_a, project_a, _, _ = create_flow(client, headers, 'pin_a')
+    company_b, project_b, _, _ = create_flow(client, headers, 'pin_b')
+    defs_a = client.get(f"/api/v1/projects/{project_a['projectId']}/task-definitions", headers=headers).json()['data']
+    from app.db import SessionLocal
+    from app.models import CrawlerProjectRelease
+    with SessionLocal() as db:
+        foreign_release = db.query(CrawlerProjectRelease).filter(CrawlerProjectRelease.project_id == project_b['projectId']).order_by(CrawlerProjectRelease.release_id.desc()).first()
+        foreign_release_id = foreign_release.release_id
+    rejected = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': defs_a[0]['definitionId'],
+        'taskCode': 'task_foreign_release',
+        'taskName': '跨项目镜像任务',
+        'status': 'ENABLED',
+        'imagePolicy': 'PINNED',
+        'fixedReleaseId': foreign_release_id,
+    })
+    assert rejected.status_code == 400
+    assert rejected.json()['code'] == 40055
+    task = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': defs_a[0]['definitionId'],
+        'taskCode': 'task_valid_release_scope',
+        'taskName': '合法镜像任务',
+        'status': 'ENABLED',
+    }).json()['data']
+    update_rejected = client.patch(f"/api/v1/tasks/{task['taskId']}", headers=headers, json={
+        'imagePolicy': 'PINNED',
+        'fixedReleaseId': foreign_release_id,
+    })
+    assert update_rejected.status_code == 400
+    assert update_rejected.json()['code'] == 40055
+    from app.db import SessionLocal
+    from app.models import CrawlerTask
+    with SessionLocal() as db:
+        stored = db.get(CrawlerTask, task['taskId'])
+        stored.image_policy = 'PINNED'
+        stored.fixed_release_id = None
+        db.commit()
+    run_rejected = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']})
+    assert run_rejected.status_code == 400
+    assert run_rejected.json()['code'] == 40064
+
+
+def test_scheduler_duplicate_trigger_does_not_rollback_previous_schedule() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, _, discovery = create_flow(client, headers, 'scheddup')
+    manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('f' * 64), 'taskDefinitions': [
+        {'definitionKey': 'task_dup_a', 'taskName': '重复A', 'entryModule': 'spiders.dup_a', 'entryFunction': 'run'},
+        {'definitionKey': 'task_dup_b', 'taskName': '重复B', 'entryModule': 'spiders.dup_b', 'entryFunction': 'run'},
+    ]}
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-scheddup', 'manifest': manifest})
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    defs_by_key = {row['definitionKey']: row for row in defs}
+    task_a = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs_by_key['task_dup_a']['definitionId'], 'taskCode': 'task_dup_a', 'taskName': '重复A', 'status': 'ENABLED', 'scheduleStatus': 'ENABLED', 'scheduleType': 'CRON', 'cronExpression': '* * * * *'}).json()['data']
+    task_b = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs_by_key['task_dup_b']['definitionId'], 'taskCode': 'task_dup_b', 'taskName': '重复B', 'status': 'ENABLED', 'scheduleStatus': 'ENABLED', 'scheduleType': 'CRON', 'cronExpression': '* * * * *'}).json()['data']
+    from datetime import datetime
+    from app.db import SessionLocal
+    from app.models import CrawlerProject, CrawlerTaskRun, CrawlerTaskSchedule
+    from app.services.scheduler_service import SchedulerService
+    scheduled_at = datetime(2000, 1, 1, 0, 0, 0)
+    with SessionLocal() as db:
+        db.get(CrawlerProject, project['projectId']).online_status = 'ONLINE'
+        schedule_a = db.query(CrawlerTaskSchedule).filter(CrawlerTaskSchedule.task_id == task_a['taskId']).one()
+        schedule_b = db.query(CrawlerTaskSchedule).filter(CrawlerTaskSchedule.task_id == task_b['taskId']).one()
+        schedule_a.next_run_at = scheduled_at
+        schedule_b.next_run_at = scheduled_at
+        db.add(CrawlerTaskRun(
+            company_id=company['companyId'], project_id=project['projectId'], task_id=task_b['taskId'], schedule_id=schedule_b.schedule_id,
+            scheduled_at=scheduled_at, trigger_key=f"schedule:{schedule_b.schedule_id}:{scheduled_at.isoformat()}:single",
+            run_status='SKIPPED', routing_status='ROUTE_CANCELLED', trigger_type='SCHEDULE',
+            entry_module='spiders.dup_b', entry_function='run', execution_mode='SINGLE', idempotency_policy='IDEMPOTENT',
+        ))
+        db.commit()
+        created = SchedulerService(db).dispatch_due_schedules(limit=10)
+        assert created == 1
+        created_a = db.query(CrawlerTaskRun).filter(CrawlerTaskRun.task_id == task_a['taskId'], CrawlerTaskRun.trigger_key.like(f"schedule:{schedule_a.schedule_id}:%:single")).count()
+        assert created_a == 1
+        db.refresh(schedule_a)
+        db.refresh(schedule_b)
+        assert schedule_a.next_run_at is not None and schedule_a.next_run_at > scheduled_at
+        assert schedule_b.next_run_at is not None and schedule_b.next_run_at > scheduled_at
+
+
+def test_task_schedule_panel_uses_sharded_parent_as_latest_run() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, _, discovery = create_flow(client, headers, 'panelshard')
+    manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('1' * 64), 'taskDefinitions': [
+        {'definitionKey': 'task_panel_shard', 'taskName': '面板分片任务', 'entryModule': 'spiders.panel_shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
+    ]}
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-panelshard', 'manifest': manifest})
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    shard_def = [item for item in defs if item['definitionKey'] == 'task_panel_shard'][0]
+    task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_panel_shard', 'taskName': '面板分片任务', 'status': 'ENABLED'}).json()['data']
+    parent = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']}).json()['data']
+    from app.db import SessionLocal
+    from app.models import CrawlerTaskRun
+    from app.services.run_service import RunService
+    from app.utils import utcnow
+    with SessionLocal() as db:
+        children = db.query(CrawlerTaskRun).filter(CrawlerTaskRun.parent_run_id == parent['runId']).order_by(CrawlerTaskRun.run_id.asc()).all()
+        children[0].run_status = 'SUCCEEDED'
+        children[0].finished_at = utcnow()
+        children[1].run_status = 'FAILED'
+        children[1].finished_at = utcnow()
+        db.commit()
+        RunService(db).aggregate_sharded_parent(parent['runId'])
+        db.commit()
+    response = client.get('/api/v1/task-schedule-panels', headers=headers, params={'taskCode': 'task_panel_shard'}).json()['data']
+    assert response['total'] == 1
+    item = response['items'][0]
+    assert item['lastRunId'] == parent['runId']
+    assert item['lastRunStatus'] == 'PARTIAL_SUCCESS'

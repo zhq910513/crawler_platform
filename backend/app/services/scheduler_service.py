@@ -18,18 +18,34 @@ class SchedulerService:
         self.run_service = RunService(db)
 
     def dispatch_due_schedules(self, limit: int = 100) -> int:
-        due = list(self.db.scalars(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.schedule_status == "ENABLED", CrawlerTaskSchedule.schedule_type == "CRON", CrawlerTaskSchedule.next_run_at.is_not(None), CrawlerTaskSchedule.next_run_at <= utcnow()).order_by(CrawlerTaskSchedule.next_run_at.asc()).limit(limit)).all())
+        due_ids = list(
+            self.db.scalars(
+                select(CrawlerTaskSchedule.schedule_id)
+                .where(
+                    CrawlerTaskSchedule.schedule_status == "ENABLED",
+                    CrawlerTaskSchedule.schedule_type == "CRON",
+                    CrawlerTaskSchedule.next_run_at.is_not(None),
+                    CrawlerTaskSchedule.next_run_at <= utcnow(),
+                )
+                .order_by(CrawlerTaskSchedule.next_run_at.asc())
+                .limit(limit)
+            ).all()
+        )
         created = 0
-        for schedule in due:
+        for schedule_id in due_ids:
+            schedule = self.db.get(CrawlerTaskSchedule, schedule_id)
+            if not schedule or schedule.schedule_status != "ENABLED" or schedule.schedule_type != "CRON" or not schedule.next_run_at or schedule.next_run_at > utcnow():
+                continue
             task = self.db.get(CrawlerTask, schedule.task_id)
             project = self.db.get(CrawlerProject, schedule.project_id)
             scheduled_at = schedule.next_run_at or utcnow()
-            if not task or not project or task.status != "ENABLED" or project.status != "ENABLED" or project.online_status != "ONLINE":
-                self._create_skipped(task, schedule, scheduled_at, "项目或任务状态不允许调度")
-                self._advance(schedule, scheduled_at)
-                continue
-            active_runs = list(self.db.scalars(select(CrawlerTaskRun).where(CrawlerTaskRun.task_id == task.task_id, CrawlerTaskRun.run_status.in_(list(ACTIVE_RUN_STATUSES)))).all())
             try:
+                if not task or not project or task.status != "ENABLED" or project.status != "ENABLED" or project.online_status != "ONLINE":
+                    self._create_skipped(task, schedule, scheduled_at, "项目或任务状态不允许调度")
+                    self._advance(schedule, scheduled_at)
+                    self.db.commit()
+                    continue
+                active_runs = list(self.db.scalars(select(CrawlerTaskRun).where(CrawlerTaskRun.task_id == task.task_id, CrawlerTaskRun.run_status.in_(list(ACTIVE_RUN_STATUSES)))).all())
                 if active_runs and schedule.overlap_policy == "SKIP":
                     self._create_skipped(task, schedule, scheduled_at, "重叠策略跳过")
                 else:
@@ -45,14 +61,33 @@ class SchedulerService:
                                 safe_set_run_status(run, "CANCEL_REQUESTED", message="新调度触发，请求取消旧运行")
                     self.run_service.create_run(task, schedule, scheduled_at, {}, trigger_type="SCHEDULE", hold_for_queue=hold_for_queue)
                     created += 1
+                self._advance(schedule, scheduled_at)
+                self.db.commit()
             except IntegrityError:
                 self.db.rollback()
+                self._advance_after_duplicate(schedule_id, scheduled_at)
                 continue
             except AppError as exc:
-                self._create_skipped(task, schedule, scheduled_at, exc.message)
-            self._advance(schedule, scheduled_at)
-        self.db.commit()
+                self.db.rollback()
+                schedule = self.db.get(CrawlerTaskSchedule, schedule_id)
+                task = self.db.get(CrawlerTask, schedule.task_id) if schedule else None
+                if schedule:
+                    self._create_skipped(task, schedule, scheduled_at, exc.message)
+                    self._advance(schedule, scheduled_at)
+                    try:
+                        self.db.commit()
+                    except IntegrityError:
+                        self.db.rollback()
+                        self._advance_after_duplicate(schedule_id, scheduled_at)
         return created
+
+    def _advance_after_duplicate(self, schedule_id: int, scheduled_at) -> None:
+        schedule = self.db.get(CrawlerTaskSchedule, schedule_id)
+        if not schedule:
+            return
+        if schedule.next_run_at and schedule.next_run_at <= scheduled_at:
+            self._advance(schedule, scheduled_at)
+            self.db.commit()
 
     def _create_skipped(self, task: CrawlerTask | None, schedule: CrawlerTaskSchedule, scheduled_at, reason: str) -> None:
         if not task:

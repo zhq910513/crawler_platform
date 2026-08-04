@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerTask, CrawlerTaskSchedule, CrawlerTaskServerTarget, SysUser
+from app.models import CrawlerProjectRelease, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerTask, CrawlerTaskSchedule, CrawlerTaskServerTarget, SysUser
 from app.repositories.platform import ProjectRepository, TaskDefinitionRepository, TaskRepository
 from app.schemas import ScheduleUpdate, TaskFromDefinitionCreate, TaskUpdate
 from app.services.audit import write_operation_log
@@ -36,6 +36,35 @@ class TaskService:
             rows = self.tasks.list_tasks(company_id=scoped, user_id=user.user_id)
         return [self._task_payload(row) for row in rows]
 
+    def _validate_owner(self, company_id: int, owner_user_id: int | None) -> int | None:
+        if owner_user_id is None:
+            return None
+        owner = self.db.get(SysUser, owner_user_id)
+        if not owner or owner.status != "ENABLED" or owner.company_id != company_id:
+            raise AppError("负责人必须是所属公司的启用用户", code=40054, http_status=status.HTTP_400_BAD_REQUEST)
+        return owner.user_id
+
+    def _validate_fixed_release(self, project_id: int, company_id: int, release_id: int | None) -> int | None:
+        if release_id is None:
+            return None
+        release = self.db.get(CrawlerProjectRelease, release_id)
+        if (
+            not release
+            or release.project_id != project_id
+            or release.company_id != company_id
+            or release.release_status != "PUBLISHED"
+            or release.parse_status != "SUCCESS"
+        ):
+            raise AppError("固定镜像版本必须属于当前项目且处于可用发布状态", code=40055, http_status=status.HTTP_400_BAD_REQUEST)
+        return release.release_id
+
+    def _validate_image_binding(self, project_id: int, company_id: int, image_policy: str, fixed_release_id: int | None) -> int | None:
+        if image_policy == "PINNED":
+            if not fixed_release_id:
+                raise AppError("固定镜像策略必须选择发布版本", code=40056, http_status=status.HTTP_400_BAD_REQUEST)
+            return self._validate_fixed_release(project_id, company_id, fixed_release_id)
+        return fixed_release_id
+
     def _prepare_schedule_fields(self, schedule_type: str, cron_expression: str, schedule_config: dict | None, timezone: str, current_user: SysUser) -> tuple[str, dict, str]:
         if schedule_type != "CRON":
             return "", schedule_config or {}, "手动执行"
@@ -59,6 +88,7 @@ class TaskService:
             company_id=project.company_id,
             project_id=project.project_id,
             definition_id=definition.definition_id,
+            owner_user_id=self._validate_owner(project.company_id, payload.owner_user_id),
             task_code=payload.task_code,
             task_name=payload.task_name,
             entry_module=definition.entry_module,
@@ -82,7 +112,7 @@ class TaskService:
             status=payload.status,
             image_policy=payload.image_policy,
             release_channel=payload.release_channel,
-            fixed_release_id=payload.fixed_release_id,
+            fixed_release_id=self._validate_image_binding(project.project_id, project.company_id, payload.image_policy, payload.fixed_release_id),
             cpu_limit=float(payload.cpu_limit),
             memory_limit_mb=payload.memory_limit_mb,
             timeout_seconds=payload.timeout_seconds,
@@ -129,6 +159,11 @@ class TaskService:
         require_project_role(self.db, user, task.project_id, "OPERATOR")
         before = {c.name: getattr(task, c.name) for c in task.__table__.columns}
         updates = payload.model_dump(exclude_unset=True)
+        if "owner_user_id" in updates:
+            updates["owner_user_id"] = self._validate_owner(task.company_id, updates["owner_user_id"])
+        image_policy = updates.get("image_policy", task.image_policy)
+        fixed_release_id = updates.get("fixed_release_id", task.fixed_release_id)
+        updates["fixed_release_id"] = self._validate_image_binding(task.project_id, task.company_id, image_policy, fixed_release_id)
         for key, value in updates.items():
             setattr(task, key, value)
         after = {c.name: getattr(task, c.name) for c in task.__table__.columns}

@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import CrawlerReleaseChannel, CrawlerTask, CrawlerTaskRun, CrawlerTaskSchedule, SysAlertEvent, SysUser
+from app.models import CrawlerProjectRelease, CrawlerReleaseChannel, CrawlerTask, CrawlerTaskRun, CrawlerTaskSchedule, SysAlertEvent, SysUser
 from app.repositories.platform import RunRepository, TaskRepository
 from app.schemas import ManualRunCreate
 from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
@@ -105,7 +105,7 @@ class RunService:
             return None
         if run.attempt >= run.max_attempts:
             return None
-        release = self.db.get(__import__("app.models", fromlist=["CrawlerProjectRelease"]).CrawlerProjectRelease, run.release_id) if run.release_id else self._resolve_release(task)
+        release = self.db.get(CrawlerProjectRelease, run.release_id) if run.release_id else self._resolve_release(task)
         if not release:
             return None
         retry = self._create_single_run(task, None, utcnow(), dict(run.parameters_snapshot or {}), release, run.trigger_type, run.shard_index, run.shard_count, False, f"retry:{run.run_id}:{run.attempt + 1}")
@@ -143,10 +143,26 @@ class RunService:
         return parent
 
     def _resolve_release(self, task: CrawlerTask):
-        if task.image_policy == "PINNED" and task.fixed_release_id:
-            return self.db.get(__import__("app.models", fromlist=["CrawlerProjectRelease"]).CrawlerProjectRelease, task.fixed_release_id)
-        channel = self.db.scalar(select(CrawlerReleaseChannel).where(CrawlerReleaseChannel.project_id == task.project_id, CrawlerReleaseChannel.channel_name == task.release_channel, CrawlerReleaseChannel.channel_status == "ENABLED"))
-        return self.db.get(__import__("app.models", fromlist=["CrawlerProjectRelease"]).CrawlerProjectRelease, channel.release_id) if channel and channel.release_id else None
+        if task.image_policy == "PINNED":
+            if not task.fixed_release_id:
+                return None
+            release = self.db.get(CrawlerProjectRelease, task.fixed_release_id)
+        else:
+            channel = self.db.scalar(
+                select(CrawlerReleaseChannel).where(
+                    CrawlerReleaseChannel.project_id == task.project_id,
+                    CrawlerReleaseChannel.channel_name == task.release_channel,
+                    CrawlerReleaseChannel.channel_status == "ENABLED",
+                )
+            )
+            release = self.db.get(CrawlerProjectRelease, channel.release_id) if channel and channel.release_id else None
+        if not release:
+            return None
+        if release.project_id != task.project_id or release.company_id != task.company_id:
+            return None
+        if release.release_status != "PUBLISHED" or release.parse_status != "SUCCESS":
+            return None
+        return release
 
     @staticmethod
     def _trigger_key(schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, trigger_type: str, suffix: str) -> str | None:

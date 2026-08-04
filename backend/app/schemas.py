@@ -190,8 +190,26 @@ class ProjectServerPoolAnalysis(ApiModel):
     servers: list[ProjectServerUpsert] = Field(default_factory=list)
 
 
+class TaskSchedulePanelQuery(ApiModel):
+    company_id: int | None = None
+    project_id: int | None = None
+    task_name: str | None = Field(default=None, max_length=200)
+    task_code: str | None = Field(default=None, max_length=120)
+    entry_keyword: str | None = Field(default=None, max_length=300)
+    server_id: int | None = None
+    task_group: str | None = Field(default=None, max_length=100)
+    task_platform: str | None = Field(default=None, max_length=150)
+    task_status: str | None = Field(default=None, max_length=30)
+    schedule_status: str | None = Field(default=None, max_length=30)
+    last_run_status: str | None = Field(default=None, max_length=30)
+    owner_user_id: int | None = None
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=200)
+
+
 class TaskFromDefinitionCreate(ApiModel):
     definition_id: int
+    owner_user_id: int | None = None
     task_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=120)
     task_name: str = Field(min_length=1, max_length=200)
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -232,6 +250,7 @@ class TaskFromDefinitionCreate(ApiModel):
 
 
 class TaskUpdate(ApiModel):
+    owner_user_id: int | None = None
     task_name: str | None = Field(default=None, min_length=1, max_length=200)
     parameters: dict[str, Any] | None = None
     status: Literal["DRAFT", "ENABLED", "PAUSED", "DISABLED", "ARCHIVED"] | None = None

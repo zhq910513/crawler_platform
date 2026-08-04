@@ -207,6 +207,7 @@ export interface Task {
   companyId: number
   projectId: number
   definitionId: number | null
+  ownerUserId?: number | null
   taskCode: string
   taskName: string
   entryModule: string
@@ -228,6 +229,7 @@ export interface Task {
   releaseChannel: string
   timeoutSeconds: number
   maxRetryCount: number
+  description?: string
   scheduleId?: number
   scheduleStatus?: string
   scheduleType?: string
@@ -239,6 +241,68 @@ export interface Task {
   nextRunAt?: string | null
   lastTriggeredAt?: string | null
   createdAt: string
+}
+
+export interface PageResult<T> {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface TaskSchedulePanelQuery {
+  companyId?: number
+  projectId?: number
+  taskName?: string
+  taskCode?: string
+  entryKeyword?: string
+  serverId?: number
+  taskGroup?: string
+  taskPlatform?: string
+  taskStatus?: string
+  scheduleStatus?: string
+  lastRunStatus?: string
+  ownerUserId?: number
+  page?: number
+  pageSize?: number
+}
+
+export interface TaskSchedulePanelItem {
+  taskId: number
+  companyId: number
+  companyName: string
+  projectId: number
+  projectName: string
+  taskCode: string
+  taskName: string
+  taskGroup: string
+  taskPlatform: string
+  entryModule: string
+  entryFunction: string
+  entryPath: string
+  serverId: number | null
+  serverName: string
+  serverCode: string
+  serverIp: string
+  ownerUserId: number | null
+  ownerUserName: string
+  taskStatus: string
+  scheduleId: number | null
+  scheduleStatus: string
+  scheduleType: string
+  cronExpression: string
+  scheduleTimezone: string
+  overlapPolicy: string
+  scheduleConfig: Record<string, unknown>
+  scheduleLabel: string
+  nextRunAt: string | null
+  lastRunId: number | null
+  lastRunStatus: string
+  routingStatus: string
+  lastFinishedAt: string | null
+  lastErrorSummary: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface RunRecord {
@@ -311,8 +375,8 @@ export interface ProjectImportRequest { discoveredProjectId: number; remark?: st
 export interface ProjectUpdateRequest { projectName?: string; remark?: string; status?: string; onlineStatus?: string; dispatchMode?: string; minAvailableServers?: number; maxActiveServers?: number; allowDeployedFallback?: boolean; allowCompanyPoolFallback?: boolean; defaultRuntimeMode?: string; defaultTaskMaxConcurrency?: number; defaultGroupMaxConcurrency?: number; defaultShmSizeMb?: number; defaultLogLimitMb?: number; containerConfig?: Record<string, unknown>; description?: string }
 export interface ProjectServerUpsertRequest { serverId: number; schedulingStatus: string; serverRole: string; priority: number; weight: number; maxConcurrency: number; autoEjectEnabled: boolean; autoRecoverEnabled: boolean }
 export interface ProjectServerPoolUpdateRequest { servers: ProjectServerUpsertRequest[]; reason?: string }
-export interface TaskCreateRequest { definitionId: number; taskCode: string; taskName: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string; serverIds?: number[]; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
-export interface TaskUpdateRequest { taskName?: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
+export interface TaskCreateRequest { definitionId: number; ownerUserId?: number | null; taskCode: string; taskName: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string; serverIds?: number[]; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
+export interface TaskUpdateRequest { ownerUserId?: number | null; taskName?: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
 export interface NotificationChannelCreateRequest { scopeType: string; companyId?: number | null; projectId?: number | null; channelName: string; channelType: string; channelStatus: string; config: Record<string, unknown>; p0Only?: boolean; cooldownSeconds?: number }
 
 export interface ScheduleUpdateRequest { scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string }

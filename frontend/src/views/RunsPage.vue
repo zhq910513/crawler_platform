@@ -50,10 +50,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { downloadRunLogs, getRunDiagnosis, getRunLogTail, listRunEvents, listRuns } from '../api/platform'
 import type { RunDiagnosis, RunEvent, RunRecord } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
+const route = useRoute()
 const rows = ref<RunRecord[]>([])
 const drawerVisible = ref(false)
 const selectedRun = ref<RunRecord | null>(null)
@@ -67,7 +69,11 @@ const logAfterSeq = ref(0)
 const selectedRunId = computed(() => selectedRun.value?.runId || 0)
 
 async function load() {
-  rows.value = await listRuns()
+  const taskId = Number(route.query.taskId || 0) || undefined
+  rows.value = await listRuns(taskId ? { taskId } : undefined)
+  const runId = Number(route.query.runId || 0)
+  const target = runId ? rows.value.find((item) => item.runId === runId) : undefined
+  if (target) await openDetail(target)
 }
 function runTag(status: string) {
   if (status === 'SUCCEEDED') return 'success'

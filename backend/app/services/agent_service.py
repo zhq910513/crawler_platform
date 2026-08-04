@@ -4,7 +4,7 @@ import secrets
 from datetime import timedelta
 
 from fastapi import status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -12,7 +12,7 @@ from app.errors import AppError
 from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
 from app.schemas import AgentHeartbeat, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
 from app.services.routing_service import RoutingService
-from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_run_status, set_routing_status
+from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status
 from app.services.audit import write_operation_log
 from app.utils import utcnow
 
@@ -68,12 +68,29 @@ class AgentService:
             ps.image_readiness_status = "READY"
             ps.disabled_reason = "Agent 领取任务时将按 digest 精确拉取并校验镜像"
         lease_token = secrets.token_hex(24)
-        run.agent_id = agent.agent_id
-        set_run_status(run, "ASSIGNED")
+        now = utcnow()
+        claimed = self.db.execute(
+            update(CrawlerTaskRun)
+            .where(
+                CrawlerTaskRun.run_id == run.run_id,
+                CrawlerTaskRun.server_id == server.server_id,
+                CrawlerTaskRun.run_status == "QUEUED",
+                CrawlerTaskRun.routing_status == "ROUTED",
+            )
+            .values(
+                run_status="ASSIGNED",
+                agent_id=agent.agent_id,
+                lease_token=lease_token,
+                lease_expires_at=now + timedelta(seconds=settings.agent_lease_seconds),
+                heartbeat_at=now,
+                updated_at=now,
+            )
+        ).rowcount
+        if claimed != 1:
+            self.db.rollback()
+            return None
+        self.db.refresh(run)
         self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="Agent 已领取运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id}))
-        run.lease_token = lease_token
-        run.lease_expires_at = utcnow() + timedelta(seconds=settings.agent_lease_seconds)
-        run.heartbeat_at = utcnow()
         self.db.commit()
         return {
             "runId": run.run_id,

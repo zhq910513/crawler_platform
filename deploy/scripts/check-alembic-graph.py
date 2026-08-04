@@ -16,13 +16,13 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSIONS = ROOT / "backend" / "migrations" / "versions"
-EXPECTED_HEAD = "0003_schedule_cron_len"
+EXPECTED_HEAD = "0005_110_audit"
 MAX_ALEMBIC_VERSION_LEN = 32
 OBSOLETE_FILES = {
     "0002_platform_1_0_2_observability.py",
     "0003_expand_schedule_cron_expression.py",
 }
-EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py"]
+EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py"]
 
 
 def fail(message: str) -> int:
@@ -101,7 +101,7 @@ def main() -> int:
 
     filenames = sorted(path.name for path in VERSIONS.glob("*.py") if path.name != "__init__.py")
     if filenames != EXPECTED_FILES:
-        print("迁移文件清单不符合当前 1.0.2 发布基线：", file=sys.stderr)
+        print("迁移文件清单不符合当前 1.0.10 发布基线：", file=sys.stderr)
         print(f"  当前：{filenames}", file=sys.stderr)
         print(f"  期望：{EXPECTED_FILES}", file=sys.stderr)
         return 1
@@ -147,7 +147,7 @@ def main() -> int:
         print(f"当前迁移图：\n{_format_mapping(revisions, downs)}", file=sys.stderr)
         return 1
 
-    print("Alembic 迁移图检查通过：唯一 head=0003_schedule_cron_len，revision id 均 <= 32，未发现废弃迁移文件。")
+    print(f"Alembic 迁移图检查通过：唯一 head={EXPECTED_HEAD}，revision id 均 <= {MAX_ALEMBIC_VERSION_LEN}，未发现废弃迁移文件。")
     return 0
 
 

@@ -13,7 +13,7 @@ OBSOLETE_MIGRATION_FILES = {
     "0002_platform_1_0_2_observability.py",
     "0003_expand_schedule_cron_expression.py",
 }
-EXPECTED_ALEMBIC_HEAD = "0003_schedule_cron_len"
+EXPECTED_ALEMBIC_HEAD = "0005_110_audit"
 MAX_ALEMBIC_VERSION_LEN = 32
 
 
