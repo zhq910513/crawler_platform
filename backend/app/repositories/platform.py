@@ -47,7 +47,7 @@ class ServerRepository(BaseRepository[CrawlerServer]):
         return self.db.scalar(select(CrawlerServer).where(CrawlerServer.server_code == server_code))
 
     def list_servers(self, company_id: int | None = None) -> list[CrawlerServer]:
-        stmt = select(CrawlerServer).order_by(CrawlerServer.created_at.desc())
+        stmt = select(CrawlerServer).where(CrawlerServer.manage_status != "DISABLED").order_by(CrawlerServer.created_at.desc())
         if company_id is not None:
             stmt = stmt.where(CrawlerServer.company_id == company_id)
         return list(self.db.scalars(stmt).all())
