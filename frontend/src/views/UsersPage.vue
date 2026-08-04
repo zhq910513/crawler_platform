@@ -33,11 +33,11 @@
     </el-dialog>
 
     <el-dialog v-model="resetVisible" title="重置密码" width="460px">
-      <el-alert title="重置后目标账号现有会话会立即失效。默认要求用户下次登录后修改密码。" type="warning" show-icon :closable="false" class="reset-alert" />
+      <el-alert title="重置后目标账号现有会话会立即失效。重置当前登录账号时，不会再次要求当前账号下次登录修改密码。" type="warning" show-icon :closable="false" class="reset-alert" />
       <el-form label-position="top">
         <el-form-item label="目标账号"><el-input :model-value="selectedUser?.userName || ''" disabled /></el-form-item>
         <el-form-item label="新密码"><el-input v-model="resetForm.newPassword" type="password" show-password autocomplete="new-password" /></el-form-item>
-        <el-form-item label="下次登录强制修改"><el-switch v-model="resetForm.mustChangePassword" /></el-form-item>
+        <el-form-item label="下次登录强制修改"><el-switch v-model="resetForm.mustChangePassword" :disabled="selectedUser?.userId === sessionState.user?.userId" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" @click="submitReset">确认重置</el-button></template>
     </el-dialog>
@@ -47,6 +47,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createUser, listCompanies, listUsers, resetUserPassword, revokeUserSession } from '../api/platform'
+import { sessionState } from '../stores/session'
 import type { Company, UserAccount, UserCreateRequest } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
@@ -74,7 +75,7 @@ async function save() {
 function openReset(user: UserAccount) {
   selectedUser.value = user
   resetForm.newPassword = ''
-  resetForm.mustChangePassword = true
+  resetForm.mustChangePassword = user.userId === sessionState.user?.userId ? false : true
   resetVisible.value = true
 }
 async function submitReset() {

@@ -435,6 +435,27 @@ def test_102_password_change_reset_and_camel_contract() -> None:
         assert 'Reset@123456' not in payload_text
 
 
+def test_108_admin_self_password_reset_does_not_require_password_change_loop() -> None:
+    migrate()
+    client = TestClient(app)
+    _, admin_headers = login(client)
+    company = client.post("/api/v1/companies", headers=admin_headers, json={"companyCode": "selfpwd108", "companyName": "自重置密码公司"}).json()["data"]
+    self_admin = client.post("/api/v1/users", headers=admin_headers, json={"companyId": company["companyId"], "userName": "self_admin_108", "nickName": "自重置管理员", "password": "SelfAdmin@123456", "roleType": "SUPER_ADMIN"}).json()["data"]
+    self_login = client.post("/api/v1/sessions", json={"userName": "self_admin_108", "password": "SelfAdmin@123456"}).json()["data"]
+    self_headers = {"Authorization": "Bearer " + self_login["accessToken"]}
+    reset = client.post("/api/v1/users/{}/password-resets".format(self_admin["userId"]), headers=self_headers, json={"newPassword": "SelfAdmin@765432", "mustChangePassword": True}).json()
+    assert reset["code"] == 200
+    assert reset["data"]["mustChangePassword"] is False
+    relogin = client.post("/api/v1/sessions", json={"userName": "self_admin_108", "password": "SelfAdmin@765432"}).json()["data"]
+    assert relogin["passwordChangeRequired"] is False
+    assert relogin["user"]["passwordChangeRequired"] is False
+    from app.db import SessionLocal
+    from app.models import SysUser
+    with SessionLocal() as db:
+        saved = db.query(SysUser).filter(SysUser.user_name == "self_admin_108").one()
+        assert saved.must_change_password is False
+
+
 def test_102_daily_times_preview_contract() -> None:
     migrate()
     client = TestClient(app)

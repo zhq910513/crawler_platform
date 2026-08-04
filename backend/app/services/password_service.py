@@ -58,7 +58,9 @@ class PasswordService:
         validate_password_strength(payload.new_password)
         target.password_hash = hash_password(payload.new_password)
         target.password_updated_at = utcnow()
-        target.must_change_password = payload.must_change_password
+        is_self_reset = current_user.user_id == target.user_id
+        reset_must_change_password = False if is_self_reset else payload.must_change_password
+        target.must_change_password = reset_must_change_password
         revoked_count = self._revoke_sessions(target.user_id, "PASSWORD_RESET", "管理员已重置密码，请重新登录。")
         target.current_session_id = ""
         write_operation_log(
