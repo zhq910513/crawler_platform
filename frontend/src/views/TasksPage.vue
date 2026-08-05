@@ -1,6 +1,6 @@
 <template>
   <div class="page-card task-schedule-page ops-task-page">
-    <el-form class="ops-filter" label-position="left" label-width="96px">
+    <el-form class="ops-filter" label-position="left" label-width="86px">
       <div class="filter-grid">
         <el-form-item label="任务名称">
           <el-input v-model="query.taskName" clearable placeholder="请输入任务名称" @keyup.enter="search" />
@@ -84,42 +84,42 @@
     </div>
 
     <el-table v-loading="loading" :data="rows" row-key="taskId" class="ops-table" @selection-change="handleSelectionChange">
-      <el-table-column type="selection" width="46" fixed="left" />
-      <el-table-column label="任务编号" prop="taskId" width="110" fixed="left" />
-      <el-table-column label="服务器" min-width="118" align="center">
+      <el-table-column type="selection" width="42" fixed="left" />
+      <el-table-column label="任务编号" prop="taskId" width="86" fixed="left" />
+      <el-table-column label="服务器" min-width="108" align="center" show-overflow-tooltip>
         <template #default="s">
           <div class="server-cell">{{ s.row.serverIp || s.row.serverName || '-' }}</div>
           <div v-if="s.row.serverIp && s.row.serverName" class="cell-subtitle">{{ s.row.serverName }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="任务平台" min-width="110" align="center" show-overflow-tooltip>
+      <el-table-column label="任务平台" min-width="92" align="center" show-overflow-tooltip>
         <template #default="s">{{ s.row.taskPlatform || s.row.projectName || '-' }}</template>
       </el-table-column>
-      <el-table-column label="任务名称" prop="taskName" min-width="140" show-overflow-tooltip />
-      <el-table-column label="上次任务完成时间" min-width="132" align="center">
+      <el-table-column label="任务名称" prop="taskName" min-width="130" show-overflow-tooltip />
+      <el-table-column label="上次任务完成时间" min-width="138" align="center">
         <template #default="s">{{ formatTime(s.row.lastFinishedAt) }}</template>
       </el-table-column>
-      <el-table-column label="目标任务路径" prop="entryPath" min-width="150" show-overflow-tooltip />
-      <el-table-column label="cron执行表达式" min-width="124" align="center" show-overflow-tooltip>
+      <el-table-column label="目标任务路径" prop="entryPath" min-width="170" show-overflow-tooltip />
+      <el-table-column label="cron执行表达式" min-width="118" align="center" show-overflow-tooltip>
         <template #default="s">{{ cronText(s.row) }}</template>
       </el-table-column>
-      <el-table-column label="下次执行时间" min-width="128" align="center">
+      <el-table-column label="下次执行时间" min-width="138" align="center">
         <template #default="s">{{ formatTime(s.row.nextRunAt) }}</template>
       </el-table-column>
-      <el-table-column label="开发人员" min-width="100" align="center">
+      <el-table-column label="开发人员" min-width="86" align="center">
         <template #default="s">{{ s.row.ownerUserName || '-' }}</template>
       </el-table-column>
-      <el-table-column label="状态" width="96" align="center">
+      <el-table-column label="状态" width="82" align="center">
         <template #default="s">
           <el-tooltip :content="s.row.taskStatus === 'ENABLED' ? '任务已启用' : '任务已停用'">
             <el-switch :model-value="s.row.taskStatus === 'ENABLED'" @change="toggleTaskStatus(s.row, Boolean($event))" />
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="目标状态" width="116" align="center">
+      <el-table-column label="目标状态" width="98" align="center">
         <template #default="s"><el-tag :type="runTagType(s.row.lastRunStatus)" effect="light">{{ statusText(s.row.lastRunStatus) }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="操作" width="190" align="center" fixed="right">
+      <el-table-column label="操作" width="152" align="center" fixed="right">
         <template #default="s">
           <el-tooltip content="编辑"><el-button link type="primary" :icon="Edit" @click="openEdit(s.row)" /></el-tooltip>
           <el-tooltip content="删除"><el-button link type="primary" :icon="Delete" @click="disableRow(s.row)" /></el-tooltip>
@@ -247,7 +247,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, Edit, Operation, Plus, Refresh, Search, Tickets, VideoPlay, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { createRun, createTask, listCompanies, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
+import { createRun, createTask, deleteTask, listCompanies, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
 import { listTaskSchedulePanels } from '../api/taskSchedules'
 import { sessionState } from '../stores/session'
 import type { Company, Project, ProjectServer, ScheduleUpdateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskSchedulePanelItem, TaskUpdateRequest, UserAccount } from '../types/api'
@@ -447,17 +447,32 @@ async function toggleTaskStatus(row: TaskSchedulePanelItem, enabled: boolean) {
   }
 }
 async function disableRow(row: TaskSchedulePanelItem) {
-  await ElMessageBox.confirm(`确认删除/停用任务“${row.taskName}”？历史执行记录不会删除。`, '删除确认', { type: 'warning' })
-  await updateTask(row.taskId, { status: 'DISABLED' })
-  ElMessage.success('任务已停用')
-  await loadPanel()
+  try {
+    await ElMessageBox.confirm(`确认删除任务“${row.taskName}”？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用调度。`, '删除确认', { type: 'warning' })
+    const result = await deleteTask(row.taskId)
+    ElMessage.success(result.deleted ? '任务已删除' : '任务已有历史执行记录，已归档隐藏')
+    await loadPanel()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error instanceof Error ? error.message : '删除任务失败')
+  }
 }
 async function disableSelected() {
   if (!selectedRows.value.length) { ElMessage.warning('请先选择要删除的任务'); return }
-  await ElMessageBox.confirm(`确认删除/停用选中的 ${selectedRows.value.length} 个任务？历史执行记录不会删除。`, '批量删除确认', { type: 'warning' })
-  for (const row of selectedRows.value) await updateTask(row.taskId, { status: 'DISABLED' })
-  ElMessage.success('选中任务已停用')
-  await loadPanel()
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 个任务？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用调度。`, '批量删除确认', { type: 'warning' })
+    let deleted = 0
+    let archived = 0
+    for (const row of selectedRows.value) {
+      const result = await deleteTask(row.taskId)
+      if (result.deleted) deleted += 1
+      else if (result.archived) archived += 1
+    }
+    ElMessage.success(`删除完成：物理删除 ${deleted} 个，归档隐藏 ${archived} 个`)
+    selectedRows.value = []
+    await loadPanel()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error instanceof Error ? error.message : '批量删除任务失败')
+  }
 }
 function editSelected() { const row = assertSingleSelection('修改'); if (row) void openEdit(row) }
 function openLogsSelected() { const row = assertSingleSelection('查看日志'); if (row) void openLogs(row) }
@@ -544,37 +559,40 @@ onMounted(async () => { await loadOptions(); await loadPanel() })
 
 <style scoped>
 .task-schedule-page { min-width: 0; background: #fff; }
-.ops-task-page { padding: 20px 24px 24px; }
-.ops-filter { margin-bottom: 14px; }
-.filter-grid { display: grid; grid-template-columns: repeat(4, minmax(260px, 1fr)); column-gap: 40px; row-gap: 18px; align-items: center; }
+.ops-task-page { padding: 14px 16px 18px; }
+.ops-filter { margin-bottom: 8px; }
+.filter-grid { display: grid; grid-template-columns: repeat(5, minmax(180px, 1fr)); column-gap: 12px; row-gap: 8px; align-items: center; }
 .filter-grid :deep(.el-form-item) { margin-bottom: 0; }
-.filter-grid :deep(.el-form-item__label), .advanced-filter-grid :deep(.el-form-item__label) { height: 40px; line-height: 40px; padding-right: 14px; color: #303b4d; font-size: 16px; font-weight: 700; }
-.filter-grid :deep(.el-input__wrapper), .filter-grid :deep(.el-select__wrapper), .advanced-filter-grid :deep(.el-input__wrapper), .advanced-filter-grid :deep(.el-select__wrapper) { min-height: 40px; border-radius: 5px; box-shadow: 0 0 0 1px #d7deea inset; }
+.filter-grid :deep(.el-form-item__label), .advanced-filter-grid :deep(.el-form-item__label) { height: 32px; line-height: 32px; padding-right: 6px; color: #303b4d; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.filter-grid :deep(.el-input__wrapper), .filter-grid :deep(.el-select__wrapper), .advanced-filter-grid :deep(.el-input__wrapper), .advanced-filter-grid :deep(.el-select__wrapper) { min-height: 32px; border-radius: 4px; box-shadow: 0 0 0 1px #d7deea inset; }
 .filter-grid :deep(.el-select), .filter-grid :deep(.el-input), .advanced-filter-grid :deep(.el-select), .advanced-filter-grid :deep(.el-input) { width: 100%; }
-.filter-button-line { display: flex; align-items: center; gap: 14px; min-height: 40px; }
-.filter-button-line :deep(.el-button) { height: 40px; padding: 0 20px; font-size: 15px; }
-.advanced-filter { margin-top: 10px; border: 0; }
-.advanced-filter :deep(.el-collapse-item__header) { height: 36px; color: #6b7280; border-bottom: 0; font-size: 13px; }
+.filter-grid :deep(.el-input__inner), .filter-grid :deep(.el-select__placeholder), .advanced-filter-grid :deep(.el-input__inner), .advanced-filter-grid :deep(.el-select__placeholder) { font-size: 13px; }
+.filter-button-line { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+.filter-button-line :deep(.el-button) { height: 32px; padding: 0 14px; font-size: 13px; }
+.advanced-filter { margin-top: 6px; border: 0; }
+.advanced-filter :deep(.el-collapse-item__header) { height: 30px; color: #6b7280; border-bottom: 0; font-size: 12px; }
 .advanced-filter :deep(.el-collapse-item__wrap) { border-bottom: 0; }
-.advanced-filter-grid { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); column-gap: 40px; row-gap: 14px; padding: 8px 0 2px; }
+.advanced-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); column-gap: 12px; row-gap: 8px; padding: 4px 0 0; }
 .advanced-filter-grid :deep(.el-form-item) { margin-bottom: 0; }
-.ops-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 10px; }
-.ops-toolbar-left, .ops-toolbar-right { display: flex; align-items: center; gap: 12px; }
-.ops-toolbar-left :deep(.el-button) { height: 40px; padding: 0 18px; border-radius: 5px; font-size: 15px; }
-.ops-toolbar-right :deep(.el-button) { width: 40px; height: 40px; }
-.ops-table { width: 100%; border-top: 0; color: #2f3a4b; font-size: 16px; }
-.ops-table :deep(.el-table__header th) { height: 78px; background: #f6f7f9; color: #243047; font-size: 16px; font-weight: 700; }
-.ops-table :deep(.el-table__row td) { height: 78px; border-bottom: 1px solid #e8edf5; }
-.ops-table :deep(.el-table__cell) { padding: 8px 0; }
-.ops-table :deep(.el-button.is-link) { padding: 4px 6px; font-size: 16px; }
-.server-cell { line-height: 24px; white-space: normal; word-break: break-all; }
-.cell-subtitle { margin-top: 3px; color: #8a94a6; font-size: 12px; }
-.pagination-wrap { display: flex; justify-content: flex-end; margin-top: 16px; }
+.ops-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0 8px; }
+.ops-toolbar-left, .ops-toolbar-right { display: flex; align-items: center; gap: 8px; }
+.ops-toolbar-left :deep(.el-button) { height: 32px; padding: 0 12px; border-radius: 4px; font-size: 13px; }
+.ops-toolbar-right :deep(.el-button) { width: 32px; height: 32px; }
+.ops-table { width: 100%; border-top: 0; color: #2f3a4b; font-size: 13px; }
+.ops-table :deep(.el-table__header th) { height: 42px; background: #f6f7f9; color: #243047; font-size: 13px; font-weight: 700; white-space: nowrap; }
+.ops-table :deep(.el-table__row td) { height: 46px; border-bottom: 1px solid #e8edf5; }
+.ops-table :deep(.el-table__cell) { padding: 3px 0; }
+.ops-table :deep(.cell) { line-height: 18px; white-space: nowrap; }
+.ops-table :deep(.el-button.is-link) { padding: 2px 4px; font-size: 14px; }
+.ops-table :deep(.el-tag) { height: 22px; padding: 0 6px; font-size: 12px; }
+.server-cell { overflow: hidden; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
+.cell-subtitle { overflow: hidden; margin-top: 1px; color: #8a94a6; font-size: 11px; line-height: 15px; white-space: nowrap; text-overflow: ellipsis; }
+.pagination-wrap { display: flex; justify-content: flex-end; margin-top: 10px; }
 .schedule-form { margin-top: 16px; }
 .preview-box { margin-top: 12px; padding: 12px 16px; background: #f7f8fa; border-radius: 6px; }
 .preview-box ul { margin: 8px 0 0; }
 .daily-times-box { padding: 12px; margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 6px; background: #f8fafc; }
 .time-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-@media (max-width: 1280px) { .filter-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); } .advanced-filter-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); } }
-@media (max-width: 760px) { .ops-task-page { padding: 14px; } .filter-grid, .advanced-filter-grid { grid-template-columns: 1fr; row-gap: 12px; } .ops-toolbar { align-items: stretch; flex-direction: column; } .ops-toolbar-left { flex-wrap: wrap; } }
+@media (max-width: 1280px) { .filter-grid { grid-template-columns: repeat(3, minmax(180px, 1fr)); } .advanced-filter-grid { grid-template-columns: repeat(3, minmax(180px, 1fr)); } }
+@media (max-width: 760px) { .ops-task-page { padding: 12px; } .filter-grid, .advanced-filter-grid { grid-template-columns: 1fr; row-gap: 8px; } .ops-toolbar { align-items: stretch; flex-direction: column; } .ops-toolbar-left { flex-wrap: wrap; } }
 </style>

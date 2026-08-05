@@ -80,6 +80,8 @@ class TaskSchedulePanelRepository:
             filters.append(or_(CrawlerProject.project_name.like(f"%{query.task_platform}%"), CrawlerTask.task_group.like(f"%{query.task_platform}%")))
         if query.task_status:
             filters.append(CrawlerTask.status == query.task_status)
+        else:
+            filters.append(CrawlerTask.status != "ARCHIVED")
         if query.schedule_status:
             if query.schedule_status == "NONE":
                 filters.append(CrawlerTaskSchedule.schedule_id.is_(None))

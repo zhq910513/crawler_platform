@@ -27,6 +27,7 @@ export function listTaskDefinitions(projectId: number) { return request<TaskDefi
 export function listTasks(params?: { companyId?: number; projectId?: number }) { return request<Task[]>(http.get('/tasks', { params })) }
 export function createTask(payload: TaskCreateRequest) { return request<Task>(http.post('/tasks', payload)) }
 export function updateTask(taskId: number, payload: TaskUpdateRequest) { return request<Task>(http.patch(`/tasks/${taskId}`, payload)) }
+export function deleteTask(taskId: number) { return request<{ taskId: number; deleted: boolean; archived: boolean; runCount: number }>(http.delete(`/tasks/${taskId}`)) }
 export function updateTaskSchedule(taskId: number, payload: ScheduleUpdateRequest) { return request<Record<string, unknown>>(http.patch(`/tasks/${taskId}/schedules`, payload)) }
 export function previewCronExpression(payload: CronPreviewRequest) { return request<CronPreviewResult>(http.post('/cron-previews', payload)) }
 export function createRun(taskId: number, parameters: Record<string, unknown> = {}) { return request<RunRecord>(http.post('/runs', { taskId, parameters })) }

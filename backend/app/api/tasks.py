@@ -36,3 +36,8 @@ def update_task(task_id: int, payload: TaskUpdate, user: SysUser = Depends(get_c
 @router.patch("/tasks/{task_id}/schedules")
 def update_task_schedule(task_id: int, payload: ScheduleUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(TaskService(db).update_schedule(user, task_id, payload))
+
+@router.delete("/tasks/{task_id}")
+def delete_task(task_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(TaskService(db).delete_task(user, task_id))
+

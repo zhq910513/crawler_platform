@@ -681,3 +681,54 @@ def test_task_schedule_panel_uses_sharded_parent_as_latest_run() -> None:
     item = response['items'][0]
     assert item['lastRunId'] == parent['runId']
     assert item['lastRunStatus'] == 'PARTIAL_SUCCESS'
+
+
+def test_task_delete_physical_or_archive_and_panel_hides_archived() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, _, _ = create_flow(client, headers, 'taskdel')
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    definition_id = defs[0]['definitionId']
+
+    task = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition_id,
+        'taskCode': 'task_delete_plain',
+        'taskName': '待物理删除任务',
+        'status': 'ENABLED',
+    }).json()['data']
+    deleted = client.delete(f"/api/v1/tasks/{task['taskId']}", headers=headers).json()['data']
+    assert deleted['deleted'] is True
+    assert deleted['archived'] is False
+
+    defs_after_delete = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    assert defs_after_delete[0]['definitionStatus'] == 'AVAILABLE'
+
+    task_with_run = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition_id,
+        'taskCode': 'task_delete_archive',
+        'taskName': '待归档删除任务',
+        'status': 'ENABLED',
+    }).json()['data']
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task_with_run['taskId']}).json()['data']
+
+    from app.db import SessionLocal
+    from app.models import CrawlerTaskRun
+    from app.utils import utcnow
+    with SessionLocal() as db:
+        run_row = db.get(CrawlerTaskRun, run['runId'])
+        run_row.run_status = 'SUCCEEDED'
+        run_row.routing_status = 'ROUTED'
+        run_row.finished_at = utcnow()
+        db.commit()
+
+    archived = client.delete(f"/api/v1/tasks/{task_with_run['taskId']}", headers=headers).json()['data']
+    assert archived['deleted'] is False
+    assert archived['archived'] is True
+    assert archived['runCount'] == 1
+
+    default_panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']
+    assert task_with_run['taskId'] not in {item['taskId'] for item in default_panel['items']}
+
+    archived_panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId'], 'taskStatus': 'ARCHIVED'}).json()['data']
+    assert task_with_run['taskId'] in {item['taskId'] for item in archived_panel['items']}

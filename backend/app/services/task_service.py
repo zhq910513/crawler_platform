@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from fastapi import status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import CrawlerProjectRelease, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerTask, CrawlerTaskSchedule, CrawlerTaskServerTarget, SysUser
+from app.models import CrawlerProjectRelease, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerTask, CrawlerTaskRun, CrawlerTaskSchedule, CrawlerTaskServerTarget, SysUser
 from app.repositories.platform import ProjectRepository, TaskDefinitionRepository, TaskRepository
 from app.schemas import ScheduleUpdate, TaskFromDefinitionCreate, TaskUpdate
 from app.services.audit import write_operation_log
@@ -170,6 +170,45 @@ class TaskService:
         write_operation_log(self.db, user, None, operation_type="UPDATE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data=after)
         self.db.commit()
         return task
+
+    def delete_task(self, user: SysUser, task_id: int) -> dict:
+        task = self.tasks.get(task_id)
+        if not task:
+            raise AppError("资源不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_project_role(self.db, user, task.project_id, "OPERATOR")
+
+        active_statuses = {"QUEUED", "ROUTED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
+        active_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.task_id == task_id, CrawlerTaskRun.run_status.in_(active_statuses))) or 0)
+        if active_count:
+            raise AppError("任务存在运行中实例，不能删除，请等待结束后再操作", code=40057, http_status=status.HTTP_400_BAD_REQUEST)
+
+        run_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.task_id == task_id)) or 0)
+        before = {c.name: getattr(task, c.name) for c in task.__table__.columns}
+        schedule = self.db.scalar(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.task_id == task_id))
+
+        if run_count > 0:
+            task.status = "ARCHIVED"
+            if schedule:
+                schedule.schedule_status = "DISABLED"
+                schedule.next_run_at = None
+            after = {c.name: getattr(task, c.name) for c in task.__table__.columns}
+            write_operation_log(self.db, user, None, operation_type="ARCHIVE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data=after)
+            self.db.commit()
+            return {"task_id": task_id, "deleted": False, "archived": True, "run_count": run_count}
+
+        definition_id = task.definition_id
+        self.db.query(CrawlerTaskServerTarget).filter(CrawlerTaskServerTarget.task_id == task_id).delete(synchronize_session=False)
+        if schedule:
+            self.db.delete(schedule)
+            self.db.flush()
+        if definition_id:
+            definition = self.db.get(CrawlerProjectTaskDefinition, definition_id)
+            if definition and definition.definition_status == "CREATED":
+                definition.definition_status = "AVAILABLE"
+        write_operation_log(self.db, user, None, operation_type="DELETE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data={"deleted": True})
+        self.db.delete(task)
+        self.db.commit()
+        return {"task_id": task_id, "deleted": True, "archived": False, "run_count": 0}
 
     def update_schedule(self, user: SysUser, task_id: int, payload: ScheduleUpdate) -> CrawlerTaskSchedule:
         task = self.tasks.get(task_id)
