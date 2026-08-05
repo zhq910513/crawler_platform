@@ -624,6 +624,13 @@ def test_scheduler_duplicate_trigger_does_not_rollback_previous_schedule() -> No
         db.get(CrawlerProject, project['projectId']).online_status = 'ONLINE'
         schedule_a = db.query(CrawlerTaskSchedule).filter(CrawlerTaskSchedule.task_id == task_a['taskId']).one()
         schedule_b = db.query(CrawlerTaskSchedule).filter(CrawlerTaskSchedule.task_id == task_b['taskId']).one()
+        # dispatch_due_schedules() scans all due schedules in the database.  This
+        # contract test validates only the duplicate-trigger behavior for the two
+        # schedules created here, so older schedules left by previous tests must not
+        # participate and make the created counter time-dependent in CI.
+        db.query(CrawlerTaskSchedule).filter(
+            CrawlerTaskSchedule.schedule_id.notin_([schedule_a.schedule_id, schedule_b.schedule_id])
+        ).update({CrawlerTaskSchedule.schedule_status: 'DISABLED'}, synchronize_session=False)
         schedule_a.next_run_at = scheduled_at
         schedule_b.next_run_at = scheduled_at
         db.add(CrawlerTaskRun(

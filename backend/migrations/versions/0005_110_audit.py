@@ -1,4 +1,4 @@
-"""1.0.10 audit hardening indexes
+"""1.0.11 audit hardening indexes
 
 Revision ID: 0005_110_audit
 Revises: 0004_task_panel

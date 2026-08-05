@@ -1,4 +1,4 @@
-# crawler_platform 1.0.10 商业化发布检查清单
+# crawler_platform 1.0.11 商业化发布检查清单
 
 本清单用于把“测试服跑通”升级为“可商业交付”。正式发布必须给出 `PASS`、`PASS_WITH_RISK` 或 `FAIL` 结论。
 

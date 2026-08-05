@@ -1,107 +1,131 @@
 <template>
-  <div class="page-card task-schedule-page">
-    <div class="page-heading">
-      <div>
-        <h2>任务调度工作台</h2>
-        <p>统一查看公司、项目、执行节点、调度计划与最近运行结果。</p>
+  <div class="page-card task-schedule-page ops-task-page">
+    <el-form class="ops-filter" label-position="left" label-width="96px">
+      <div class="filter-grid">
+        <el-form-item label="任务名称">
+          <el-input v-model="query.taskName" clearable placeholder="请输入任务名称" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="目标任务路径">
+          <el-input v-model="query.entryKeyword" clearable placeholder="请输入函数路径" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="任务表名">
+          <el-input v-model="query.taskCode" clearable placeholder="请输入任务表名路径" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="服务器分组">
+          <el-select v-model="query.serverId" clearable filterable placeholder="请选择服务器">
+            <el-option v-for="server in filteredServers" :key="server.serverId" :label="serverLabel(server)" :value="server.serverId" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="任务组名">
+          <el-input v-model="query.taskGroup" clearable placeholder="请选择任务组名" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="任务平台">
+          <el-input v-model="query.taskPlatform" clearable placeholder="请选择任务平台" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="任务状态">
+          <el-select v-model="query.taskStatus" clearable placeholder="请选择任务状态">
+            <el-option v-for="item in taskStatusOptions" :key="item" :label="statusText(item)" :value="item" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="开发人员">
+          <el-select v-model="query.ownerUserId" clearable filterable placeholder="请选择开发人员" :disabled="!sessionState.user?.isSuperAdmin && !filteredOwnerUsers.length">
+            <el-option v-for="user in filteredOwnerUsers" :key="user.userId" :label="user.nickName || user.userName" :value="user.userId" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标任务状态">
+          <el-select v-model="query.lastRunStatus" clearable placeholder="请选择状态">
+            <el-option v-for="item in runStatusOptions" :key="item" :label="statusText(item)" :value="item" />
+          </el-select>
+        </el-form-item>
+        <div class="filter-button-line">
+          <el-button type="primary" :icon="Search" :loading="loading" @click="search">搜索</el-button>
+          <el-button :icon="Refresh" @click="resetFilters">重置</el-button>
+        </div>
       </div>
-      <el-button type="primary" @click="openCreate">新增任务</el-button>
-    </div>
-
-    <el-form class="filter-card" label-position="top">
-      <el-row :gutter="14">
-        <el-col v-if="sessionState.user?.isSuperAdmin" :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="公司">
-            <el-select v-model="query.companyId" clearable filterable placeholder="全部公司" @change="handleCompanyChange">
-              <el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col v-else :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="公司"><el-input :model-value="currentCompanyName" disabled /></el-form-item>
-        </el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="项目">
-            <el-select v-model="query.projectId" clearable filterable placeholder="全部项目">
-              <el-option v-for="project in filteredProjects" :key="project.projectId" :label="project.projectName" :value="project.projectId" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12"><el-form-item label="任务名称"><el-input v-model="query.taskName" clearable placeholder="模糊搜索任务名称" @keyup.enter="search" /></el-form-item></el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12"><el-form-item label="目标任务路径"><el-input v-model="query.entryKeyword" clearable placeholder="模块或函数" @keyup.enter="search" /></el-form-item></el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12"><el-form-item label="任务编码"><el-input v-model="query.taskCode" clearable placeholder="任务编码" @keyup.enter="search" /></el-form-item></el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="执行节点">
-            <el-select v-model="query.serverId" clearable filterable placeholder="全部节点">
-              <el-option v-for="server in filteredServers" :key="server.serverId" :label="serverLabel(server)" :value="server.serverId" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <el-row :gutter="14">
-        <el-col :xl="4" :lg="6" :md="8" :sm="12"><el-form-item label="任务组"><el-input v-model="query.taskGroup" clearable placeholder="如 browser / api" @keyup.enter="search" /></el-form-item></el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12"><el-form-item label="任务平台"><el-input v-model="query.taskPlatform" clearable placeholder="项目或任务组" @keyup.enter="search" /></el-form-item></el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="任务状态"><el-select v-model="query.taskStatus" clearable placeholder="全部"><el-option v-for="item in taskStatusOptions" :key="item" :label="statusText(item)" :value="item" /></el-select></el-form-item>
-        </el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="调度状态"><el-select v-model="query.scheduleStatus" clearable placeholder="全部"><el-option v-for="item in scheduleStatusOptions" :key="item" :label="statusText(item)" :value="item" /></el-select></el-form-item>
-        </el-col>
-        <el-col :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="最近运行状态"><el-select v-model="query.lastRunStatus" clearable placeholder="全部"><el-option v-for="item in runStatusOptions" :key="item" :label="statusText(item)" :value="item" /></el-select></el-form-item>
-        </el-col>
-        <el-col v-if="sessionState.user?.isSuperAdmin" :xl="4" :lg="6" :md="8" :sm="12">
-          <el-form-item label="负责人"><el-select v-model="query.ownerUserId" clearable filterable placeholder="全部负责人"><el-option v-for="user in filteredOwnerUsers" :key="user.userId" :label="user.nickName || user.userName" :value="user.userId" /></el-select></el-form-item>
-        </el-col>
-      </el-row>
-      <div class="filter-actions">
-        <el-button type="primary" :loading="loading" @click="search">搜索</el-button>
-        <el-button @click="resetFilters">重置</el-button>
-        <el-button :loading="loading" @click="loadPanel">刷新</el-button>
-      </div>
+      <el-collapse v-model="advancedFilterNames" class="advanced-filter">
+        <el-collapse-item name="advanced">
+          <template #title>高级筛选（公司 / 项目 / 调度状态）</template>
+          <div class="advanced-filter-grid">
+            <el-form-item v-if="sessionState.user?.isSuperAdmin" label="公司">
+              <el-select v-model="query.companyId" clearable filterable placeholder="全部公司" @change="handleCompanyChange">
+                <el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-else label="公司">
+              <el-input :model-value="currentCompanyName" disabled />
+            </el-form-item>
+            <el-form-item label="项目">
+              <el-select v-model="query.projectId" clearable filterable placeholder="全部项目">
+                <el-option v-for="project in filteredProjects" :key="project.projectId" :label="project.projectName" :value="project.projectId" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="调度状态">
+              <el-select v-model="query.scheduleStatus" clearable placeholder="全部调度状态">
+                <el-option v-for="item in scheduleStatusOptions" :key="item" :label="statusText(item)" :value="item" />
+              </el-select>
+            </el-form-item>
+          </div>
+        </el-collapse-item>
+      </el-collapse>
     </el-form>
 
-    <div class="table-toolbar">
-      <div class="summary">共 <b>{{ total }}</b> 条任务</div>
-      <div class="legend"><el-tag type="success">成功</el-tag><el-tag type="danger">失败</el-tag><el-tag type="primary">运行中</el-tag><el-tag type="info">未运行</el-tag></div>
+    <div class="ops-toolbar">
+      <div class="ops-toolbar-left">
+        <el-button type="primary" plain :icon="Plus" @click="openCreate">新增</el-button>
+        <el-button type="success" plain :icon="Edit" :disabled="selectedRows.length !== 1" @click="editSelected">修改</el-button>
+        <el-button type="danger" plain :icon="Delete" :disabled="!selectedRows.length" @click="disableSelected">删除</el-button>
+        <el-button type="warning" plain :icon="Download" @click="exportRows">导出</el-button>
+        <el-button plain :icon="Tickets" :disabled="selectedRows.length !== 1 || !selectedRows[0].lastRunId" @click="openLogsSelected">日志</el-button>
+      </div>
+      <div class="ops-toolbar-right">
+        <el-tooltip content="搜索"><el-button circle :icon="Search" :loading="loading" @click="search" /></el-tooltip>
+        <el-tooltip content="刷新"><el-button circle :icon="Refresh" :loading="loading" @click="loadPanel" /></el-tooltip>
+      </div>
     </div>
 
-    <el-table v-loading="loading" :data="rows" border stripe row-key="taskId" class="panel-table">
-      <el-table-column label="任务ID" prop="taskId" width="86" fixed="left" />
-      <el-table-column v-if="sessionState.user?.isSuperAdmin" label="公司" prop="companyName" min-width="130" show-overflow-tooltip />
-      <el-table-column label="项目" prop="projectName" min-width="150" show-overflow-tooltip />
-      <el-table-column label="执行节点" min-width="170">
+    <el-table v-loading="loading" :data="rows" row-key="taskId" class="ops-table" @selection-change="handleSelectionChange">
+      <el-table-column type="selection" width="46" fixed="left" />
+      <el-table-column label="任务编号" prop="taskId" width="110" fixed="left" />
+      <el-table-column label="服务器" min-width="118" align="center">
         <template #default="s">
-          <div>{{ s.row.serverName || '-' }}</div>
-          <div v-if="s.row.serverIp" class="cell-subtitle">{{ s.row.serverIp }}</div>
+          <div class="server-cell">{{ s.row.serverIp || s.row.serverName || '-' }}</div>
+          <div v-if="s.row.serverIp && s.row.serverName" class="cell-subtitle">{{ s.row.serverName }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="任务平台" prop="taskPlatform" min-width="110" show-overflow-tooltip />
-      <el-table-column label="任务名称" prop="taskName" min-width="190" show-overflow-tooltip />
-      <el-table-column label="目标任务路径" prop="entryPath" min-width="260" show-overflow-tooltip />
-      <el-table-column label="任务编码" prop="taskCode" min-width="170" show-overflow-tooltip />
-      <el-table-column label="Cron / 调度" min-width="190" show-overflow-tooltip>
-        <template #default="s"><span>{{ scheduleText(s.row) }}</span></template>
+      <el-table-column label="任务平台" min-width="110" align="center" show-overflow-tooltip>
+        <template #default="s">{{ s.row.taskPlatform || s.row.projectName || '-' }}</template>
       </el-table-column>
-      <el-table-column label="下次执行时间" min-width="168"><template #default="s">{{ formatTime(s.row.nextRunAt) }}</template></el-table-column>
-      <el-table-column label="最近完成时间" min-width="168"><template #default="s">{{ formatTime(s.row.lastFinishedAt) }}</template></el-table-column>
-      <el-table-column label="负责人" min-width="110"><template #default="s">{{ s.row.ownerUserName || '-' }}</template></el-table-column>
-      <el-table-column label="任务状态" width="105"><template #default="s"><el-tag :type="taskTagType(s.row.taskStatus)">{{ statusText(s.row.taskStatus) }}</el-tag></template></el-table-column>
-      <el-table-column label="自动调度" width="100" align="center">
+      <el-table-column label="任务名称" prop="taskName" min-width="140" show-overflow-tooltip />
+      <el-table-column label="上次任务完成时间" min-width="132" align="center">
+        <template #default="s">{{ formatTime(s.row.lastFinishedAt) }}</template>
+      </el-table-column>
+      <el-table-column label="目标任务路径" prop="entryPath" min-width="150" show-overflow-tooltip />
+      <el-table-column label="cron执行表达式" min-width="124" align="center" show-overflow-tooltip>
+        <template #default="s">{{ cronText(s.row) }}</template>
+      </el-table-column>
+      <el-table-column label="下次执行时间" min-width="128" align="center">
+        <template #default="s">{{ formatTime(s.row.nextRunAt) }}</template>
+      </el-table-column>
+      <el-table-column label="开发人员" min-width="100" align="center">
+        <template #default="s">{{ s.row.ownerUserName || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="状态" width="96" align="center">
         <template #default="s">
-          <el-tooltip :content="s.row.scheduleType === 'CRON' ? statusText(s.row.scheduleStatus) : '手动任务无自动调度'">
-            <el-switch :model-value="s.row.scheduleStatus === 'ENABLED'" :disabled="s.row.scheduleType !== 'CRON'" @change="toggleSchedule(s.row, Boolean($event))" />
+          <el-tooltip :content="s.row.taskStatus === 'ENABLED' ? '任务已启用' : '任务已停用'">
+            <el-switch :model-value="s.row.taskStatus === 'ENABLED'" @change="toggleTaskStatus(s.row, Boolean($event))" />
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="最近结果" width="115"><template #default="s"><el-tag :type="runTagType(s.row.lastRunStatus)">{{ statusText(s.row.lastRunStatus) }}</el-tag></template></el-table-column>
-      <el-table-column label="操作" width="310" fixed="right">
+      <el-table-column label="目标状态" width="116" align="center">
+        <template #default="s"><el-tag :type="runTagType(s.row.lastRunStatus)" effect="light">{{ statusText(s.row.lastRunStatus) }}</el-tag></template>
+      </el-table-column>
+      <el-table-column label="操作" width="190" align="center" fixed="right">
         <template #default="s">
-          <el-button link type="primary" @click="manualRun(s.row)">立即执行</el-button>
-          <el-button link @click="openEdit(s.row)">编辑</el-button>
-          <el-button link @click="openSchedule(s.row)">调度</el-button>
-          <el-button link @click="openDetail(s.row)">详情</el-button>
-          <el-button link :disabled="!s.row.lastRunId" @click="openLogs(s.row)">日志</el-button>
+          <el-tooltip content="编辑"><el-button link type="primary" :icon="Edit" @click="openEdit(s.row)" /></el-tooltip>
+          <el-tooltip content="删除"><el-button link type="primary" :icon="Delete" @click="disableRow(s.row)" /></el-tooltip>
+          <el-tooltip content="立即执行"><el-button link type="primary" :icon="VideoPlay" @click="manualRun(s.row)" /></el-tooltip>
+          <el-tooltip content="查看"><el-button link type="primary" :icon="View" @click="openDetail(s.row)" /></el-tooltip>
+          <el-tooltip content="调度配置"><el-button link type="primary" :icon="Operation" @click="openSchedule(s.row)" /></el-tooltip>
         </template>
       </el-table-column>
     </el-table>
@@ -221,6 +245,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Download, Edit, Operation, Plus, Refresh, Search, Tickets, VideoPlay, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { createRun, createTask, listCompanies, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
 import { listTaskSchedulePanels } from '../api/taskSchedules'
@@ -232,7 +257,9 @@ const router = useRouter()
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref<TaskSchedulePanelItem[]>([])
+const selectedRows = ref<TaskSchedulePanelItem[]>([])
 const total = ref(0)
+const advancedFilterNames = ref<string[]>([])
 const companies = ref<Company[]>([])
 const projects = ref<Project[]>([])
 const servers = ref<ServerNode[]>([])
@@ -291,6 +318,9 @@ type TagType = '' | 'primary' | 'success' | 'warning' | 'info' | 'danger'
 function taskTagType(status: string): TagType { if (status === 'ENABLED') return 'success'; if (status === 'DISABLED' || status === 'ARCHIVED') return 'info'; if (status === 'PAUSED') return 'warning'; return '' }
 function runTagType(status: string): TagType { if (status === 'SUCCEEDED') return 'success'; if (['FAILED', 'TIMED_OUT', 'TIMEOUT', 'LOST', 'CANCELED', 'CANCELLED'].includes(status)) return 'danger'; if (['RUNNING', 'STARTING', 'ASSIGNED', 'ROUTED'].includes(status)) return 'primary'; if (['QUEUED', 'WAITING_RESOURCE'].includes(status)) return 'warning'; return 'info' }
 function scheduleText(row: TaskSchedulePanelItem) { if (row.scheduleType !== 'CRON') return '手动执行'; return row.scheduleLabel || row.cronExpression || '-' }
+function cronText(row: TaskSchedulePanelItem) { return row.cronExpression || row.scheduleLabel || '-' }
+function handleSelectionChange(selection: TaskSchedulePanelItem[]) { selectedRows.value = selection }
+function assertSingleSelection(actionName: string) { if (selectedRows.value.length !== 1) { ElMessage.warning(`请先选择一条任务再${actionName}`); return null } return selectedRows.value[0] }
 
 async function loadOptions() {
   const [companyRows, projectRows, serverRows] = await Promise.all([listCompanies(), listProjects(), listServers()])
@@ -404,6 +434,46 @@ async function manualRun(row: TaskSchedulePanelItem) {
   ElMessage.success(`已创建运行实例 #${run.runId}`)
   await loadPanel()
 }
+async function toggleTaskStatus(row: TaskSchedulePanelItem, enabled: boolean) {
+  const nextStatus = enabled ? 'ENABLED' : 'DISABLED'
+  const message = enabled ? `确认启用任务“${row.taskName}”？` : `确认停用任务“${row.taskName}”？停用后不会被自动调度。`
+  try {
+    await ElMessageBox.confirm(message, enabled ? '启用任务' : '停用任务', { type: 'warning' })
+    await updateTask(row.taskId, { status: nextStatus })
+    ElMessage.success(enabled ? '任务已启用' : '任务已停用')
+    await loadPanel()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') throw error
+  }
+}
+async function disableRow(row: TaskSchedulePanelItem) {
+  await ElMessageBox.confirm(`确认删除/停用任务“${row.taskName}”？历史执行记录不会删除。`, '删除确认', { type: 'warning' })
+  await updateTask(row.taskId, { status: 'DISABLED' })
+  ElMessage.success('任务已停用')
+  await loadPanel()
+}
+async function disableSelected() {
+  if (!selectedRows.value.length) { ElMessage.warning('请先选择要删除的任务'); return }
+  await ElMessageBox.confirm(`确认删除/停用选中的 ${selectedRows.value.length} 个任务？历史执行记录不会删除。`, '批量删除确认', { type: 'warning' })
+  for (const row of selectedRows.value) await updateTask(row.taskId, { status: 'DISABLED' })
+  ElMessage.success('选中任务已停用')
+  await loadPanel()
+}
+function editSelected() { const row = assertSingleSelection('修改'); if (row) void openEdit(row) }
+function openLogsSelected() { const row = assertSingleSelection('查看日志'); if (row) void openLogs(row) }
+function exportRows() {
+  const headers = ['任务编号', '服务器', '任务平台', '任务名称', '上次任务完成时间', '目标任务路径', 'cron执行表达式', '下次执行时间', '开发人员', '状态', '目标状态']
+  const source = selectedRows.value.length ? selectedRows.value : rows.value
+  const lines = [headers, ...source.map((row) => [row.taskId, row.serverIp || row.serverName || '', row.taskPlatform || row.projectName || '', row.taskName, formatTime(row.lastFinishedAt), row.entryPath, cronText(row), formatTime(row.nextRunAt), row.ownerUserName || '', statusText(row.taskStatus), statusText(row.lastRunStatus)])]
+  const csv = lines.map((line) => line.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `task-schedules-${new Date().toISOString().slice(0, 10)}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
+}
 async function toggleSchedule(row: TaskSchedulePanelItem, enabled: boolean) {
   const message = enabled ? '确认启用该任务自动调度？' : '确认停用后该任务不会自动运行，但仍可手动执行。'
   try {
@@ -473,17 +543,31 @@ onMounted(async () => { await loadOptions(); await loadPanel() })
 </script>
 
 <style scoped>
-.task-schedule-page { min-width: 0; }
-.page-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
-.page-heading h2 { margin: 0; font-size: 22px; color: #111827; }
-.page-heading p { margin: 7px 0 0; color: #6b7280; }
-.filter-card { padding: 16px 18px 8px; margin-bottom: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc; }
-.filter-card :deep(.el-select), .filter-card :deep(.el-input) { width: 100%; }
-.filter-actions { display: flex; gap: 10px; justify-content: flex-end; padding: 2px 0 8px; }
-.table-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.summary { color: #4b5563; }
-.legend { display: flex; gap: 6px; }
-.panel-table { width: 100%; }
+.task-schedule-page { min-width: 0; background: #fff; }
+.ops-task-page { padding: 20px 24px 24px; }
+.ops-filter { margin-bottom: 14px; }
+.filter-grid { display: grid; grid-template-columns: repeat(4, minmax(260px, 1fr)); column-gap: 40px; row-gap: 18px; align-items: center; }
+.filter-grid :deep(.el-form-item) { margin-bottom: 0; }
+.filter-grid :deep(.el-form-item__label), .advanced-filter-grid :deep(.el-form-item__label) { height: 40px; line-height: 40px; padding-right: 14px; color: #303b4d; font-size: 16px; font-weight: 700; }
+.filter-grid :deep(.el-input__wrapper), .filter-grid :deep(.el-select__wrapper), .advanced-filter-grid :deep(.el-input__wrapper), .advanced-filter-grid :deep(.el-select__wrapper) { min-height: 40px; border-radius: 5px; box-shadow: 0 0 0 1px #d7deea inset; }
+.filter-grid :deep(.el-select), .filter-grid :deep(.el-input), .advanced-filter-grid :deep(.el-select), .advanced-filter-grid :deep(.el-input) { width: 100%; }
+.filter-button-line { display: flex; align-items: center; gap: 14px; min-height: 40px; }
+.filter-button-line :deep(.el-button) { height: 40px; padding: 0 20px; font-size: 15px; }
+.advanced-filter { margin-top: 10px; border: 0; }
+.advanced-filter :deep(.el-collapse-item__header) { height: 36px; color: #6b7280; border-bottom: 0; font-size: 13px; }
+.advanced-filter :deep(.el-collapse-item__wrap) { border-bottom: 0; }
+.advanced-filter-grid { display: grid; grid-template-columns: repeat(3, minmax(260px, 1fr)); column-gap: 40px; row-gap: 14px; padding: 8px 0 2px; }
+.advanced-filter-grid :deep(.el-form-item) { margin-bottom: 0; }
+.ops-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 8px 0 10px; }
+.ops-toolbar-left, .ops-toolbar-right { display: flex; align-items: center; gap: 12px; }
+.ops-toolbar-left :deep(.el-button) { height: 40px; padding: 0 18px; border-radius: 5px; font-size: 15px; }
+.ops-toolbar-right :deep(.el-button) { width: 40px; height: 40px; }
+.ops-table { width: 100%; border-top: 0; color: #2f3a4b; font-size: 16px; }
+.ops-table :deep(.el-table__header th) { height: 78px; background: #f6f7f9; color: #243047; font-size: 16px; font-weight: 700; }
+.ops-table :deep(.el-table__row td) { height: 78px; border-bottom: 1px solid #e8edf5; }
+.ops-table :deep(.el-table__cell) { padding: 8px 0; }
+.ops-table :deep(.el-button.is-link) { padding: 4px 6px; font-size: 16px; }
+.server-cell { line-height: 24px; white-space: normal; word-break: break-all; }
 .cell-subtitle { margin-top: 3px; color: #8a94a6; font-size: 12px; }
 .pagination-wrap { display: flex; justify-content: flex-end; margin-top: 16px; }
 .schedule-form { margin-top: 16px; }
@@ -491,5 +575,6 @@ onMounted(async () => { await loadOptions(); await loadPanel() })
 .preview-box ul { margin: 8px 0 0; }
 .daily-times-box { padding: 12px; margin-bottom: 12px; border: 1px solid #e5e7eb; border-radius: 6px; background: #f8fafc; }
 .time-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-@media (max-width: 900px) { .page-heading, .table-toolbar { align-items: stretch; flex-direction: column; } .filter-actions { justify-content: flex-start; } }
+@media (max-width: 1280px) { .filter-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); } .advanced-filter-grid { grid-template-columns: repeat(2, minmax(260px, 1fr)); } }
+@media (max-width: 760px) { .ops-task-page { padding: 14px; } .filter-grid, .advanced-filter-grid { grid-template-columns: 1fr; row-gap: 12px; } .ops-toolbar { align-items: stretch; flex-direction: column; } .ops-toolbar-left { flex-wrap: wrap; } }
 </style>
