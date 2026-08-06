@@ -144,7 +144,7 @@ def upgrade() -> None:
             sa.Column("server_id", sa.BigInteger(), nullable=False),
             sa.Column("target_status", sa.String(30), nullable=False, server_default="OUTDATED"),
             sa.Column("image_readiness_status", sa.String(30), nullable=False, server_default="OUTDATED"),
-            sa.Column("last_error", sa.Text(), nullable=False, server_default=""),
+            sa.Column("last_error", sa.Text(), nullable=False),
             sa.Column("last_deployed_at", sa.DateTime(), nullable=True),
             sa.Column("created_at", sa.DateTime(), nullable=False),
             sa.Column("updated_at", sa.DateTime(), nullable=False),
