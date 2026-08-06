@@ -58,6 +58,7 @@ const menus = [
   { path: '/projects', title: '项目管理', adminOnly: false },
   { path: '/tasks', title: '任务调度', adminOnly: false },
   { path: '/runs', title: '执行记录', adminOnly: false },
+  { path: '/accounts', title: '账号状态', adminOnly: false },
   { path: '/operations', title: '操作日志', adminOnly: true },
   { path: '/settings', title: '系统设置', adminOnly: true },
 ]

@@ -22,11 +22,13 @@ settings.validate_runtime()
 HIGH_FREQUENCY_AUDIT_PREFIXES = (
     "/agent-heartbeats",
     "/agent-run-claims",
+    "/agent-image-pull-results",
     "/agent-run-heartbeats",
     "/agent-run-results",
     "/agent-run-events",
     "/agent-run-log-chunks",
     "/agent-run-log-finalizations",
+    "/agent-account-status-events",
 )
 
 

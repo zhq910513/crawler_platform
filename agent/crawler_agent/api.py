@@ -84,7 +84,12 @@ class PlatformAPI:
         return self._request("POST", "/agent-run-heartbeats", json={"runId": run_id, "leaseToken": lease_token, "message": message, "agentInstanceId": self.config.instance_id}) or {}
 
     def finish(self, run_id: int, lease_token: str, status: str, result: dict[str, Any] | None = None, error: str = "") -> dict[str, Any]:
-        return self._request("POST", "/agent-run-results", json={"runId": run_id, "leaseToken": lease_token, "runStatus": status, "resultPayload": result or {}, "errorMessage": error, "agentInstanceId": self.config.instance_id}) or {}
+        body = {"runId": run_id, "leaseToken": lease_token, "runStatus": status, "resultPayload": result or {}, "errorMessage": error, "agentInstanceId": self.config.instance_id}
+        try:
+            return self._request("POST", "/agent-run-results", json=body) or {}
+        except PlatformUnavailable:
+            self._spool("/agent-run-results", body)
+            return {"spooled": True}
 
     def run_event(self, run_id: int, lease_token: str, event_type: str, stage: str, message: str = "", event_level: str = "INFO", payload: dict[str, Any] | None = None) -> None:
         body = {"runId": run_id, "leaseToken": lease_token, "eventType": event_type, "eventLevel": event_level, "stage": stage, "message": message, "payload": payload or {}, "agentInstanceId": self.config.instance_id}
@@ -107,3 +112,13 @@ class PlatformAPI:
             self._request("POST", "/agent-run-log-finalizations", json=body)
         except PlatformUnavailable:
             self._spool("/agent-run-log-finalizations", body)
+
+    def image_pull_result(self, project_id: int, release_id: int | None, image_repository: str, image_digest: str, pull_status: str, message: str = "") -> dict[str, Any]:
+        return self._request("POST", "/agent-image-pull-results", json={
+            "projectId": project_id,
+            "releaseId": release_id,
+            "imageRepository": image_repository,
+            "imageDigest": image_digest,
+            "pullStatus": pull_status,
+            "message": message,
+        }) or {}

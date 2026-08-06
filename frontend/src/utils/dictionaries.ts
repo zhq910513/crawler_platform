@@ -1,6 +1,6 @@
 export const statusText: Record<string, string> = {
   SUPER_ADMIN: '超级管理员', NORMAL_USER: '普通用户', ENABLED: '启用', DISABLED: '停用', ARCHIVED: '归档',
-  DRAFT: '草稿', READY: '已就绪', ONLINE: '在线', OFFLINE: '离线', SUSPENDED: '暂停上线',
+  DRAFT: '草稿', READY: '已就绪', OUTDATED: '待拉取', WARMING: '预热中', ONLINE: '在线', OFFLINE: '离线', SUSPENDED: '暂停上线',
   MAINTENANCE: '维护中', UNKNOWN: '未知', HEALTHY: '健康', DEGRADED: '降级', UNHEALTHY: '异常',
   NORMAL: '正常', BUSY: '繁忙', FULL: '已满载', DRAINED: '已排空', PRESSURE: '资源紧张', EXHAUSTED: '资源不足',
   DEPLOYED: '已部署', DEPLOYING: '部署中', DEPLOY_FAILED: '部署失败', REMOVED: '已移除',

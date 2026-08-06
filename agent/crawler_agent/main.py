@@ -52,6 +52,7 @@ class AgentApp:
         self.futures: dict[int, Any] = {}
         self.lock = threading.Lock()
         self.docker_client = docker.from_env()
+        self.image_prewarm_next_at: dict[str, float] = {}
 
     def active_count(self) -> int:
         with self.lock:
@@ -71,13 +72,17 @@ class AgentApp:
 
     def heartbeat_payload(self) -> dict[str, Any]:
         running = self.active_count()
+        docker_run_ids = self.executor.running_platform_run_ids()
+        tracked_run_ids = set(self.futures.keys()) | docker_run_ids
+        orphan_run_ids = sorted(docker_run_ids - set(self.futures.keys()))
+        docker_running_count = max(running, len(docker_run_ids))
         disk = psutil.disk_usage(str(config.run_root.parent if config.run_root.is_absolute() else "/"))
         docker_status = "OK"
         try:
             self.docker_client.ping()
         except Exception as exc:
             docker_status = f"ERROR:{exc}"
-        available_slots = max(0, config.max_slots - running)
+        available_slots = max(0, config.max_slots - docker_running_count)
         health_status = "HEALTHY" if docker_status == "OK" else "UNHEALTHY"
         capacity_status = "FULL" if available_slots <= 0 else ("BUSY" if available_slots <= max(1, config.max_slots // 4) else "NORMAL")
         return {
@@ -92,16 +97,37 @@ class AgentApp:
             "diskUsage": disk.percent,
             "inodeUsage": disk_inode_usage(str(config.project_data_root)),
             "loadAverage": os.getloadavg()[0] if hasattr(os, "getloadavg") else 0,
-            "runningContainers": running,
+            "runningContainers": docker_running_count,
             "availableSlots": available_slots,
             "maxSlots": config.max_slots,
             "projectDataRootWritable": path_writable(str(config.project_data_root)),
             "dockerSockAccessible": docker_status == "OK",
             "timezone": datetime.now().astimezone().tzname() or "",
             "capabilities": config.capabilities(),
-            "currentRuns": {"runIds": list(self.futures.keys())},
+            "currentRuns": {"runIds": sorted(tracked_run_ids), "dockerRunIds": sorted(docker_run_ids), "orphanRunIds": orphan_run_ids},
             "lastError": self.last_error,
         }
+
+    def handle_image_updates(self, heartbeat_response: dict[str, Any]) -> None:
+        updates = heartbeat_response.get("pendingImagePulls") or []
+        if not isinstance(updates, list) or not updates:
+            return
+        if self.active_count() > 0:
+            logger.info("skip image prewarm because runs are active updates=%s", len(updates))
+            return
+        now = time.monotonic()
+        for item in updates[:3]:
+            if not isinstance(item, dict):
+                continue
+            if not item.get("safeToPrewarm"):
+                continue
+            key = f"{item.get('projectId')}:{item.get('releaseId')}:{item.get('imageDigest')}"
+            next_at = self.image_prewarm_next_at.get(key, 0)
+            if now < next_at:
+                continue
+            ok = self.executor.prewarm_image(item)
+            self.image_prewarm_next_at[key] = now + (60 if ok else 300)
+
 
     def loop(self) -> None:
         last_heartbeat = 0.0
@@ -110,7 +136,8 @@ class AgentApp:
             try:
                 now = time.monotonic()
                 if now - last_heartbeat >= config.heartbeat_interval_seconds:
-                    self.api.heartbeat(self.heartbeat_payload())
+                    heartbeat_response = self.api.heartbeat(self.heartbeat_payload())
+                    self.handle_image_updates(heartbeat_response or {})
                     last_heartbeat = now
                 if self.active_count() < config.max_slots:
                     claim = self.api.claim()

@@ -59,6 +59,64 @@ class RunExecutor:
                 self.client.images.pull(image_ref, auth_config=auth_config)
         return image_ref
 
+    def _report_image_pull(self, payload: dict[str, Any], status: str, message: str = "") -> None:
+        project_id = int(payload.get("projectId") or 0)
+        image_digest = str(payload.get("imageDigest") or "")
+        if not project_id or not image_digest:
+            return
+        try:
+            release_id = payload.get("releaseId")
+            self.api.image_pull_result(
+                project_id=project_id,
+                release_id=int(release_id) if release_id not in (None, "") else None,
+                image_repository=str(payload.get("imageRepository") or ""),
+                image_digest=image_digest,
+                pull_status=status,
+                message=message[:4000],
+            )
+        except Exception as exc:
+            logger.warning("report image pull result failed project_id=%s digest=%s status=%s error=%s", project_id, image_digest, status, exc, exc_info=True)
+
+
+    def running_platform_run_ids(self) -> set[int]:
+        """Return run ids of platform task containers still running on this Docker host.
+
+        This lets a restarted Agent advertise containers it did not create in the
+        current process, preventing the platform from prematurely marking those
+        runs LOST while the old task container is still alive.
+        """
+        run_ids: set[int] = set()
+        try:
+            containers = self.client.containers.list(filters={"label": "crawler.platform.run_id"})
+        except Exception as exc:
+            logger.warning("scan platform containers failed: %s", exc, exc_info=True)
+            return run_ids
+        for container in containers:
+            try:
+                labels = container.labels or {}
+                run_id = labels.get("crawler.platform.run_id")
+                if run_id is not None:
+                    run_ids.add(int(run_id))
+            except (TypeError, ValueError):
+                continue
+        return run_ids
+
+    def prewarm_image(self, image_task: dict[str, Any]) -> bool:
+        image_repository = str(image_task.get("imageRepository") or "")
+        image_digest = str(image_task.get("imageDigest") or "")
+        project_code = str(image_task.get("projectCode") or image_task.get("projectId") or "unknown")
+        logger.info("prewarm image start project=%s imageRepository=%s imageDigest=%s", project_code, image_repository, image_digest)
+        try:
+            image_ref = self._pull_digest(image_repository, image_digest)
+            self._report_image_pull(image_task, "READY", f"预热完成：{image_ref}")
+            logger.info("prewarm image ok project=%s image_ref=%s", project_code, image_ref)
+            return True
+        except Exception as exc:
+            message = f"预热失败：{exc}"
+            self._report_image_pull(image_task, "FAILED", message)
+            logger.warning("prewarm image failed project=%s error=%s", project_code, exc, exc_info=True)
+            return False
+
     def _prepare_project_dirs(self, claim: dict[str, Any]) -> dict[str, Path]:
         project_code = _safe(claim.get("projectCode"), f"project_{claim.get('projectId')}")
         task_code = _safe(claim.get("taskCode"), f"task_{claim.get('taskId')}")
@@ -161,6 +219,7 @@ class RunExecutor:
             logger.info("run_id=%s pull start imageRepository=%s imageDigest=%s", run_id, claim.get("imageRepository"), claim.get("imageDigest"))
             self.api.run_event(run_id, lease_token, "IMAGE_PULL_START", "DOCKER", "开始拉取并校验任务镜像")
             image_ref = self._pull_digest(str(claim.get("imageRepository") or ""), str(claim.get("imageDigest") or ""))
+            self._report_image_pull(claim, "READY", f"运行前镜像拉取和 digest 校验完成：{image_ref}")
             logger.info("run_id=%s pull ok image_ref=%s", run_id, image_ref)
             self.api.run_event(run_id, lease_token, "IMAGE_PULL_OK", "DOCKER", "镜像拉取和 digest 校验完成", payload={"imageRef": image_ref})
             self.api.run_heartbeat(run_id, lease_token, "镜像校验完成，准备启动共享环境隔离任务容器")
@@ -173,11 +232,16 @@ class RunExecutor:
             command = ["python", "-m", "crawler_runtime", "--entrypoint", f"{entry_module}:{entry_function}", "--kwargs-json", json.dumps(parameters, ensure_ascii=False)]
             environment = {
                 "CRAWLER_RUN_ID": str(run_id),
+                "CRAWLER_COMPANY_ID": str(claim.get("companyId") or ""),
                 "CRAWLER_PROJECT_ID": str(claim.get("projectId") or ""),
                 "CRAWLER_PROJECT_CODE": str(claim.get("projectCode") or ""),
                 "CRAWLER_TASK_ID": str(claim.get("taskId") or ""),
                 "CRAWLER_TASK_CODE": str(claim.get("taskCode") or ""),
                 "CRAWLER_TASK_GROUP": str(claim.get("taskGroup") or "default"),
+                "CRAWLER_RELEASE_ID": str(claim.get("releaseId") or ""),
+                "CRAWLER_RELEASE_VERSION": str(claim.get("releaseVersion") or ""),
+                "CRAWLER_IMAGE_REPOSITORY": str(claim.get("imageRepository") or ""),
+                "CRAWLER_IMAGE_DIGEST": str(claim.get("imageDigest") or ""),
                 "CRAWLER_RUNTIME_MODE": str(claim.get("runtimeMode") or "SHARED_ENV_ISOLATED"),
                 "CRAWLER_IO_CLASS": str(claim.get("ioClass") or "NORMAL"),
                 "CRAWLER_RESOURCE_LOCKS_JSON": json.dumps(claim.get("resourceLocks") or [], ensure_ascii=False),
@@ -269,6 +333,8 @@ class RunExecutor:
             logger.exception("run_id=%s execute failed: %s", run_id, exc)
             try:
                 message = str(exc)
+                if container is None:
+                    self._report_image_pull(claim, "FAILED", message)
                 diagnosis = self._diagnosis_from_logs("FAILED", message, "AGENT")
                 self.api.run_event(run_id, lease_token, "AGENT_EXECUTE_FAILED", "AGENT", message, "ERROR", {"errorType": diagnosis.get("errorType") or "UNKNOWN_ERROR", "retryable": True})
                 self.api.log_chunk(run_id, lease_token, "stderr", 1, 0, message)

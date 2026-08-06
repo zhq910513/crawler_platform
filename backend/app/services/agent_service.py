@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError
-from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
-from app.schemas import AgentHeartbeat, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
+from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectDeploymentTarget, CrawlerProjectRelease, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
+from app.schemas import AgentHeartbeat, AgentImagePullResult, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
 from app.services.routing_service import RoutingService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status
 from app.services.audit import write_operation_log
@@ -25,9 +25,10 @@ class AgentService:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
             raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        current_run_ids = self._current_run_ids(payload)
         replaced = bool(agent.agent_instance_id and agent.agent_instance_id != payload.agent_instance_id)
         if replaced:
-            self._mark_agent_runs_lost(agent, "Agent 实例已被新进程替代")
+            self._mark_agent_runs_lost(agent, "Agent 实例已被新进程替代", keep_run_ids=current_run_ids)
         agent.agent_instance_id = payload.agent_instance_id
         agent.agent_version = payload.agent_version
         agent.protocol_version = payload.protocol_version
@@ -40,8 +41,16 @@ class AgentService:
         self._sync_project_server_scheduling(server)
         self.db.flush()
         RoutingService(self.db).reroute_or_wait_unclaimed(commit=False)
+        pending_image_pulls = self._pending_image_pulls(server, payload)
         self.db.commit()
-        return {"serverId": server.server_id, "connectionStatus": agent.connection_status, "serverCapacityStatus": server.capacity_status, "replacedPreviousInstance": replaced}
+        return {
+            "serverId": server.server_id,
+            "connectionStatus": agent.connection_status,
+            "serverCapacityStatus": server.capacity_status,
+            "replacedPreviousInstance": replaced,
+            "pendingImagePulls": pending_image_pulls,
+            "imageUpdateCount": len(pending_image_pulls),
+        }
 
     def claim_run(self, agent: CrawlerAgent, payload: AgentRunClaim) -> dict | None:
         if payload.agent_instance_id and payload.agent_instance_id != agent.agent_instance_id:
@@ -54,6 +63,7 @@ class AgentService:
             return None
         task = self.db.get(CrawlerTask, run.task_id)
         project = self.db.get(CrawlerProject, run.project_id)
+        release = self.db.get(CrawlerProjectRelease, run.release_id) if run.release_id else None
         if not task or not project or task.status != "ENABLED" or project.status != "ENABLED" or project.online_status not in {"ONLINE", "READY"}:
             set_routing_status(run, "ROUTE_CANCELLED", reason="任务或项目状态已不可运行")
             self.db.commit()
@@ -64,9 +74,9 @@ class AgentService:
             self.db.commit()
             return None
         ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == run.project_id, CrawlerProjectServer.server_id == server.server_id))
-        if ps and ps.image_readiness_status in {"OUTDATED", "WARMING"}:
-            ps.image_readiness_status = "READY"
-            ps.disabled_reason = "Agent 领取任务时将按 digest 精确拉取并校验镜像"
+        if ps and ps.image_readiness_status in {"OUTDATED", "UNKNOWN", "FAILED"}:
+            ps.image_readiness_status = "WARMING"
+            ps.disabled_reason = "Agent 已领取任务，正在按 digest 拉取并校验镜像；不会中断该节点已有运行实例"
         lease_token = secrets.token_hex(24)
         now = utcnow()
         claimed = self.db.execute(
@@ -100,6 +110,8 @@ class AgentService:
             "projectCode": project.project_code,
             "taskId": task.task_id,
             "taskCode": task.task_code,
+            "releaseId": run.release_id,
+            "releaseVersion": release.version if release else "",
             "imageRepository": run.image_repository,
             "imageDigest": run.image_digest,
             "entryModule": run.entry_module,
@@ -118,6 +130,84 @@ class AgentService:
             "shardIndex": run.shard_index,
             "shardCount": run.shard_count,
         }
+
+    def report_image_pull_result(self, agent: CrawlerAgent, payload: AgentImagePullResult) -> dict:
+        server = self.db.get(CrawlerServer, agent.server_id)
+        if not server:
+            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        ps = self.db.scalar(select(CrawlerProjectServer).where(
+            CrawlerProjectServer.project_id == payload.project_id,
+            CrawlerProjectServer.server_id == server.server_id,
+        ))
+        if not ps:
+            raise AppError("项目服务器池不存在，拒绝更新镜像状态", code=40404, http_status=status.HTTP_404_NOT_FOUND)
+        if ps.latest_release_id and payload.release_id and ps.latest_release_id != payload.release_id:
+            self.db.commit()
+            return {"ignored": True, "reason": "release 已变化，忽略过期镜像回报", "imageReadinessStatus": ps.image_readiness_status}
+        if ps.latest_image_digest and ps.latest_image_digest != payload.image_digest:
+            self.db.commit()
+            return {"ignored": True, "reason": "digest 已变化，忽略过期镜像回报", "imageReadinessStatus": ps.image_readiness_status}
+        if payload.pull_status == "READY":
+            ps.image_readiness_status = "READY"
+            ps.disabled_reason = "Agent 已完成镜像 digest 拉取和校验"
+        else:
+            ps.image_readiness_status = "FAILED"
+            ps.disabled_reason = (payload.message or "Agent 拉取或校验镜像失败")[:500]
+        ps.last_deployed_at = utcnow()
+        targets = list(self.db.scalars(select(CrawlerProjectDeploymentTarget).where(
+            CrawlerProjectDeploymentTarget.project_id == ps.project_id,
+            CrawlerProjectDeploymentTarget.server_id == ps.server_id,
+            CrawlerProjectDeploymentTarget.release_id == ps.latest_release_id,
+        )).all())
+        for target in targets:
+            target.image_readiness_status = ps.image_readiness_status
+            target.target_status = ps.image_readiness_status
+            target.last_error = "" if payload.pull_status == "READY" else (payload.message or "Agent 拉取或校验镜像失败")[:4000]
+            target.last_deployed_at = ps.last_deployed_at
+        self.db.commit()
+        return {"ignored": False, "projectId": ps.project_id, "serverId": ps.server_id, "imageReadinessStatus": ps.image_readiness_status, "latestImageDigest": ps.latest_image_digest}
+
+    def _pending_image_pulls(self, server: CrawlerServer, payload: AgentHeartbeat) -> list[dict]:
+        running_count = int(payload.running_containers or 0)
+        run_ids = sorted(self._current_run_ids(payload))
+        safe_to_prewarm = running_count <= 0 and not run_ids and (payload.available_slots or 0) > 0 and (payload.docker_status or "").upper() == "OK"
+        stmt = (
+            select(CrawlerProjectServer, CrawlerProject, CrawlerProjectRelease)
+            .join(CrawlerProject, CrawlerProject.project_id == CrawlerProjectServer.project_id)
+            .join(CrawlerProjectRelease, CrawlerProjectRelease.release_id == CrawlerProjectServer.latest_release_id)
+            .where(
+                CrawlerProjectServer.server_id == server.server_id,
+                CrawlerProjectServer.company_id == server.company_id,
+                CrawlerProjectServer.deployment_status == "DEPLOYED",
+                CrawlerProjectServer.scheduling_status.in_(["ENABLED", "RECOVERING", "PAUSED"]),
+                CrawlerProjectServer.image_readiness_status.in_(["OUTDATED", "UNKNOWN", "FAILED", "WARMING"]),
+                CrawlerProjectServer.latest_image_digest != "",
+                CrawlerProject.status == "ENABLED",
+                CrawlerProjectRelease.release_status == "PUBLISHED",
+            )
+            .order_by(CrawlerProjectServer.priority.asc(), CrawlerProjectServer.updated_at.asc())
+            .limit(20)
+        )
+        result: list[dict] = []
+        for ps, project, release in self.db.execute(stmt).all():
+            result.append({
+                "projectServerId": ps.project_server_id,
+                "companyId": ps.company_id,
+                "projectId": ps.project_id,
+                "projectCode": project.project_code,
+                "projectName": project.project_name,
+                "releaseId": ps.latest_release_id,
+                "releaseVersion": release.version,
+                "imageRepository": release.image_repository,
+                "imageDigest": ps.latest_image_digest,
+                "imageReadinessStatus": ps.image_readiness_status,
+                "action": "PREWARM_NOW" if safe_to_prewarm else "PREWARM_WHEN_IDLE",
+                "safeToPrewarm": safe_to_prewarm,
+                "runningCount": running_count,
+                "currentRunIds": run_ids,
+                "message": "检测到项目新镜像，Agent 空闲时预热；已有运行实例不会被中断",
+            })
+        return result
 
     def run_heartbeat(self, agent: CrawlerAgent, payload: AgentRunHeartbeat) -> dict:
         if payload.agent_instance_id and payload.agent_instance_id != agent.agent_instance_id:
@@ -269,9 +359,32 @@ class AgentService:
             return "PERMISSION_ERROR"
         return "UNKNOWN_ERROR"
 
-    def _mark_agent_runs_lost(self, agent: CrawlerAgent, message: str) -> None:
+    @staticmethod
+    def _current_run_ids(payload: AgentHeartbeat) -> set[int]:
+        current_runs = payload.current_runs or {}
+        raw: list = []
+        if isinstance(current_runs, dict):
+            for key in ("runIds", "orphanRunIds", "dockerRunIds"):
+                values = current_runs.get(key)
+                if isinstance(values, list):
+                    raw.extend(values)
+        result: set[int] = set()
+        for item in raw:
+            try:
+                result.add(int(item))
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    def _mark_agent_runs_lost(self, agent: CrawlerAgent, message: str, keep_run_ids: set[int] | None = None) -> None:
+        keep_run_ids = keep_run_ids or set()
         runs = list(self.db.scalars(select(CrawlerTaskRun).where(CrawlerTaskRun.agent_id == agent.agent_id, CrawlerTaskRun.run_status.in_(["ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"]))).all())
         for run in runs:
+            if run.run_id in keep_run_ids:
+                run.heartbeat_at = utcnow()
+                run.lease_expires_at = utcnow() + timedelta(seconds=settings.agent_lease_seconds)
+                self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_RESTART_KEEPALIVE", event_level="WARNING", stage="AGENT", message="Agent 进程已重启，但检测到任务容器仍在运行，本轮不标记 LOST", payload_json={"agentId": agent.agent_id}))
+                continue
             safe_set_run_status(run, "LOST", message=message)
             run.finished_at = utcnow()
             run.lease_expires_at = None

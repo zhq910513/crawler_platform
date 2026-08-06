@@ -7,7 +7,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import SysUser
 from app.responses import ok
-from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectServerPoolUpdate, ProjectUpdate
+from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
 from app.services.project_service import ProjectService
 
 router = APIRouter(tags=["项目"])
@@ -58,3 +58,13 @@ def create_project_server_pool_analysis(project_id: int, payload: ProjectServerP
 @router.put("/projects/{project_id}/servers")
 def update_project_servers(project_id: int, payload: ProjectServerPoolUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ProjectService(db).update_server_pool(user, project_id, payload))
+
+
+@router.post("/projects/{project_id}/release-deployments")
+def deploy_project_release(project_id: int, payload: ProjectReleaseDeploy, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ProjectService(db).deploy_release_to_servers(user, project_id, payload))
+
+
+@router.get("/projects/{project_id}/release-deployments")
+def list_project_release_deployments(project_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ProjectService(db).list_deployments(user, project_id))

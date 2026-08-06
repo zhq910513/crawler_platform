@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import status
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -35,6 +37,90 @@ class TaskService:
             scoped = scoped_company_id(user, company_id)
             rows = self.tasks.list_tasks(company_id=scoped, user_id=user.user_id)
         return [self._task_payload(row) for row in rows]
+
+    def _binding_value_exists(self, value: Any) -> bool:
+        return value is not None and value != "" and value != {} and value != []
+
+    def _credential_mode(self, binding: Any) -> str:
+        if isinstance(binding, str):
+            return "fixed"
+        if isinstance(binding, list):
+            return "fixed_list"
+        if isinstance(binding, dict):
+            return str(binding.get("mode") or "fixed").strip()
+        return ""
+
+    def _validate_credential_binding(self, slot: str, requirement: dict[str, Any], binding: Any) -> list[str]:
+        errors: list[str] = []
+        if not isinstance(requirement, dict):
+            return errors
+        required = bool(requirement.get("required", False))
+        if not self._binding_value_exists(binding):
+            if required:
+                errors.append(f"账号槽位 {slot} 必须配置")
+            return errors
+        mode = self._credential_mode(binding)
+        allowed = set(str(item) for item in (requirement.get("supportedModes") or requirement.get("supported_modes") or ["fixed"]))
+        if mode not in allowed:
+            errors.append(f"账号槽位 {slot} 不支持模式 {mode}，允许：{sorted(allowed)}")
+        expected_platform = str(requirement.get("platformCode") or requirement.get("platform_code") or "").strip().lower()
+        expected_type = str(requirement.get("credentialType") or requirement.get("credential_type") or "").strip()
+        if isinstance(binding, dict):
+            actual_platform = str(binding.get("platformCode") or binding.get("platform_code") or "").strip().lower()
+            actual_type = str(binding.get("credentialType") or binding.get("credential_type") or "").strip()
+            if expected_platform and actual_platform and actual_platform != expected_platform:
+                errors.append(f"账号槽位 {slot} platformCode 不匹配：期望 {expected_platform}，实际 {actual_platform}")
+            if expected_type and actual_type and actual_type != expected_type:
+                errors.append(f"账号槽位 {slot} credentialType 不匹配：期望 {expected_type}，实际 {actual_type}")
+            if mode == "fixed":
+                if not (binding.get("credentialKey") or binding.get("credential_key") or binding.get("credentialRef") or binding.get("credential_ref") or isinstance(binding.get("credential"), dict)):
+                    errors.append(f"账号槽位 {slot} fixed 模式必须配置 credentialKey/credentialRef")
+            elif mode == "fixed_list":
+                keys = binding.get("credentialKeys") or binding.get("credential_keys") or binding.get("credentialRefs") or binding.get("credential_refs") or binding.get("credentials")
+                if not isinstance(keys, list) or not keys:
+                    errors.append(f"账号槽位 {slot} fixed_list 模式必须配置非空账号列表")
+            elif mode == "pool":
+                if not (binding.get("selector") or actual_platform or expected_platform):
+                    errors.append(f"账号槽位 {slot} pool 模式必须配置 selector 或 platformCode")
+            elif mode == "binding_rule":
+                rules = binding.get("rules") or []
+                if not isinstance(rules, list) or not rules:
+                    errors.append(f"账号槽位 {slot} binding_rule 模式必须配置 rules")
+            elif mode in {"affinity_pool", "external_affinity_pool"}:
+                subject_type = binding.get("subjectType") or binding.get("subject_type") or (requirement.get("affinity") or {}).get("subjectType") or (requirement.get("affinity") or {}).get("subject_type")
+                if not subject_type:
+                    errors.append(f"账号槽位 {slot} {mode} 模式必须配置 subjectType")
+                if mode == "external_affinity_pool" and not (binding.get("externalField") or binding.get("external_field") or binding.get("externalSubjectField") or binding.get("external_subject_field")):
+                    errors.append(f"账号槽位 {slot} external_affinity_pool 模式必须配置 externalField")
+        elif mode == "fixed_list" and not binding:
+            errors.append(f"账号槽位 {slot} fixed_list 模式账号列表不能为空")
+        elif mode == "fixed" and isinstance(binding, str) and not binding.strip():
+            errors.append(f"账号槽位 {slot} fixed 模式账号不能为空")
+        return errors
+
+    def _validate_task_contract_bindings(self, *, required_configs: list[Any] | None, required_credentials: list[Any] | None, config_bindings: dict[str, Any] | None, credential_bindings: dict[str, Any] | None, target_status: str = "DRAFT") -> None:
+        errors: list[str] = []
+        configs = config_bindings or {}
+        credentials = credential_bindings or {}
+        for item in required_configs or []:
+            if not isinstance(item, dict):
+                continue
+            slot = str(item.get("slot") or "").strip()
+            if not slot:
+                errors.append("requiredConfigs 存在缺少 slot 的配置声明")
+                continue
+            if bool(item.get("required", False)) and not self._binding_value_exists(configs.get(slot)):
+                errors.append(f"数据库/配置槽位 {slot} 必须绑定")
+        for item in required_credentials or []:
+            if not isinstance(item, dict):
+                continue
+            slot = str(item.get("slot") or "").strip()
+            if not slot:
+                errors.append("requiredCredentials 存在缺少 slot 的账号声明")
+                continue
+            errors.extend(self._validate_credential_binding(slot, item, credentials.get(slot)))
+        if errors and target_status in {"DRAFT", "ENABLED", "PAUSED", "DISABLED"}:
+            raise AppError("任务契约校验未通过", code=40090, http_status=status.HTTP_400_BAD_REQUEST, data={"errors": errors})
 
     def _validate_owner(self, company_id: int, owner_user_id: int | None) -> int | None:
         if owner_user_id is None:
@@ -84,6 +170,15 @@ class TaskService:
         project = require_project_role(self.db, user, definition.project_id, "OPERATOR")
         if definition.definition_status == "CREATED":
             raise AppError("该任务定义已经创建正式任务", code=40051)
+        if definition.contract_status not in {"OK", "WARNING"}:
+            raise AppError("任务定义契约不可用，不能创建正式任务", code=40091, http_status=status.HTTP_400_BAD_REQUEST, data={"contractStatus": definition.contract_status, "contractWarnings": definition.contract_warnings or []})
+        self._validate_task_contract_bindings(
+            required_configs=definition.required_configs or [],
+            required_credentials=definition.required_credentials or [],
+            config_bindings=payload.config_bindings or {},
+            credential_bindings=payload.credential_bindings or {},
+            target_status=payload.status,
+        )
         task = CrawlerTask(
             company_id=project.company_id,
             project_id=project.project_id,
@@ -94,6 +189,17 @@ class TaskService:
             entry_module=definition.entry_module,
             entry_function=definition.entry_function,
             parameters=payload.parameters or definition.default_params,
+            config_bindings=payload.config_bindings or {},
+            credential_bindings=payload.credential_bindings or {},
+            contract_snapshot={
+                "platformCode": definition.platform_code,
+                "requiredConfigs": definition.required_configs or [],
+                "requiredCredentials": definition.required_credentials or [],
+                "outputTables": definition.output_tables or [],
+                "contractVersion": definition.contract_version or "1",
+                "contractStatus": definition.contract_status or "UNKNOWN",
+                "contractWarnings": definition.contract_warnings or [],
+            },
             execution_mode=definition.execution_mode,
             shard_strategy=definition.resource_requirements.get("shardStrategy", {}) if isinstance(definition.resource_requirements, dict) else {},
             required_node_count=max(1, int((definition.resource_requirements or {}).get("requiredNodeCount", 1))) if definition.execution_mode == "SHARDED" else 1,
@@ -164,6 +270,15 @@ class TaskService:
         image_policy = updates.get("image_policy", task.image_policy)
         fixed_release_id = updates.get("fixed_release_id", task.fixed_release_id)
         updates["fixed_release_id"] = self._validate_image_binding(task.project_id, task.company_id, image_policy, fixed_release_id)
+        if {"config_bindings", "credential_bindings", "status"} & set(updates):
+            snapshot = task.contract_snapshot or {}
+            self._validate_task_contract_bindings(
+                required_configs=snapshot.get("requiredConfigs") or snapshot.get("required_configs") or [],
+                required_credentials=snapshot.get("requiredCredentials") or snapshot.get("required_credentials") or [],
+                config_bindings=updates.get("config_bindings", task.config_bindings or {}),
+                credential_bindings=updates.get("credential_bindings", task.credential_bindings or {}),
+                target_status=updates.get("status", task.status),
+            )
         for key, value in updates.items():
             setattr(task, key, value)
         after = {c.name: getattr(task, c.name) for c in task.__table__.columns}

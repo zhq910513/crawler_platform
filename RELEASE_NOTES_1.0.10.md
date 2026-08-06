@@ -26,7 +26,7 @@
 
 ```text
 后端测试：40 passed
-Alembic head：0005_110_audit
+Alembic head：0006_agent_deploy
 ```
 
 ## 上线前验证

@@ -1,4 +1,4 @@
-# crawler_platform 1.0.12 商业化运维 Runbook
+# crawler_platform 1.0.17 商业化运维 Runbook
 
 ## 1. 首次部署失败
 
@@ -75,3 +75,8 @@
 - 失败任务 runId 和日志下载文件。
 - Agent lastError 和最近心跳时间。
 - API `/health` 结果和平台版本。
+
+
+## 1.0.17 Agent 镜像更新不中断补充
+
+CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。

@@ -103,6 +103,10 @@ export interface ServerNode {
   healthStatus: string
   capacityStatus: string
   metrics: AgentMetrics
+  labels?: Record<string, unknown>
+  capabilities?: Record<string, unknown>
+  registryCredentialRef?: string
+  workDir?: string
   description: string
 }
 
@@ -198,6 +202,12 @@ export interface TaskDefinition {
   shmSizeMb?: number
   logLimitMb?: number
   resourceLocks?: string[]
+  platformCode?: string
+  requiredConfigs?: Array<Record<string, unknown>>
+  requiredCredentials?: Array<Record<string, unknown>>
+  outputTables?: Array<Record<string, unknown>>
+  contractStatus?: string
+  contractWarnings?: unknown[]
   definitionStatus: string
   createdAt: string
 }
@@ -369,14 +379,14 @@ export interface DashboardSummary {
 }
 
 export interface UserCreateRequest { companyId?: number | null; userName: string; nickName: string; password: string; roleType: string; status?: string }
-export interface ServerCreateRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; maxContainerSlots?: number; description?: string }
+export interface ServerCreateRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; maxContainerSlots?: number; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; workDir?: string; description?: string }
 export interface AgentRegistrationRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; agentCode: string; agentName?: string; maxContainerSlots?: number }
 export interface ProjectImportRequest { discoveredProjectId: number; remark?: string; dispatchMode?: string; minAvailableServers?: number; maxActiveServers?: number; allowDeployedFallback?: boolean; allowCompanyPoolFallback?: boolean; defaultRuntimeMode?: string; defaultTaskMaxConcurrency?: number; defaultGroupMaxConcurrency?: number; defaultShmSizeMb?: number; defaultLogLimitMb?: number; containerConfig?: Record<string, unknown> }
 export interface ProjectUpdateRequest { projectName?: string; remark?: string; status?: string; onlineStatus?: string; dispatchMode?: string; minAvailableServers?: number; maxActiveServers?: number; allowDeployedFallback?: boolean; allowCompanyPoolFallback?: boolean; defaultRuntimeMode?: string; defaultTaskMaxConcurrency?: number; defaultGroupMaxConcurrency?: number; defaultShmSizeMb?: number; defaultLogLimitMb?: number; containerConfig?: Record<string, unknown>; description?: string }
 export interface ProjectServerUpsertRequest { serverId: number; schedulingStatus: string; serverRole: string; priority: number; weight: number; maxConcurrency: number; autoEjectEnabled: boolean; autoRecoverEnabled: boolean }
 export interface ProjectServerPoolUpdateRequest { servers: ProjectServerUpsertRequest[]; reason?: string }
-export interface TaskCreateRequest { definitionId: number; ownerUserId?: number | null; taskCode: string; taskName: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string; serverIds?: number[]; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
-export interface TaskUpdateRequest { ownerUserId?: number | null; taskName?: string; parameters?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
+export interface TaskCreateRequest { definitionId: number; ownerUserId?: number | null; taskCode: string; taskName: string; parameters?: Record<string, unknown>; configBindings?: Record<string, unknown>; credentialBindings?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string; serverIds?: number[]; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
+export interface TaskUpdateRequest { ownerUserId?: number | null; taskName?: string; parameters?: Record<string, unknown>; configBindings?: Record<string, unknown>; credentialBindings?: Record<string, unknown>; status?: string; imagePolicy?: string; releaseChannel?: string; fixedReleaseId?: number | null; cpuLimit?: number; memoryLimitMb?: number; timeoutSeconds?: number; maxRetryCount?: number; runtimeMode?: string; taskGroup?: string; taskMaxConcurrency?: number; groupMaxConcurrency?: number; exclusiveMode?: boolean; ioClass?: string; shmSizeMb?: number; logLimitMb?: number; resourceLocks?: string[]; description?: string }
 export interface NotificationChannelCreateRequest { scopeType: string; companyId?: number | null; projectId?: number | null; channelName: string; channelType: string; channelStatus: string; config: Record<string, unknown>; p0Only?: boolean; cooldownSeconds?: number }
 
 export interface ScheduleUpdateRequest { scheduleStatus?: string; scheduleType?: string; cronExpression?: string; scheduleTimezone?: string; overlapPolicy?: string; scheduleConfig?: Record<string, unknown>; scheduleLabel?: string }
@@ -389,3 +399,153 @@ export interface RunEvent { eventId: number; runId: number; eventType: string; e
 export interface RunLogChunk { chunkId: number; runId: number; stream: string; seq: number; offsetStart: number; offsetEnd: number; content: string; contentSize: number; createdAt: string }
 export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: boolean; chunks: RunLogChunk[] }
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
+
+export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; expiresInHours?: number }
+export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken: string; installCommand: string; note: string }
+export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
+export interface ProjectReleaseDeploymentResult { deploymentId: number; projectId: number; releaseId: number; releaseVersion: string; imageRepository: string; imageDigest: string; targets: Array<Record<string, unknown>>; message: string }
+
+export interface AccountCredential {
+  credentialId: number
+  companyId: number
+  companyCode: string
+  platformCode: string
+  credentialKey: string
+  credentialName: string
+  enabled: boolean
+  healthStatus: string
+  loginStatus: string
+  usageStatus: string
+  lastStatusCode: string
+  lastStatusSource: string
+  lastVerifiedAt: string | null
+  lastSuccessAt: string | null
+  lastFailureAt: string | null
+  failureCount: number
+  statusFreshUntil: string | null
+  lastVerifiedAgentCode: string
+  lastRunId: number | null
+  lastTaskId: number | null
+  lastErrorSummary: string
+  statusMetadata?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AccountStatusEvent {
+  statusEventId: number
+  eventUid: string
+  companyId: number
+  companyCode: string
+  platformCode: string
+  credentialKey: string
+  credentialId: number | null
+  runId: number | null
+  taskId: number | null
+  agentId: number | null
+  agentCode: string
+  slot: string
+  subjectType?: string
+  subjectKey?: string
+  subjectName?: string
+  affectsCredential?: boolean
+  eventType: string
+  statusCode: string
+  severity: string
+  source: string
+  messageSanitized: string
+  observedAt: string
+  payloadSanitized: Record<string, unknown>
+  createdAt: string
+}
+
+export interface AccountStatusEventCreateRequest {
+  companyId?: number | null
+  companyCode?: string | null
+  platformCode: string
+  credentialKey: string
+  credentialName?: string
+  runId?: number | null
+  taskId?: number | null
+  agentCode?: string
+  slot?: string
+  subjectType?: string
+  subjectKey?: string
+  subjectName?: string
+  affectsCredential?: boolean
+  eventType?: string
+  statusCode: string
+  severity?: string
+  source?: string
+  message?: string
+  payload?: Record<string, unknown>
+  eventUid?: string | null
+}
+
+
+export interface CredentialLease {
+  leaseId: number
+  companyId: number
+  companyCode: string
+  platformCode: string
+  credentialId: number | null
+  credentialKey: string
+  slot: string
+  runId: number | null
+  taskId: number | null
+  agentId: number | null
+  agentCode: string
+  leaseStatus: string
+  leaseUntil: string
+  heartbeatAt: string | null
+  releasedAt: string | null
+  releaseReason: string
+  metadataJson?: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CredentialSubjectBinding {
+  bindingId: number
+  companyId: number
+  companyCode: string
+  platformCode: string
+  subjectType: string
+  subjectKey: string
+  subjectName: string
+  credentialId: number | null
+  credentialKey: string
+  bindingStatus: string
+  bindingPolicy: string
+  rebindingPolicy: string
+  source: string
+  firstSuccessAt: string | null
+  lastSuccessAt: string | null
+  lastFailureAt: string | null
+  failureCount: number
+  lastErrorCode: string
+  lastErrorSummary: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CredentialSubjectBindingCreateRequest {
+  companyId?: number | null
+  companyCode?: string | null
+  platformCode: string
+  subjectType: string
+  subjectKey: string
+  subjectName?: string
+  credentialKey: string
+  bindingPolicy?: string
+  rebindingPolicy?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface CredentialSubjectBindingUpdateRequest {
+  credentialKey?: string
+  bindingStatus?: string
+  rebindingPolicy?: string
+  reason?: string
+  metadata?: Record<string, unknown>
+}

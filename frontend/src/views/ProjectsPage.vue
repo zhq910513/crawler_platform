@@ -64,11 +64,12 @@
       <template #footer><el-button @click="importVisible = false">取消</el-button><el-button type="primary" :disabled="!selectedDiscovered?.selectable" @click="submitImport">确认接入</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="serverPoolVisible" title="配置执行服务器" width="980px">
-      <p class="muted">只能调整已经部署过该项目的服务器。保存前会进行影响分析，异常服务器不会被强制加入执行池。</p>
+    <el-dialog v-model="serverPoolVisible" title="配置执行服务器" width="1080px">
+      <p class="muted">CI/CD 只注册项目 release 后，可在这里把同公司 Agent 服务器加入执行池。保存前会进行影响分析；镜像未预热的节点会标记为“过期/待拉取”，Agent 执行时按 digest 拉取并校验。</p>
       <el-table :data="serverPoolDraft" border>
         <el-table-column label="启用" width="70"><template #default="s"><el-checkbox v-model="s.row.enabled" /></template></el-table-column>
-        <el-table-column label="服务器" min-width="160"><template #default="s">{{ s.row.serverName }} / {{ s.row.serverCode }}</template></el-table-column>
+        <el-table-column label="服务器" min-width="170"><template #default="s">{{ s.row.serverName }} / {{ s.row.serverCode }}</template></el-table-column>
+        <el-table-column label="接入状态" width="100"><template #default="s">{{ s.row.projectServerId ? '已加入' : '未加入' }}</template></el-table-column>
         <el-table-column label="调度状态" width="140"><template #default="s"><el-select v-model="s.row.schedulingStatus"><el-option label="可调度" value="ENABLED" /><el-option label="排空中" value="DRAINING" /><el-option label="人工暂停" value="PAUSED" /><el-option label="禁用" value="DISABLED" /></el-select></template></el-table-column>
         <el-table-column label="角色" width="140"><template #default="s"><el-select v-model="s.row.serverRole"><el-option label="活动节点" value="ACTIVE" /><el-option label="主服务器" value="PRIMARY" /><el-option label="备用服务器" value="STANDBY" /><el-option label="候选节点" value="CANDIDATE" /></el-select></template></el-table-column>
         <el-table-column label="优先级" width="120"><template #default="s"><el-input-number v-model="s.row.priority" :min="1" /></template></el-table-column>
@@ -77,22 +78,23 @@
       </el-table>
       <el-form label-position="top" style="margin-top: 14px"><el-form-item label="调整原因"><el-input v-model="serverPoolReason" /></el-form-item></el-form>
       <pre v-if="poolAnalysis" class="analysis-box">{{ JSON.stringify(poolAnalysis, null, 2) }}</pre>
-      <template #footer><el-button @click="serverPoolVisible = false">取消</el-button><el-button @click="analyzePool">影响分析</el-button><el-button type="primary" @click="savePool">保存</el-button></template>
+      <template #footer><el-button @click="serverPoolVisible = false">取消</el-button><el-button @click="analyzePool">影响分析</el-button><el-button @click="deploySelectedRelease">部署当前版本</el-button><el-button type="primary" @click="savePool">保存</el-button></template>
     </el-dialog>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { analyzeProjectServers, importProject, listCompanies, listDiscoveredProjects, listProjectServers, listProjects, updateProjectServers } from '../api/platform'
+import { analyzeProjectServers, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectServers, listProjects, listServers, updateProjectServers } from '../api/platform'
 import { sessionState } from '../stores/session'
-import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest } from '../types/api'
+import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
 const companies = ref<Company[]>([])
 const projects = ref<Project[]>([])
 const discoveredProjects = ref<DiscoveredProject[]>([])
 const projectServers = ref<ProjectServer[]>([])
+const allServers = ref<ServerNode[]>([])
 const selectedProject = ref<Project | null>(null)
 const selectedDiscovered = ref<DiscoveredProject | null>(null)
 const selectedCompanyId = ref<number | undefined>(undefined)
@@ -115,9 +117,69 @@ function discoveredRowClass({ row }: { row: DiscoveredProject }) { return row.se
 async function submitImport() { if (!selectedDiscovered.value) return; await importProject({ discoveredProjectId: selectedDiscovered.value.discoveredProjectId, remark: importForm.remark, dispatchMode: importForm.dispatchMode }); ElMessage.success('项目已接入'); importVisible.value = false; await loadAll() }
 async function selectProject(row: Project) { selectedProject.value = row; await loadProjectServers() }
 async function loadProjectServers() { if (selectedProject.value) projectServers.value = await listProjectServers(selectedProject.value.projectId) }
-function openServerPoolEditor() { serverPoolDraft.value = projectServers.value.map((item) => ({ ...item, enabled: ['ENABLED', 'RECOVERING'].includes(item.schedulingStatus) })); poolAnalysis.value = null; serverPoolVisible.value = true }
-function poolPayload(): ProjectServerPoolUpdateRequest { return { reason: serverPoolReason.value, servers: serverPoolDraft.value.map((item) => ({ serverId: item.serverId, schedulingStatus: item.enabled ? item.schedulingStatus : 'PAUSED', serverRole: item.serverRole, priority: item.priority, weight: item.weight, maxConcurrency: item.maxConcurrency, autoEjectEnabled: item.autoEjectEnabled, autoRecoverEnabled: item.autoRecoverEnabled })) } }
+async function openServerPoolEditor() {
+  if (!selectedProject.value) return
+  allServers.value = await listServers(selectedProject.value.companyId)
+  const current = new Map(projectServers.value.map((item) => [item.serverId, item]))
+  serverPoolDraft.value = allServers.value.map((server, index) => {
+    const existing = current.get(server.serverId)
+    if (existing) return { ...existing, enabled: ['ENABLED', 'RECOVERING'].includes(existing.schedulingStatus) }
+    return {
+      projectServerId: 0,
+      companyId: server.companyId,
+      projectId: selectedProject.value!.projectId,
+      serverId: server.serverId,
+      serverName: server.serverName,
+      serverCode: server.serverCode,
+      deploymentStatus: 'NOT_DEPLOYED',
+      schedulingStatus: 'ENABLED',
+      imageReadinessStatus: 'OUTDATED',
+      serverRole: selectedProject.value!.dispatchMode === 'PRIMARY_STANDBY' ? (index === 0 ? 'PRIMARY' : 'STANDBY') : 'ACTIVE',
+      priority: 100 + index,
+      weight: 100,
+      maxConcurrency: Math.max(1, Math.min(4, server.maxContainerSlots || 4)),
+      autoEjectEnabled: true,
+      autoRecoverEnabled: true,
+      latestImageDigest: selectedProject.value!.latestImageDigest || '',
+      lastDeployedAt: null,
+      disabledReason: '保存后由 Agent 执行时按 digest 拉取镜像',
+      manageStatus: server.manageStatus,
+      healthStatus: server.healthStatus,
+      capacityStatus: server.capacityStatus,
+      enabled: false,
+    }
+  })
+  poolAnalysis.value = null
+  serverPoolVisible.value = true
+}
+function poolPayload(): ProjectServerPoolUpdateRequest {
+  return {
+    reason: serverPoolReason.value,
+    servers: serverPoolDraft.value
+      .filter((item) => item.enabled || item.projectServerId)
+      .map((item) => ({
+        serverId: item.serverId,
+        schedulingStatus: item.enabled ? item.schedulingStatus : 'PAUSED',
+        serverRole: item.serverRole,
+        priority: item.priority,
+        weight: item.weight,
+        maxConcurrency: item.maxConcurrency,
+        autoEjectEnabled: item.autoEjectEnabled,
+        autoRecoverEnabled: item.autoRecoverEnabled,
+      })),
+  }
+}
 async function analyzePool() { if (!selectedProject.value) return; poolAnalysis.value = await analyzeProjectServers(selectedProject.value.projectId, poolPayload()) }
+
+async function deploySelectedRelease() {
+  if (!selectedProject.value) return
+  const serverIds = serverPoolDraft.value.filter((item) => item.enabled).map((item) => item.serverId)
+  const result = await deployProjectRelease(selectedProject.value.projectId, { serverIds, reason: serverPoolReason.value || '项目部署中心手动部署' })
+  ElMessage.success(result.message || '部署计划已创建')
+  await loadProjectServers()
+  await loadProjects()
+}
+
 async function savePool() { if (!selectedProject.value) return; await updateProjectServers(selectedProject.value.projectId, poolPayload()); ElMessage.success('执行服务器池已更新'); serverPoolVisible.value = false; await loadProjectServers(); await loadProjects() }
 onMounted(loadAll)
 </script>

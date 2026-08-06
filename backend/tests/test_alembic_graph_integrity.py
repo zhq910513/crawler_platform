@@ -8,8 +8,8 @@ from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSIONS = ROOT / "migrations" / "versions"
-EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py"]
-EXPECTED_HEAD = "0005_110_audit"
+EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py", "0006_agent_deploy.py", "0007_account_status.py", "0008_task_contract_subject_binding.py", "0009_contract_runtime_gate.py"]
+EXPECTED_HEAD = "0009_contract_runtime_gate"
 OBSOLETE_FILES = {
     "0002_platform_1_0_2_observability.py",
     "0003_expand_schedule_cron_expression.py",

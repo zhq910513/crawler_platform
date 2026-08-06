@@ -125,6 +125,10 @@ class CrawlerServer(Base, TimestampMixin):
     health_status: Mapped[str] = mapped_column(String(20), default="UNKNOWN", index=True, nullable=False)
     capacity_status: Mapped[str] = mapped_column(String(20), default="UNKNOWN", index=True, nullable=False)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    labels: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    registry_credential_ref: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    work_dir: Mapped[str] = mapped_column(String(500), default="/data/crawler-agent", nullable=False)
     description: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     agent: Mapped["CrawlerAgent | None"] = relationship(back_populates="server", uselist=False)
 
@@ -147,6 +151,29 @@ class CrawlerAgent(Base, TimestampMixin):
     current_runs: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     last_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
     server: Mapped[CrawlerServer] = relationship(back_populates="agent")
+
+
+class CrawlerAgentJoinToken(Base, TimestampMixin):
+    __tablename__ = "crawler_agent_join_token"
+    token_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    token_name: Mapped[str] = mapped_column(String(120), default="Agent 接入令牌", nullable=False)
+    agent_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    agent_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    server_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    server_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    work_dir: Mapped[str] = mapped_column(String(500), default="/data/crawler-agent", nullable=False)
+    max_container_slots: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    labels: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    registry_credential_ref: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    install_mode: Mapped[str] = mapped_column(String(30), default="AUTO", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", index=True, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_preflight_report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
 
 
 class CrawlerCompanyDiscoveryToken(Base, TimestampMixin):
@@ -254,6 +281,33 @@ class CrawlerProjectServer(Base, TimestampMixin):
     disabled_reason: Mapped[str] = mapped_column(String(500), default="", nullable=False)
 
 
+class CrawlerProjectDeployment(Base, TimestampMixin):
+    __tablename__ = "crawler_project_deployment"
+    deployment_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
+    release_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project_release.release_id", ondelete="CASCADE"), index=True, nullable=False)
+    deployment_name: Mapped[str] = mapped_column(String(150), default="", nullable=False)
+    strategy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    deployment_status: Mapped[str] = mapped_column(String(30), default="CREATED", index=True, nullable=False)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
+
+
+class CrawlerProjectDeploymentTarget(Base, TimestampMixin):
+    __tablename__ = "crawler_project_deployment_target"
+    __table_args__ = (UniqueConstraint("deployment_id", "server_id", name="uk_deploy_target_server"),)
+    target_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    deployment_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project_deployment.deployment_id", ondelete="CASCADE"), index=True, nullable=False)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
+    release_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project_release.release_id", ondelete="CASCADE"), index=True, nullable=False)
+    server_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_server.server_id", ondelete="CASCADE"), index=True, nullable=False)
+    target_status: Mapped[str] = mapped_column(String(30), default="OUTDATED", index=True, nullable=False)
+    image_readiness_status: Mapped[str] = mapped_column(String(30), default="OUTDATED", index=True, nullable=False)
+    last_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    last_deployed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class CrawlerImageArtifact(Base, TimestampMixin):
     __tablename__ = "crawler_image_artifact"
     __table_args__ = (UniqueConstraint("image_repository", "image_digest", name="uk_image_repository_digest"),)
@@ -319,6 +373,13 @@ class CrawlerProjectTaskDefinition(Base, TimestampMixin):
     idempotency_policy: Mapped[str] = mapped_column(String(30), default="IDEMPOTENT", index=True, nullable=False)
     resource_requirements: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     required_capabilities: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    platform_code: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    required_configs: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    required_credentials: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    output_tables: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    contract_version: Mapped[str] = mapped_column(String(30), default="1", nullable=False)
+    contract_status: Mapped[str] = mapped_column(String(30), default="UNKNOWN", index=True, nullable=False)
+    contract_warnings: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
     runtime_mode: Mapped[str] = mapped_column(String(40), default="SHARED_ENV_ISOLATED", index=True, nullable=False)
     task_group: Mapped[str] = mapped_column(String(100), default="default", index=True, nullable=False)
     task_max_concurrency: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -329,6 +390,8 @@ class CrawlerProjectTaskDefinition(Base, TimestampMixin):
     log_limit_mb: Mapped[int] = mapped_column(Integer, default=50, nullable=False)
     resource_locks: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
     secret_refs: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    allow_offline_run: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    offline_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     definition_status: Mapped[str] = mapped_column(String(30), default="AVAILABLE", index=True, nullable=False)
     parse_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
@@ -346,6 +409,9 @@ class CrawlerTask(Base, TimestampMixin):
     entry_module: Mapped[str] = mapped_column(String(300), nullable=False)
     entry_function: Mapped[str] = mapped_column(String(120), nullable=False)
     parameters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    config_bindings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    credential_bindings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    contract_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(20), default="SINGLE", index=True, nullable=False)
     shard_strategy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     required_node_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
@@ -400,6 +466,29 @@ class CrawlerTaskServerTarget(Base, TimestampMixin):
     weight: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
+
+
+
+class CrawlerCredentialLease(Base, TimestampMixin):
+    __tablename__ = "crawler_credential_lease"
+    lease_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    company_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    platform_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    credential_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_account_credential.credential_id", ondelete="SET NULL"), index=True)
+    credential_key: Mapped[str] = mapped_column(String(150), index=True, nullable=False)
+    slot: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="SET NULL"), index=True)
+    task_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="SET NULL"), index=True)
+    agent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_agent.agent_id", ondelete="SET NULL"), index=True)
+    agent_code: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    lease_status: Mapped[str] = mapped_column(String(30), default="ACTIVE", index=True, nullable=False)
+    lease_token_hash: Mapped[str] = mapped_column(String(64), default="", index=True, nullable=False)
+    lease_until: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+    release_reason: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
 class CrawlerTaskRun(Base, TimestampMixin):
     __tablename__ = "crawler_task_run"
@@ -464,6 +553,104 @@ class CrawlerTaskRun(Base, TimestampMixin):
     retryable: Mapped[bool | None] = mapped_column(Boolean)
     diagnosis_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class CrawlerOfflineRunSnapshot(Base, TimestampMixin):
+    __tablename__ = "crawler_offline_run_snapshot"
+    snapshot_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    agent_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_agent.agent_id", ondelete="CASCADE"), index=True, nullable=False)
+    server_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_server.server_id", ondelete="CASCADE"), index=True, nullable=False)
+    snapshot_version: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    snapshot_status: Mapped[str] = mapped_column(String(30), default="ACTIVE", index=True, nullable=False)
+
+
+class CrawlerAccountCredential(Base, TimestampMixin):
+    __tablename__ = "crawler_account_credential"
+    __table_args__ = (UniqueConstraint("company_id", "platform_code", "credential_key", name="uk_acct_cred_company_platform_key"),)
+    credential_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    company_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    platform_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    credential_key: Mapped[str] = mapped_column(String(150), index=True, nullable=False)
+    credential_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(30), default="UNKNOWN", index=True, nullable=False)
+    login_status: Mapped[str] = mapped_column(String(30), default="NO_AUTH", index=True, nullable=False)
+    usage_status: Mapped[str] = mapped_column(String(30), default="AVAILABLE", index=True, nullable=False)
+    last_status_code: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    last_status_source: Mapped[str] = mapped_column(String(40), default="", index=True, nullable=False)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status_fresh_until: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    last_verified_agent_code: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    last_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="SET NULL"), index=True)
+    last_task_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="SET NULL"), index=True)
+    last_error_summary: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    status_metadata: Mapped[dict[str, Any]] = mapped_column("status_metadata", JSON, default=dict, nullable=False)
+
+
+class CrawlerAccountStatusEvent(Base):
+    __tablename__ = "crawler_account_status_event"
+    __table_args__ = (UniqueConstraint("event_uid", name="uk_acct_status_event_uid"),)
+    status_event_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    event_uid: Mapped[str] = mapped_column(String(80), nullable=False)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    company_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    platform_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    credential_key: Mapped[str] = mapped_column(String(150), index=True, nullable=False)
+    credential_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_account_credential.credential_id", ondelete="SET NULL"), index=True)
+    run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="SET NULL"), index=True)
+    task_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="SET NULL"), index=True)
+    agent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_agent.agent_id", ondelete="SET NULL"), index=True)
+    agent_code: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    slot: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(80), default="", index=True, nullable=False)
+    subject_key: Mapped[str] = mapped_column(String(200), default="", index=True, nullable=False)
+    subject_name: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    affects_credential: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), default="STATUS", index=True, nullable=False)
+    status_code: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    severity: Mapped[str] = mapped_column(String(10), default="INFO", index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), default="TASK_RUN", index=True, nullable=False)
+    message_sanitized: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    payload_sanitized: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class CrawlerCredentialSubjectBinding(Base, TimestampMixin):
+    __tablename__ = "crawler_credential_subject_binding"
+    __table_args__ = (UniqueConstraint("company_id", "platform_code", "subject_type", "subject_key", name="uk_cred_subject_binding"),)
+    binding_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    company_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    platform_code: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    subject_key: Mapped[str] = mapped_column(String(200), index=True, nullable=False)
+    subject_name: Mapped[str] = mapped_column(String(300), default="", nullable=False)
+    credential_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_account_credential.credential_id", ondelete="SET NULL"), index=True)
+    credential_key: Mapped[str] = mapped_column(String(150), index=True, nullable=False)
+    binding_status: Mapped[str] = mapped_column(String(30), default="ACTIVE", index=True, nullable=False)
+    binding_policy: Mapped[str] = mapped_column(String(50), default="BIND_ON_SUCCESS", nullable=False)
+    rebinding_policy: Mapped[str] = mapped_column(String(50), default="MANUAL_ONLY", nullable=False)
+    source: Mapped[str] = mapped_column(String(40), default="TASK_RUN", index=True, nullable=False)
+    first_success_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="SET NULL"), index=True)
+    first_success_task_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="SET NULL"), index=True)
+    first_success_agent_code: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    first_success_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    last_success_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="SET NULL"), index=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error_code: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    last_error_summary: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    locked_by_run_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="SET NULL"), index=True)
+    lock_expires_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class CrawlerRunEvent(Base):
@@ -552,6 +739,14 @@ class SysAlertDelivery(Base, TimestampMixin):
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+Index("idx_acct_cred_lookup", CrawlerAccountCredential.company_id, CrawlerAccountCredential.platform_code, CrawlerAccountCredential.credential_key)
+Index("idx_acct_cred_status", CrawlerAccountCredential.company_id, CrawlerAccountCredential.enabled, CrawlerAccountCredential.health_status, CrawlerAccountCredential.login_status)
+Index("idx_acct_evt_lookup", CrawlerAccountStatusEvent.company_id, CrawlerAccountStatusEvent.platform_code, CrawlerAccountStatusEvent.credential_key, CrawlerAccountStatusEvent.created_at)
+Index("idx_acct_evt_subject", CrawlerAccountStatusEvent.company_id, CrawlerAccountStatusEvent.platform_code, CrawlerAccountStatusEvent.subject_type, CrawlerAccountStatusEvent.subject_key)
+Index("idx_cred_subject_lookup", CrawlerCredentialSubjectBinding.company_id, CrawlerCredentialSubjectBinding.platform_code, CrawlerCredentialSubjectBinding.subject_type, CrawlerCredentialSubjectBinding.subject_key)
+Index("idx_cred_subject_credential", CrawlerCredentialSubjectBinding.company_id, CrawlerCredentialSubjectBinding.platform_code, CrawlerCredentialSubjectBinding.credential_key)
+Index("idx_cred_lease_lookup", CrawlerCredentialLease.company_id, CrawlerCredentialLease.platform_code, CrawlerCredentialLease.credential_key, CrawlerCredentialLease.lease_status)
+Index("idx_cred_lease_run", CrawlerCredentialLease.run_id, CrawlerCredentialLease.lease_status)
 Index("idx_server_company_manage", CrawlerServer.company_id, CrawlerServer.manage_status)
 Index("idx_project_company_status", CrawlerProject.company_id, CrawlerProject.status, CrawlerProject.online_status)
 Index("idx_project_server_route", CrawlerProjectServer.project_id, CrawlerProjectServer.scheduling_status, CrawlerProjectServer.image_readiness_status)

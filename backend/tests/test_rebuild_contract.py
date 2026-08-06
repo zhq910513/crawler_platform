@@ -732,3 +732,254 @@ def test_task_delete_physical_or_archive_and_panel_hides_archived() -> None:
 
     archived_panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId'], 'taskStatus': 'ARCHIVED'}).json()['data']
     assert task_with_run['taskId'] in {item['taskId'] for item in archived_panel['items']}
+
+
+def test_cicd_release_registration_without_server_and_multi_agent_pool() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'hc_cicd_multi', 'companyName': 'H公司多节点CI'}).json()['data']
+    server_a = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-a', 'serverName': 'CI A服务器'}).json()['data']
+    server_b = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-b', 'serverName': 'CI B服务器'}).json()['data']
+    agent_a = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-a', 'serverName': 'CI A服务器', 'agentCode': 'agent-cicd-a', 'agentName': 'CI A Agent'}).json()['data']
+    agent_b = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-b', 'serverName': 'CI B服务器', 'agentCode': 'agent-cicd-b', 'agentName': 'CI B Agent'}).json()['data']
+    token = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']['discoveryToken']
+    manifest = {
+        'manifestVersion': '1',
+        'projectKey': 'crawler_platform_spiders_cicd_multi',
+        'projectName': '通用爬虫项目基建CI多节点',
+        'projectCode': 'crawler_spiders_cicd_multi',
+        'repositoryUrl': 'git@example/crawler-platform-spiders',
+        'imageRepository': 'registry.example.com/crawler_platform_spiders',
+        'imageDigest': 'sha256:' + ('2' * 64),
+        'releaseVersion': '1.0.6',
+        'releaseChannel': 'stable',
+        'taskDefinitions': [{'definitionKey': 'oilchem_login_check', 'taskName': 'Oilchem登录校验', 'entryModule': 'spiders.oilchem.login', 'entryFunction': 'run'}],
+    }
+    discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + token}, json={'companyId': company['companyId'], 'manifest': manifest}).json()['data']
+    assert discovered['latestImageDigest'] == manifest['imageDigest']
+    project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId'], 'dispatchMode': 'LOAD_BALANCE'}).json()['data']
+    assert client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data'] == []
+
+    analysis = client.post(f"/api/v1/projects/{project['projectId']}/server-pool-analyses", headers=headers, json={'servers': [
+        {'serverId': server_a['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 10, 'weight': 100, 'maxConcurrency': 2},
+        {'serverId': server_b['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 20, 'weight': 100, 'maxConcurrency': 2},
+    ]}).json()['data']
+    assert analysis['canSave'] is True
+    assert all(item['willCreateDeployment'] is True for item in analysis['details'])
+
+    pool = client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json={'servers': [
+        {'serverId': server_a['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 10, 'weight': 100, 'maxConcurrency': 2},
+        {'serverId': server_b['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 20, 'weight': 100, 'maxConcurrency': 2},
+    ]}).json()['data']
+    assert {item['serverId'] for item in pool} == {server_a['serverId'], server_b['serverId']}
+    assert {item['latestImageDigest'] for item in pool} == {manifest['imageDigest']}
+    assert {item['imageReadinessStatus'] for item in pool} == {'OUTDATED'}
+
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'oilchem_login_check_cicd', 'taskName': 'Oilchem登录校验CI', 'status': 'ENABLED'}).json()['data']
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId'], 'parameters': {'account': {'username': 'demo', 'cookieString': '_member_user_tonken_=dummy'}}}).json()['data']
+    assert run['imageDigest'] == manifest['imageDigest']
+
+    for agent in (agent_a, agent_b):
+        client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'inst-' + agent['agent']['agentCode'], 'dockerStatus': 'OK', 'availableSlots': 2})
+    claim_a = client.post('/api/v1/agent-run-claims', headers={'Authorization': 'Agent ' + agent_a['agentToken']}).json()['data']
+    claim_b = client.post('/api/v1/agent-run-claims', headers={'Authorization': 'Agent ' + agent_b['agentToken']}).json()['data']
+    claim = claim_a or claim_b
+    assert claim['runId'] == run['runId']
+    assert claim['companyId'] == company['companyId']
+    assert claim['releaseId'] == run['releaseId']
+    assert claim['imageRepository'] == manifest['imageRepository']
+    assert claim['imageDigest'] == manifest['imageDigest']
+
+
+def test_cicd_release_registration_with_server_codes_marks_existing_pool_outdated() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, _, discovery = create_flow(client, headers, 'cicdout', ['srv-cicdout-a'])
+    pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert pool[0]['latestImageDigest'] == discovery['manifest']['imageDigest']
+    manifest = {**discovery['manifest'], 'releaseVersion': '1.0.6', 'imageDigest': 'sha256:' + ('3' * 64)}
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCodes': ['srv-cicdout-a'], 'manifest': manifest})
+    updated_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert updated_pool[0]['latestImageDigest'] == manifest['imageDigest']
+    assert updated_pool[0]['imageReadinessStatus'] == 'OUTDATED'
+    releases = client.get('/api/v1/releases', headers=headers, params={'projectId': project['projectId']}).json()['data']
+    assert releases[0]['imageDigest'] == manifest['imageDigest']
+
+
+def test_agent_heartbeat_advertises_image_updates_and_pull_result_updates_readiness() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'imgupd', ['srv-imgupd-a'])
+    agent_headers = agents[0]['headers']
+    pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert pool[0]['imageReadinessStatus'] == 'OUTDATED'
+
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-imgupd-a', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []}}).json()['data']
+    pending = [item for item in heartbeat['pendingImagePulls'] if item['projectId'] == project['projectId']]
+    assert len(pending) == 1
+    assert pending[0]['safeToPrewarm'] is True
+    assert pending[0]['action'] == 'PREWARM_NOW'
+    assert pending[0]['imageDigest'] == discovery['manifest']['imageDigest']
+
+    failed = client.post('/api/v1/agent-image-pull-results', headers=agent_headers, json={'projectId': project['projectId'], 'releaseId': pending[0]['releaseId'], 'imageRepository': pending[0]['imageRepository'], 'imageDigest': pending[0]['imageDigest'], 'pullStatus': 'FAILED', 'message': 'registry timeout'}).json()['data']
+    assert failed['imageReadinessStatus'] == 'FAILED'
+    failed_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert failed_pool[0]['imageReadinessStatus'] == 'FAILED'
+    assert 'registry timeout' in failed_pool[0]['disabledReason']
+
+    ready = client.post('/api/v1/agent-image-pull-results', headers=agent_headers, json={'projectId': project['projectId'], 'releaseId': pending[0]['releaseId'], 'imageRepository': pending[0]['imageRepository'], 'imageDigest': pending[0]['imageDigest'], 'pullStatus': 'READY', 'message': 'ok'}).json()['data']
+    assert ready['imageReadinessStatus'] == 'READY'
+    ready_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert ready_pool[0]['imageReadinessStatus'] == 'READY'
+
+    heartbeat_after = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-imgupd-a', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []}}).json()['data']
+    assert not [item for item in heartbeat_after['pendingImagePulls'] if item['projectId'] == project['projectId']]
+
+
+def test_new_release_does_not_interrupt_running_run_and_waits_idle_prewarm() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'nointerrupt', ['srv-nointerrupt-a'])
+    agent_headers = agents[0]['headers']
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'task_nointerrupt', 'taskName': '不中断任务', 'status': 'ENABLED'}).json()['data']
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId'], 'parameters': {}}).json()['data']
+
+    client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-nointerrupt-a', 'dockerStatus': 'OK', 'availableSlots': 1, 'runningContainers': 0, 'currentRuns': {'runIds': []}})
+    claim = client.post('/api/v1/agent-run-claims', headers=agent_headers, json={'agentInstanceId': 'inst-nointerrupt-a'}).json()['data']
+    assert claim['runId'] == run['runId']
+    client.post('/api/v1/agent-run-heartbeats', headers=agent_headers, json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'message': 'starting', 'agentInstanceId': 'inst-nointerrupt-a'})
+    client.post('/api/v1/agent-run-heartbeats', headers=agent_headers, json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'message': 'running', 'agentInstanceId': 'inst-nointerrupt-a'})
+
+    manifest = {**discovery['manifest'], 'releaseVersion': '1.0.19', 'imageDigest': 'sha256:' + ('4' * 64)}
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCodes': ['srv-nointerrupt-a'], 'manifest': manifest})
+    pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert pool[0]['latestImageDigest'] == manifest['imageDigest']
+    assert pool[0]['imageReadinessStatus'] == 'OUTDATED'
+
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-nointerrupt-a', 'dockerStatus': 'OK', 'availableSlots': 0, 'runningContainers': 1, 'currentRuns': {'runIds': [run['runId']]}}).json()['data']
+    pending = [item for item in heartbeat['pendingImagePulls'] if item['projectId'] == project['projectId']]
+    assert len(pending) == 1
+    assert pending[0]['safeToPrewarm'] is False
+    assert pending[0]['action'] == 'PREWARM_WHEN_IDLE'
+    assert pending[0]['imageDigest'] == manifest['imageDigest']
+
+    from app.db import SessionLocal
+    from app.models import CrawlerTaskRun
+    with SessionLocal() as db:
+        running = db.get(CrawlerTaskRun, run['runId'])
+        assert running.run_status == 'RUNNING'
+        assert running.image_digest == discovery['manifest']['imageDigest']
+
+
+def test_cicd_release_version_is_immutable_and_semver_only() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, _, discovery = create_flow(client, headers, 'immutable')
+
+    conflict = {**discovery['manifest'], 'imageDigest': 'sha256:' + ('9' * 64)}
+    response = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': conflict})
+    assert response.status_code == 409
+    body = response.json()
+    assert body['code'] == 40046
+    assert '不可变' in body['message']
+
+    floating = {**discovery['manifest'], 'releaseVersion': 'main', 'imageDigest': 'sha256:' + ('8' * 64)}
+    bad = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': floating})
+    assert bad.status_code == 400
+    assert bad.json()['code'] == 40045
+
+
+def test_agent_restart_keeps_detected_running_container_alive() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'restartkeep', ['srv-restartkeep-a'])
+    agent_headers = agents[0]['headers']
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'task_restart_keep', 'taskName': 'Agent重启保持任务', 'status': 'ENABLED'}).json()['data']
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']}).json()['data']
+
+    client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'agent-old', 'dockerStatus': 'OK', 'availableSlots': 1, 'runningContainers': 0, 'currentRuns': {'runIds': []}})
+    claim = client.post('/api/v1/agent-run-claims', headers=agent_headers, json={'agentInstanceId': 'agent-old'}).json()['data']
+    client.post('/api/v1/agent-run-heartbeats', headers=agent_headers, json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'message': 'running', 'agentInstanceId': 'agent-old'})
+    client.post('/api/v1/agent-run-heartbeats', headers=agent_headers, json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'message': 'running', 'agentInstanceId': 'agent-old'})
+
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={
+        'agentInstanceId': 'agent-new',
+        'dockerStatus': 'OK',
+        'availableSlots': 0,
+        'runningContainers': 1,
+        'currentRuns': {'runIds': [run['runId']], 'dockerRunIds': [run['runId']], 'orphanRunIds': [run['runId']]},
+    }).json()['data']
+    assert heartbeat['replacedPreviousInstance'] is True
+    from app.db import SessionLocal
+    from app.models import CrawlerTaskRun
+    with SessionLocal() as db:
+        row = db.get(CrawlerTaskRun, run['runId'])
+        assert row.run_status == 'RUNNING'
+        assert row.finished_at is None
+        assert row.lease_expires_at is not None
+
+
+def test_agent_join_token_bootstrap_and_install_script() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'joinco', 'companyName': '接入公司'}).json()['data']
+    token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-srv-01',
+        'serverName': '接入服务器01',
+        'agentCode': 'join-agent-01',
+        'agentName': '接入Agent01',
+        'maxContainerSlots': 3,
+        'workDir': '/tmp/crawler-agent-join',
+        'labels': {'region': 'cn', 'browser': 'false'},
+        'capabilities': {'docker': True, 'browser': False},
+    }).json()['data']
+    assert token_body['joinToken']
+    assert '--join-token' in token_body['installCommand']
+    script = client.get('/api/v1/agent-installers/linux.sh')
+    assert script.status_code == 200
+    assert '平台连通' in script.text and 'Docker' in script.text
+    env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host', 'installReport': {'pass': 5}})
+    assert env_resp.status_code == 200
+    assert 'AGENT_AGENT_TOKEN=' in env_resp.text
+    assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    server = next(row for row in servers if row['serverCode'] == 'join-srv-01')
+    assert server['labels']['region'] == 'cn'
+    assert server['capabilities']['docker'] is True
+    second = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host'})
+    assert second.status_code == 401
+
+
+def test_project_release_deployment_to_multiple_agents() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'deploymulti', server_codes=['srv-dep-a', 'srv-dep-b'])
+    deployment = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={
+        'serverIds': [],
+    })
+    assert deployment.status_code == 400
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    server_ids = [row['serverId'] for row in servers if row['serverCode'] in {'srv-dep-a', 'srv-dep-b'}]
+    deployment = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={'serverIds': server_ids, 'reason': '部署到两台服务器'}).json()['data']
+    assert deployment['releaseVersion'] == '1.0.1'
+    assert len(deployment['targets']) == 2
+    pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert {item['serverId'] for item in pool} >= set(server_ids)
+    for item in pool:
+        if item['serverId'] in server_ids:
+            assert item['latestImageDigest'] == discovery['manifest']['imageDigest']
+            assert item['imageReadinessStatus'] in {'OUTDATED', 'READY', 'WARMING'}
+    history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data']
+    assert history and history[0]['deploymentStatus'] == 'READY_TO_PREWARM'

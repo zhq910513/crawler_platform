@@ -7,7 +7,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import SysUser
 from app.responses import ok
-from app.schemas import AgentRegistration, ServerCreate, ServerUpdate
+from app.schemas import AgentJoinTokenCreate, AgentRegistration, ServerCreate, ServerUpdate
 from app.services.server_service import ServerService
 
 router = APIRouter(prefix="/servers", tags=["服务器"])
@@ -26,3 +26,13 @@ def create_server(payload: ServerCreate, user: SysUser = Depends(get_current_use
 @router.patch("/{server_id}")
 def update_server(server_id: int, payload: ServerUpdate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ServerService(db).update_server(user, server_id, payload))
+
+
+@router.post("/agent-join-tokens")
+def create_agent_join_token(payload: AgentJoinTokenCreate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).create_agent_join_token(user, payload))
+
+
+@router.get("/agent-join-tokens")
+def list_agent_join_tokens(company_id: int | None = Query(default=None), user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).list_agent_join_tokens(user, company_id))

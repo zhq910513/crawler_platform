@@ -12,6 +12,7 @@ const routes: RouteRecordRaw[] = [
     { path: 'projects', component: () => import('./views/ProjectsPage.vue'), meta: { title: '项目管理' } },
     { path: 'tasks', component: () => import('./views/TasksPage.vue'), meta: { title: '任务调度' } },
     { path: 'runs', component: () => import('./views/RunsPage.vue'), meta: { title: '执行记录' } },
+    { path: 'accounts', component: () => import('./views/AccountCredentialsPage.vue'), meta: { title: '账号状态' } },
     { path: 'operations', component: () => import('./views/OperationsPage.vue'), meta: { title: '操作日志', adminOnly: true } },
     { path: 'settings', component: () => import('./views/SettingsPage.vue'), meta: { title: '系统设置', adminOnly: true } },
   ] },

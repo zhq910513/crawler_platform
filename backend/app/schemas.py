@@ -74,6 +74,10 @@ class ServerCreate(ApiModel):
     server_ip: str = Field(default="", max_length=128)
     environment: str = Field(default="production", max_length=30)
     max_container_slots: int = Field(default=4, ge=1, le=1000)
+    labels: dict[str, Any] = Field(default_factory=dict)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    registry_credential_ref: str = Field(default="", max_length=200)
+    work_dir: str = Field(default="/data/crawler-agent", max_length=500)
     description: str = Field(default="", max_length=500)
 
 
@@ -82,6 +86,10 @@ class ServerUpdate(ApiModel):
     server_ip: str | None = Field(default=None, max_length=128)
     manage_status: Literal["ENABLED", "MAINTENANCE", "DISABLED"] | None = None
     max_container_slots: int | None = Field(default=None, ge=1, le=1000)
+    labels: dict[str, Any] | None = None
+    capabilities: dict[str, Any] | None = None
+    registry_credential_ref: str | None = Field(default=None, max_length=200)
+    work_dir: str | None = Field(default=None, max_length=500)
     description: str | None = Field(default=None, max_length=500)
 
 
@@ -96,6 +104,11 @@ class CompanyDiscoveryManifestTask(ApiModel):
     idempotency_policy: Literal["IDEMPOTENT", "CHECKPOINTABLE", "MANUAL_CONFIRM", "NON_IDEMPOTENT"] = "IDEMPOTENT"
     resource_requirements: dict[str, Any] = Field(default_factory=dict)
     required_capabilities: dict[str, Any] = Field(default_factory=dict)
+    platform_code: str = Field(default="", max_length=100)
+    required_configs: list[dict[str, Any]] = Field(default_factory=list)
+    required_credentials: list[dict[str, Any]] = Field(default_factory=list)
+    output_tables: list[dict[str, Any]] = Field(default_factory=list)
+    contract_version: str = Field(default="1", max_length=30)
     runtime_mode: Literal["SHARED_ENV_ISOLATED", "WORKER_POOL", "DEDICATED_CONTAINER"] = "SHARED_ENV_ISOLATED"
     task_group: str = Field(default="default", max_length=100)
     task_max_concurrency: int = Field(default=1, ge=1, le=1000)
@@ -106,6 +119,8 @@ class CompanyDiscoveryManifestTask(ApiModel):
     log_limit_mb: int = Field(default=50, ge=1, le=10240)
     resource_locks: list[str] = Field(default_factory=list)
     secret_refs: list[Any] = Field(default_factory=list)
+    allow_offline_run: bool = False
+    offline_policy: dict[str, Any] = Field(default_factory=dict)
     source_file: str = Field(default="sch.py", max_length=300)
     source_fingerprint: str = Field(default="", max_length=100)
 
@@ -131,8 +146,23 @@ class ProjectManifest(ApiModel):
 
 class ProjectDiscoveryCreate(ApiModel):
     company_id: int
-    server_code: str = Field(min_length=1, max_length=100)
+    server_code: str | None = Field(default=None, min_length=1, max_length=100)
+    server_codes: list[str] = Field(default_factory=list)
     manifest: ProjectManifest
+
+    @model_validator(mode="after")
+    def normalize_server_codes(self) -> "ProjectDiscoveryCreate":
+        seen: set[str] = set()
+        items: list[str] = []
+        for value in [self.server_code or "", *(self.server_codes or [])]:
+            for raw in str(value or "").split(","):
+                code = raw.strip()
+                if code and code not in seen:
+                    items.append(code)
+                    seen.add(code)
+        self.server_codes = items
+        self.server_code = items[0] if items else None
+        return self
 
 
 class ProjectImport(ApiModel):
@@ -213,6 +243,8 @@ class TaskFromDefinitionCreate(ApiModel):
     task_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=120)
     task_name: str = Field(min_length=1, max_length=200)
     parameters: dict[str, Any] = Field(default_factory=dict)
+    config_bindings: dict[str, Any] = Field(default_factory=dict)
+    credential_bindings: dict[str, Any] = Field(default_factory=dict)
     status: Literal["DRAFT", "ENABLED", "PAUSED", "DISABLED"] = "DRAFT"
     image_policy: Literal["RELEASE_CHANNEL", "PINNED"] = "RELEASE_CHANNEL"
     release_channel: str = Field(default="stable", min_length=1, max_length=50)
@@ -253,6 +285,8 @@ class TaskUpdate(ApiModel):
     owner_user_id: int | None = None
     task_name: str | None = Field(default=None, min_length=1, max_length=200)
     parameters: dict[str, Any] | None = None
+    config_bindings: dict[str, Any] | None = None
+    credential_bindings: dict[str, Any] | None = None
     status: Literal["DRAFT", "ENABLED", "PAUSED", "DISABLED", "ARCHIVED"] | None = None
     image_policy: Literal["RELEASE_CHANNEL", "PINNED"] | None = None
     release_channel: str | None = Field(default=None, min_length=1, max_length=50)
@@ -305,6 +339,35 @@ class AgentRegistration(ApiModel):
     max_container_slots: int = Field(default=4, ge=1, le=1000)
 
 
+class AgentJoinTokenCreate(ApiModel):
+    company_id: int
+    server_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=100)
+    server_name: str = Field(min_length=1, max_length=100)
+    agent_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=100)
+    agent_name: str = Field(default="", max_length=100)
+    max_container_slots: int = Field(default=2, ge=1, le=1000)
+    work_dir: str = Field(default="/data/crawler-agent", max_length=500)
+    labels: dict[str, Any] = Field(default_factory=dict)
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    registry_credential_ref: str = Field(default="", max_length=200)
+    install_mode: Literal["AUTO", "ROOT", "USER"] = "AUTO"
+    expires_in_hours: int = Field(default=24, ge=1, le=720)
+
+
+class AgentBootstrapEnvRequest(ApiModel):
+    join_token: str = Field(min_length=10, max_length=500)
+    hostname: str = Field(default="", max_length=200)
+    install_report: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectReleaseDeploy(ApiModel):
+    release_id: int | None = None
+    server_ids: list[int] = Field(default_factory=list)
+    prewarm_when_idle: bool = True
+    max_parallel_pulls: int = Field(default=2, ge=1, le=100)
+    reason: str = Field(default="", max_length=500)
+
+
 class AgentHeartbeat(ApiModel):
     agent_instance_id: str = Field(min_length=1, max_length=100)
     agent_version: str = Field(default="", max_length=50)
@@ -326,6 +389,15 @@ class AgentHeartbeat(ApiModel):
     capabilities: dict[str, Any] = Field(default_factory=dict)
     current_runs: dict[str, Any] = Field(default_factory=dict)
     last_error: str = Field(default="", max_length=4000)
+
+
+class AgentImagePullResult(ApiModel):
+    project_id: int
+    release_id: int | None = None
+    image_repository: str = Field(default="", max_length=500)
+    image_digest: str = Field(min_length=1, max_length=100)
+    pull_status: Literal["READY", "FAILED"]
+    message: str = Field(default="", max_length=4000)
 
 
 class AgentRunClaim(ApiModel):
@@ -420,3 +492,98 @@ class UserSessionRevoke(ApiModel):
 class NotificationChannelTest(ApiModel):
     title: str = Field(default="爬虫管理平台测试通知", max_length=200)
     content: str = Field(default="这是一条 P0 告警渠道测试消息。", max_length=2000)
+
+
+class AccountStatusEventCreate(ApiModel):
+    company_id: int | None = None
+    company_code: str | None = Field(default=None, min_length=1, max_length=100)
+    platform_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=1, max_length=100)
+    credential_key: str = Field(pattern=r"^[A-Za-z0-9_.:@/-]+$", min_length=1, max_length=150)
+    credential_name: str = Field(default="", max_length=200)
+    run_id: int | None = None
+    task_id: int | None = None
+    agent_code: str = Field(default="", max_length=100)
+    slot: str = Field(default="", max_length=80)
+    subject_type: str = Field(default="", max_length=80)
+    subject_key: str = Field(default="", max_length=200)
+    subject_name: str = Field(default="", max_length=300)
+    affects_credential: bool = True
+    event_type: Literal["STATUS", "LEASE", "MANUAL_TEST", "AGENT_PROBE", "EXPIRES_AT", "SUBJECT_BINDING"] = "STATUS"
+    status_code: str = Field(pattern=r"^[A-Z0-9_.-]+$", min_length=1, max_length=80)
+    severity: Literal["INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    source: Literal["TASK_RUN", "MANUAL_TEST", "AGENT_PROBE", "EXPIRES_AT", "SDK_SPOOL", "ADMIN"] = "TASK_RUN"
+    message: str = Field(default="", max_length=1000)
+    observed_at: datetime | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    event_uid: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode="after")
+    def validate_company_locator(self) -> "AccountStatusEventCreate":
+        if not self.company_id and not self.company_code:
+            raise ValueError("companyId 或 companyCode 至少提供一个")
+        return self
+
+
+class AccountCredentialEnableUpdate(ApiModel):
+    enabled: bool
+    reason: str = Field(default="", max_length=500)
+
+
+
+
+class CredentialLeaseAcquire(ApiModel):
+    company_id: int | None = None
+    company_code: str | None = Field(default=None, min_length=1, max_length=100)
+    platform_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=1, max_length=100)
+    credential_key: str = Field(pattern=r"^[A-Za-z0-9_.:@/-]+$", min_length=1, max_length=150)
+    slot: str = Field(default="", max_length=80)
+    run_id: int | None = None
+    task_id: int | None = None
+    agent_code: str = Field(default="", max_length=100)
+    lease_seconds: int = Field(default=1800, ge=60, le=86400)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_company_locator(self) -> "CredentialLeaseAcquire":
+        if not self.company_id and not self.company_code:
+            raise ValueError("companyId 或 companyCode 至少提供一个")
+        return self
+
+
+class CredentialLeaseRelease(ApiModel):
+    lease_id: int | None = None
+    lease_token: str | None = Field(default=None, max_length=200)
+    reason: str = Field(default="completed", max_length=200)
+
+    @model_validator(mode="after")
+    def validate_locator(self) -> "CredentialLeaseRelease":
+        if not self.lease_id and not self.lease_token:
+            raise ValueError("leaseId 或 leaseToken 至少提供一个")
+        return self
+
+
+class CredentialSubjectBindingCreate(ApiModel):
+    company_id: int | None = None
+    company_code: str | None = Field(default=None, min_length=1, max_length=100)
+    platform_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=1, max_length=100)
+    subject_type: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=1, max_length=80)
+    subject_key: str = Field(min_length=1, max_length=200)
+    subject_name: str = Field(default="", max_length=300)
+    credential_key: str = Field(pattern=r"^[A-Za-z0-9_.:@/-]+$", min_length=1, max_length=150)
+    binding_policy: Literal["BIND_ON_SUCCESS", "MANUAL"] = "BIND_ON_SUCCESS"
+    rebinding_policy: Literal["STRICT", "MANUAL_ONLY", "AUTO_ON_PERMANENT_INVALID"] = "MANUAL_ONLY"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_company_locator(self) -> "CredentialSubjectBindingCreate":
+        if not self.company_id and not self.company_code:
+            raise ValueError("companyId 或 companyCode 至少提供一个")
+        return self
+
+
+class CredentialSubjectBindingUpdate(ApiModel):
+    credential_key: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.:@/-]+$", min_length=1, max_length=150)
+    binding_status: Literal["ACTIVE", "SUSPENDED", "REBOUND", "RELEASED"] | None = None
+    rebinding_policy: Literal["STRICT", "MANUAL_ONLY", "AUTO_ON_PERMANENT_INVALID"] | None = None
+    reason: str = Field(default="", max_length=500)
+    metadata: dict[str, Any] | None = None

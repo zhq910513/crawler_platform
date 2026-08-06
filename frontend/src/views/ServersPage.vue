@@ -1,7 +1,7 @@
 <template>
   <div class="page-card">
     <div class="toolbar">
-      <el-button v-if="sessionState.user?.isSuperAdmin" type="primary" @click="dialogVisible = true">新增服务器</el-button>
+      <el-button v-if="sessionState.user?.isSuperAdmin" type="primary" @click="onboardingVisible = true">Agent 接入向导</el-button><el-button v-if="sessionState.user?.isSuperAdmin" @click="dialogVisible = true">手工新增服务器</el-button>
       <el-button @click="load">刷新</el-button>
     </div>
     <el-table :data="rows" border>
@@ -40,6 +40,27 @@
       <el-table-column label="最近错误" min-width="220"><template #default="s">{{ s.row.metrics?.lastError || '-' }}</template></el-table-column>
     </el-table>
 
+
+    <el-dialog v-model="onboardingVisible" title="Agent 接入向导" width="760px">
+      <el-alert title="新服务器只需要安装一次 Agent。命令会先检查平台端口、Docker、权限、磁盘和本机端口，再换取 Agent 配置并启动容器。" type="info" show-icon :closable="false" />
+      <el-form label-position="top" style="margin-top: 12px">
+        <el-form-item label="公司"><el-select v-model="joinForm.companyId"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item>
+        <el-form-item label="服务器编码"><el-input v-model="joinForm.serverCode" placeholder="如 ulike-bj-agent-01" /></el-form-item>
+        <el-form-item label="服务器名称"><el-input v-model="joinForm.serverName" /></el-form-item>
+        <el-form-item label="Agent 编码"><el-input v-model="joinForm.agentCode" /></el-form-item>
+        <el-form-item label="最大并发槽位"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" /></el-form-item>
+        <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
+        <el-form-item label="标签 JSON"><el-input v-model="joinLabelsText" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item label="能力 JSON"><el-input v-model="joinCapabilitiesText" type="textarea" :rows="2" /></el-form-item>
+      </el-form>
+      <div v-if="joinResult" class="install-box">
+        <div class="install-title">安装命令，只展示一次，请复制给公司运维执行：</div>
+        <pre>{{ joinResult.installCommand }}</pre>
+        <el-alert :title="joinResult.note" type="warning" show-icon :closable="false" />
+      </div>
+      <template #footer><el-button @click="onboardingVisible = false">关闭</el-button><el-button type="primary" @click="createJoin">生成接入命令</el-button></template>
+    </el-dialog>
+
     <el-dialog v-model="dialogVisible" title="新增服务器" width="520px">
       <el-form label-position="top">
         <el-form-item label="公司"><el-select v-model="form.companyId"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item>
@@ -54,14 +75,20 @@
 </template>
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { createServer, listCompanies, listServers } from '../api/platform'
+import { ElMessage } from 'element-plus'
+import { createAgentJoinToken, createServer, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
-import type { Company, ServerNode } from '../types/api'
+import type { AgentJoinTokenResult, Company, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
 const rows = ref<ServerNode[]>([])
 const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
+const onboardingVisible = ref(false)
+const joinResult = ref<AgentJoinTokenResult | null>(null)
+const joinLabelsText = ref('{"region":"cn","browser":"false"}')
+const joinCapabilitiesText = ref('{"docker":true,"browser":false}')
+const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/data/crawler-agent' })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 
 function percent(value?: number | null) {
@@ -85,8 +112,24 @@ function capacityTag(status: string) {
 async function load() {
   companies.value = await listCompanies()
   if (!form.companyId) form.companyId = sessionState.user?.companyId || companies.value[0]?.companyId || 0
+  if (!joinForm.companyId) joinForm.companyId = form.companyId
   rows.value = await listServers(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
 }
+
+async function createJoin() {
+  let labels: Record<string, unknown>
+  let capabilities: Record<string, unknown>
+  try {
+    labels = JSON.parse(joinLabelsText.value || '{}')
+    capabilities = JSON.parse(joinCapabilitiesText.value || '{}')
+  } catch {
+    ElMessage.error('标签 JSON 或能力 JSON 格式不正确')
+    return
+  }
+  joinResult.value = await createAgentJoinToken({ ...joinForm, agentName: joinForm.agentName || joinForm.serverName, labels, capabilities })
+  ElMessage.success('Agent 接入命令已生成')
+}
+
 async function save() {
   await createServer(form)
   dialogVisible.value = false
@@ -98,4 +141,7 @@ onMounted(load)
 .server-name { font-weight: 600; }
 .metric-line { display: grid; grid-template-columns: 42px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
 .muted { color: #6b7280; font-size: 12px; }
+.install-box { margin-top: 12px; }
+.install-title { font-weight: 600; margin-bottom: 6px; }
+.install-box pre { white-space: pre-wrap; word-break: break-all; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 6px; }
 </style>
