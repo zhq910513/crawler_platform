@@ -36,6 +36,22 @@ def _add_col(table: str, col: sa.Column) -> None:
         op.add_column(table, col)
 
 
+def _dialect() -> str:
+    return op.get_bind().dialect.name
+
+
+def _add_json_col(table: str, name: str, default_json: str) -> None:
+    if not _table_exists(table) or name in _cols(table):
+        return
+    # MySQL does not allow DEFAULT values on JSON/TEXT/BLOB columns. Add the
+    # column as nullable, backfill existing rows, then tighten nullability on
+    # dialects that support ALTER COLUMN.
+    op.add_column(table, sa.Column(name, sa.JSON(), nullable=True))
+    op.execute(sa.text(f"UPDATE {table} SET {name} = :value WHERE {name} IS NULL").bindparams(value=default_json))
+    if _dialect() != "sqlite":
+        op.alter_column(table, name, existing_type=sa.JSON(), nullable=False)
+
+
 def _drop_col(table: str, name: str) -> None:
     if _table_exists(table) and name in _cols(table):
         op.drop_column(table, name)
@@ -53,18 +69,18 @@ def _drop_index(name: str, table: str) -> None:
 
 def upgrade() -> None:
     _add_col("crawler_project_task_definition", sa.Column("platform_code", sa.String(100), nullable=False, server_default=""))
-    _add_col("crawler_project_task_definition", sa.Column("required_configs", sa.JSON(), nullable=False, server_default="[]"))
-    _add_col("crawler_project_task_definition", sa.Column("required_credentials", sa.JSON(), nullable=False, server_default="[]"))
-    _add_col("crawler_project_task_definition", sa.Column("output_tables", sa.JSON(), nullable=False, server_default="[]"))
+    _add_json_col("crawler_project_task_definition", "required_configs", "[]")
+    _add_json_col("crawler_project_task_definition", "required_credentials", "[]")
+    _add_json_col("crawler_project_task_definition", "output_tables", "[]")
     _add_col("crawler_project_task_definition", sa.Column("contract_version", sa.String(30), nullable=False, server_default="1"))
     _add_col("crawler_project_task_definition", sa.Column("contract_status", sa.String(30), nullable=False, server_default="UNKNOWN"))
-    _add_col("crawler_project_task_definition", sa.Column("contract_warnings", sa.JSON(), nullable=False, server_default="[]"))
+    _add_json_col("crawler_project_task_definition", "contract_warnings", "[]")
     _create_index("ix_task_def_platform_code", "crawler_project_task_definition", ["platform_code"])
     _create_index("ix_task_def_contract_status", "crawler_project_task_definition", ["contract_status"])
 
-    _add_col("crawler_task", sa.Column("config_bindings", sa.JSON(), nullable=False, server_default="{}"))
-    _add_col("crawler_task", sa.Column("credential_bindings", sa.JSON(), nullable=False, server_default="{}"))
-    _add_col("crawler_task", sa.Column("contract_snapshot", sa.JSON(), nullable=False, server_default="{}"))
+    _add_json_col("crawler_task", "config_bindings", "{}")
+    _add_json_col("crawler_task", "credential_bindings", "{}")
+    _add_json_col("crawler_task", "contract_snapshot", "{}")
 
     _add_col("crawler_account_status_event", sa.Column("subject_type", sa.String(80), nullable=False, server_default=""))
     _add_col("crawler_account_status_event", sa.Column("subject_key", sa.String(200), nullable=False, server_default=""))
@@ -102,7 +118,7 @@ def upgrade() -> None:
             sa.Column("last_error_summary", sa.String(1000), nullable=False, server_default=""),
             sa.Column("locked_by_run_id", sa.BigInteger(), nullable=True),
             sa.Column("lock_expires_at", sa.DateTime(), nullable=True),
-            sa.Column("metadata_json", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("metadata_json", sa.JSON(), nullable=False),
             sa.Column("created_at", sa.DateTime(), nullable=False),
             sa.Column("updated_at", sa.DateTime(), nullable=False),
             sa.ForeignKeyConstraint(["company_id"], ["crawler_company.company_id"], ondelete="CASCADE"),

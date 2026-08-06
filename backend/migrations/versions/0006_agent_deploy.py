@@ -46,20 +46,37 @@ def _add_col(table: str, col: sa.Column) -> None:
         op.add_column(table, col)
 
 
+def _dialect() -> str:
+    return op.get_bind().dialect.name
+
+
+def _add_json_col(table: str, name: str, default_json: str = "{}") -> None:
+    if not _table_exists(table) or _col_exists(table, name):
+        return
+    # MySQL does not allow DEFAULT values on JSON/TEXT/BLOB columns. Add the
+    # column as nullable, backfill existing rows, then tighten nullability on
+    # dialects that support ALTER COLUMN. This keeps upgrades safe for existing
+    # customer databases and remains idempotent after a failed migration retry.
+    op.add_column(table, sa.Column(name, sa.JSON(), nullable=True))
+    op.execute(sa.text(f"UPDATE {table} SET {name} = :value WHERE {name} IS NULL").bindparams(value=default_json))
+    if _dialect() != "sqlite":
+        op.alter_column(table, name, existing_type=sa.JSON(), nullable=False)
+
+
 def _drop_col(table: str, name: str) -> None:
     if _col_exists(table, name):
         op.drop_column(table, name)
 
 
 def upgrade() -> None:
-    _add_col("crawler_server", sa.Column("labels", sa.JSON(), nullable=False, server_default="{}"))
-    _add_col("crawler_server", sa.Column("capabilities", sa.JSON(), nullable=False, server_default="{}"))
+    _add_json_col("crawler_server", "labels", "{}")
+    _add_json_col("crawler_server", "capabilities", "{}")
     _add_col("crawler_server", sa.Column("registry_credential_ref", sa.String(length=200), nullable=False, server_default=""))
     _add_col("crawler_server", sa.Column("work_dir", sa.String(length=500), nullable=False, server_default="/data/crawler-agent"))
     _add_col("crawler_project_task_definition", sa.Column("allow_offline_run", sa.Boolean(), nullable=False, server_default=sa.text("0")))
-    _add_col("crawler_project_task_definition", sa.Column("offline_policy", sa.JSON(), nullable=False, server_default="{}"))
+    _add_json_col("crawler_project_task_definition", "offline_policy", "{}")
     _add_col("crawler_task", sa.Column("allow_offline_run", sa.Boolean(), nullable=False, server_default=sa.text("0")))
-    _add_col("crawler_task", sa.Column("offline_policy", sa.JSON(), nullable=False, server_default="{}"))
+    _add_json_col("crawler_task", "offline_policy", "{}")
 
     if not _table_exists("crawler_agent_join_token"):
         op.create_table(
@@ -74,14 +91,14 @@ def upgrade() -> None:
             sa.Column("server_name", sa.String(100), nullable=False, server_default=""),
             sa.Column("work_dir", sa.String(500), nullable=False, server_default="/data/crawler-agent"),
             sa.Column("max_container_slots", sa.Integer(), nullable=False, server_default="2"),
-            sa.Column("labels", sa.JSON(), nullable=False, server_default="{}"),
-            sa.Column("capabilities", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("labels", sa.JSON(), nullable=False),
+            sa.Column("capabilities", sa.JSON(), nullable=False),
             sa.Column("registry_credential_ref", sa.String(200), nullable=False, server_default=""),
             sa.Column("install_mode", sa.String(30), nullable=False, server_default="AUTO"),
             sa.Column("status", sa.String(20), nullable=False, server_default="ACTIVE"),
             sa.Column("expires_at", sa.DateTime(), nullable=True),
             sa.Column("used_at", sa.DateTime(), nullable=True),
-            sa.Column("last_preflight_report", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("last_preflight_report", sa.JSON(), nullable=False),
             sa.Column("created_by", sa.BigInteger(), nullable=True),
             sa.Column("created_at", sa.DateTime(), nullable=False),
             sa.Column("updated_at", sa.DateTime(), nullable=False),
@@ -101,7 +118,7 @@ def upgrade() -> None:
             sa.Column("project_id", sa.BigInteger(), nullable=False),
             sa.Column("release_id", sa.BigInteger(), nullable=False),
             sa.Column("deployment_name", sa.String(150), nullable=False, server_default=""),
-            sa.Column("strategy", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("strategy", sa.JSON(), nullable=False),
             sa.Column("deployment_status", sa.String(30), nullable=False, server_default="CREATED"),
             sa.Column("created_by", sa.BigInteger(), nullable=True),
             sa.Column("created_at", sa.DateTime(), nullable=False),
@@ -151,7 +168,7 @@ def upgrade() -> None:
             sa.Column("agent_id", sa.BigInteger(), nullable=False),
             sa.Column("server_id", sa.BigInteger(), nullable=False),
             sa.Column("snapshot_version", sa.String(100), nullable=False, server_default=""),
-            sa.Column("payload", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("payload", sa.JSON(), nullable=False),
             sa.Column("snapshot_status", sa.String(30), nullable=False, server_default="ACTIVE"),
             sa.Column("created_at", sa.DateTime(), nullable=False),
             sa.Column("updated_at", sa.DateTime(), nullable=False),

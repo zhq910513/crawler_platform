@@ -58,7 +58,7 @@ def upgrade() -> None:
             sa.Column("heartbeat_at", sa.DateTime(), nullable=True),
             sa.Column("released_at", sa.DateTime(), nullable=True),
             sa.Column("release_reason", sa.String(200), nullable=False, server_default=""),
-            sa.Column("metadata_json", sa.JSON(), nullable=False, server_default="{}"),
+            sa.Column("metadata_json", sa.JSON(), nullable=False),
             sa.Column("created_at", sa.DateTime(), nullable=False),
             sa.Column("updated_at", sa.DateTime(), nullable=False),
             sa.ForeignKeyConstraint(["company_id"], ["crawler_company.company_id"], ondelete="CASCADE"),

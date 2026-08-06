@@ -8,8 +8,8 @@ os.environ['DATABASE_URL'] = 'sqlite+pysqlite:////tmp/crawler_platform_task_cont
 os.environ['REDIS_URL'] = 'redis://localhost:6379/15'
 os.environ['ADMIN_USERNAME'] = 'admin'
 os.environ['ADMIN_PASSWORD'] = 'Admin@123456'
-os.environ['JWT_SECRET'] = 'pytest-jwt-secret-for-crawler-platform-1-0-19-task'
-os.environ['SECRET_ENCRYPTION_KEY'] = 'pytest-secret-encryption-key-for-crawler-platform-1-0-19-task'
+os.environ['JWT_SECRET'] = 'pytest-jwt-secret-for-crawler-platform-1-0-20-task'
+os.environ['SECRET_ENCRYPTION_KEY'] = 'pytest-secret-encryption-key-for-crawler-platform-1-0-20-task'
 Path('/tmp/crawler_platform_task_contract_pytest.db').unlink(missing_ok=True)
 
 from fastapi.testclient import TestClient
