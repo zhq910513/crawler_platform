@@ -33,7 +33,6 @@
     </el-dialog>
 
     <el-dialog v-model="resetVisible" title="重置密码" width="460px">
-      <el-alert title="重置后目标账号现有会话会立即失效。重置当前登录账号时，不会再次要求当前账号下次登录修改密码。" type="warning" show-icon :closable="false" class="reset-alert" />
       <el-form label-position="top">
         <el-form-item label="目标账号"><el-input :model-value="selectedUser?.userName || ''" disabled /></el-form-item>
         <el-form-item label="新密码"><el-input v-model="resetForm.newPassword" type="password" show-password autocomplete="new-password" /></el-form-item>
@@ -93,6 +92,4 @@ async function revoke(userId: number) {
 }
 onMounted(load)
 </script>
-<style scoped>
-.reset-alert { margin-bottom: 12px; }
-</style>
+

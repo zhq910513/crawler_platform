@@ -5,11 +5,11 @@
         <el-form-item label="任务名称">
           <el-input v-model="query.taskName" clearable placeholder="请输入任务名称" @keyup.enter="search" />
         </el-form-item>
-        <el-form-item label="目标任务路径">
-          <el-input v-model="query.entryKeyword" clearable placeholder="请输入函数路径" @keyup.enter="search" />
+        <el-form-item label="采集入口">
+          <el-input v-model="query.entryKeyword" clearable placeholder="请输入入口关键词" @keyup.enter="search" />
         </el-form-item>
-        <el-form-item label="任务表名">
-          <el-input v-model="query.taskCode" clearable placeholder="请输入任务表名路径" @keyup.enter="search" />
+        <el-form-item label="任务标识">
+          <el-input v-model="query.taskCode" clearable placeholder="请输入任务标识" @keyup.enter="search" />
         </el-form-item>
         <el-form-item label="服务器分组">
           <el-select v-model="query.serverId" clearable filterable placeholder="请选择服务器">
@@ -19,8 +19,8 @@
         <el-form-item label="任务组名">
           <el-input v-model="query.taskGroup" clearable placeholder="请选择任务组名" @keyup.enter="search" />
         </el-form-item>
-        <el-form-item label="任务平台">
-          <el-input v-model="query.taskPlatform" clearable placeholder="请选择任务平台" @keyup.enter="search" />
+        <el-form-item label="所属平台">
+          <el-input v-model="query.taskPlatform" clearable placeholder="请选择所属平台" @keyup.enter="search" />
         </el-form-item>
         <el-form-item label="任务状态">
           <el-select v-model="query.taskStatus" clearable placeholder="请选择任务状态">
@@ -32,7 +32,7 @@
             <el-option v-for="user in filteredOwnerUsers" :key="user.userId" :label="user.nickName || user.userName" :value="user.userId" />
           </el-select>
         </el-form-item>
-        <el-form-item label="目标任务状态">
+        <el-form-item label="最近结果">
           <el-select v-model="query.lastRunStatus" clearable placeholder="请选择状态">
             <el-option v-for="item in runStatusOptions" :key="item" :label="statusText(item)" :value="item" />
           </el-select>
@@ -85,22 +85,21 @@
 
     <el-table v-loading="loading" :data="rows" row-key="taskId" class="ops-table" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="42" fixed="left" />
-      <el-table-column label="任务编号" prop="taskId" width="86" fixed="left" />
+      <el-table-column label="任务号" prop="taskId" width="86" fixed="left" />
       <el-table-column label="服务器" min-width="108" align="center" show-overflow-tooltip>
         <template #default="s">
           <div class="server-cell">{{ s.row.serverIp || s.row.serverName || '-' }}</div>
           <div v-if="s.row.serverIp && s.row.serverName" class="cell-subtitle">{{ s.row.serverName }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="任务平台" min-width="92" align="center" show-overflow-tooltip>
+      <el-table-column label="所属平台" min-width="92" align="center" show-overflow-tooltip>
         <template #default="s">{{ s.row.taskPlatform || s.row.projectName || '-' }}</template>
       </el-table-column>
       <el-table-column label="任务名称" prop="taskName" min-width="130" show-overflow-tooltip />
-      <el-table-column label="上次任务完成时间" min-width="138" align="center">
+      <el-table-column label="最近完成" min-width="138" align="center">
         <template #default="s">{{ formatTime(s.row.lastFinishedAt) }}</template>
       </el-table-column>
-      <el-table-column label="目标任务路径" prop="entryPath" min-width="170" show-overflow-tooltip />
-      <el-table-column label="cron执行表达式" min-width="118" align="center" show-overflow-tooltip>
+      <el-table-column label="执行计划" min-width="118" align="center" show-overflow-tooltip>
         <template #default="s">{{ cronText(s.row) }}</template>
       </el-table-column>
       <el-table-column label="下次执行时间" min-width="138" align="center">
@@ -116,7 +115,7 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="目标状态" width="98" align="center">
+      <el-table-column label="最近结果" width="98" align="center">
         <template #default="s"><el-tag :type="runTagType(s.row.lastRunStatus)" effect="light">{{ statusText(s.row.lastRunStatus) }}</el-tag></template>
       </el-table-column>
       <el-table-column label="操作" width="152" align="center" fixed="right">
@@ -134,38 +133,36 @@
       <el-pagination v-model:current-page="query.page" v-model:page-size="query.pageSize" :page-sizes="[20, 50, 100, 200]" :total="total" layout="total, sizes, prev, pager, next, jumper" @current-change="loadPanel" @size-change="handlePageSizeChange" />
     </div>
 
-    <el-dialog v-model="createVisible" title="新增正式任务" width="840px" destroy-on-close>
+    <el-dialog v-model="createVisible" title="新增任务" width="840px" destroy-on-close>
       <el-form label-position="top">
         <el-row :gutter="16">
           <el-col :span="12" v-if="sessionState.user?.isSuperAdmin"><el-form-item label="所属公司" required><el-select v-model="createContext.companyId" filterable @change="loadCreateProjects"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="所属项目" required><el-select v-model="createContext.projectId" filterable @change="loadCreateResources"><el-option v-for="project in createProjects" :key="project.projectId" :label="`${project.projectName}（${project.projectCode}）`" :value="project.projectId" /></el-select></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="任务目录" required><el-select v-model="createForm.definitionId" filterable @change="applyDefinition"><el-option v-for="definition in definitions" :key="definition.definitionId" :label="`${definition.taskName}（${definition.definitionKey}）`" :value="definition.definitionId" :disabled="definition.definitionStatus !== 'AVAILABLE'" /></el-select></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="所属项目" required><el-select v-model="createContext.projectId" filterable @change="loadCreateResources"><el-option v-for="project in createProjects" :key="project.projectId" :label="project.projectName" :value="project.projectId" /></el-select></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="平台任务" required><el-select v-model="createForm.definitionId" filterable @change="applyDefinition"><el-option v-for="definition in definitions" :key="definition.definitionId" :label="definition.taskName" :value="definition.definitionId" :disabled="definition.definitionStatus !== 'AVAILABLE'" /></el-select></el-form-item></el-col>
         </el-row>
         <el-row :gutter="16">
-          <el-col :span="12"><el-form-item label="任务编码" required><el-input v-model="createForm.taskCode" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="任务标识" required><el-input v-model="createForm.taskCode" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="任务名称" required><el-input v-model="createForm.taskName" /></el-form-item></el-col>
           <el-col v-if="sessionState.user?.isSuperAdmin" :span="12"><el-form-item label="负责人"><el-select v-model="createForm.ownerUserId" clearable filterable><el-option v-for="user in createOwnerUsers" :key="user.userId" :label="user.nickName || user.userName" :value="user.userId" /></el-select></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="任务状态"><el-select v-model="createForm.status"><el-option label="启用" value="ENABLED" /><el-option label="草稿" value="DRAFT" /><el-option label="暂停" value="PAUSED" /></el-select></el-form-item></el-col>
         </el-row>
         <el-row :gutter="16">
-          <el-col :span="8"><el-form-item label="调度类型"><el-select v-model="createForm.scheduleType"><el-option label="手动" value="MANUAL" /><el-option label="Cron 定时" value="CRON" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="调度类型"><el-select v-model="createForm.scheduleType"><el-option label="手动" value="MANUAL" /><el-option label="定时" value="CRON" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="调度状态"><el-select v-model="createForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="任务组"><el-input v-model="createForm.taskGroup" /></el-form-item></el-col>
         </el-row>
-        <el-form-item v-if="createForm.scheduleType === 'CRON'" label="Cron 表达式"><el-input v-model="createForm.cronExpression" placeholder="5 段格式：分钟 小时 日 月 星期" /></el-form-item>
+        <el-form-item v-if="createForm.scheduleType === 'CRON'" label="高级表达式"><el-input v-model="createForm.cronExpression" placeholder="5 段格式：分钟 小时 日 月 星期" /></el-form-item>
         <el-form-item label="指定服务器"><el-select v-model="createForm.serverIds" multiple clearable filterable placeholder="为空时使用项目服务器池"><el-option v-for="server in createProjectServers" :key="server.serverId" :label="server.serverName || String(server.serverId)" :value="server.serverId" /></el-select></el-form-item>
         <el-collapse>
           <el-collapse-item title="高级执行配置" name="advanced">
             <el-row :gutter="16">
-              <el-col :span="8"><el-form-item label="运行模式"><el-select v-model="createForm.runtimeMode"><el-option label="共享环境隔离容器" value="SHARED_ENV_ISOLATED" /><el-option label="常驻 Worker 池" value="WORKER_POOL" /><el-option label="独占容器" value="DEDICATED_CONTAINER" /></el-select></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="运行模式"><el-select v-model="createForm.runtimeMode"><el-option label="标准容器" value="SHARED_ENV_ISOLATED" /><el-option label="常驻服务" value="WORKER_POOL" /><el-option label="独占容器" value="DEDICATED_CONTAINER" /></el-select></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="任务最大并发"><el-input-number v-model="createForm.taskMaxConcurrency" :min="1" :max="1000" /></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="任务组最大并发"><el-input-number v-model="createForm.groupMaxConcurrency" :min="1" :max="1000" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="共享内存 MB"><el-input-number v-model="createForm.shmSizeMb" :min="16" :max="65536" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="内存共享"><el-input-number v-model="createForm.shmSizeMb" :min="16" :max="65536" /></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="日志上限 MB"><el-input-number v-model="createForm.logLimitMb" :min="1" :max="10240" /></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="独占运行"><el-switch v-model="createForm.exclusiveMode" /></el-form-item></el-col>
             </el-row>
-            <el-form-item label="资源锁"><el-input v-model="createLocksText" placeholder="多个资源锁用英文逗号分隔" /></el-form-item>
-            <el-form-item label="任务参数 JSON"><el-input v-model="createParamsText" type="textarea" :rows="5" /></el-form-item>
           </el-collapse-item>
         </el-collapse>
       </el-form>
@@ -188,7 +185,6 @@
     </el-drawer>
 
     <el-dialog v-model="scheduleVisible" title="修改任务调度" width="860px">
-      <el-alert title="平台使用 5 段 Cron：分钟 小时 日 月 星期，并兼容每日、每周、每月多时间点配置。" type="info" show-icon :closable="false" />
       <el-form label-position="top" class="schedule-form">
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="调度状态"><el-select v-model="scheduleForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
@@ -198,7 +194,7 @@
         <template v-if="scheduleForm.scheduleType === 'CRON'">
           <el-form-item label="快捷设置">
             <el-radio-group v-model="scheduleMode" @change="applyScheduleMode">
-              <el-radio-button label="EVERY_N_MINUTES">每 N 分钟</el-radio-button><el-radio-button label="EVERY_N_HOURS">每 N 小时</el-radio-button><el-radio-button label="DAILY">每天</el-radio-button><el-radio-button label="DAILY_TIMES">每天多时间点</el-radio-button><el-radio-button label="WEEKLY">每周</el-radio-button><el-radio-button label="WEEKLY_TIMES">每周多日期/时间</el-radio-button><el-radio-button label="MONTHLY">每月</el-radio-button><el-radio-button label="MONTHLY_TIMES">每月多日期/时间</el-radio-button><el-radio-button label="ADVANCED">高级 Cron</el-radio-button>
+              <el-radio-button label="EVERY_N_MINUTES">每 N 分钟</el-radio-button><el-radio-button label="EVERY_N_HOURS">每 N 小时</el-radio-button><el-radio-button label="DAILY">每天</el-radio-button><el-radio-button label="DAILY_TIMES">每天多时间点</el-radio-button><el-radio-button label="WEEKLY">每周</el-radio-button><el-radio-button label="WEEKLY_TIMES">每周多日期/时间</el-radio-button><el-radio-button label="MONTHLY">每月</el-radio-button><el-radio-button label="MONTHLY_TIMES">每月多日期/时间</el-radio-button><el-radio-button label="ADVANCED">高级排程</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-row v-if="scheduleMode === 'EVERY_N_MINUTES'" :gutter="16"><el-col :span="8"><el-form-item label="间隔分钟"><el-input-number v-model="intervalMinutes" :min="5" :max="59" @change="applyScheduleMode" /></el-form-item></el-col></el-row>
@@ -214,7 +210,7 @@
             <el-form-item label="执行时间点"><div class="time-tags"><el-tag v-for="item in dailyTimes" :key="item" closable @close="removeDailyTime(item)">{{ item }}</el-tag></div></el-form-item>
             <el-row :gutter="16"><el-col :span="8"><el-form-item label="新增时间"><el-time-picker v-model="newDailyTime" format="HH:mm" value-format="HH:mm" /></el-form-item></el-col><el-col :span="8"><el-form-item label=" "><el-button @click="addDailyTime">添加时间点</el-button></el-form-item></el-col></el-row>
           </div>
-          <el-form-item label="Cron 表达式"><el-input v-model="scheduleForm.cronExpression" @input="scheduleMode = 'ADVANCED'" /></el-form-item>
+          <el-form-item label="高级表达式"><el-input v-model="scheduleForm.cronExpression" @input="scheduleMode = 'ADVANCED'" /></el-form-item>
           <el-form-item label="时区"><el-input v-model="scheduleForm.scheduleTimezone" /></el-form-item>
           <el-button @click="loadCronPreview">校验并预览最近 5 次</el-button>
           <div class="preview-box"><div class="cell-subtitle">最近 5 次预计执行时间</div><ul><li v-for="item in cronPreview" :key="item">{{ item }}</li></ul></div>
@@ -226,8 +222,7 @@
     <el-drawer v-model="detailVisible" title="任务调度详情" size="620px">
       <el-descriptions v-if="detailRow" :column="1" border>
         <el-descriptions-item label="公司 / 项目">{{ detailRow.companyName }} / {{ detailRow.projectName }}</el-descriptions-item>
-        <el-descriptions-item label="任务">{{ detailRow.taskName }}（{{ detailRow.taskCode }}）</el-descriptions-item>
-        <el-descriptions-item label="入口路径">{{ detailRow.entryPath }}</el-descriptions-item>
+        <el-descriptions-item label="任务">{{ detailRow.taskName }}</el-descriptions-item>
         <el-descriptions-item label="执行节点">{{ detailRow.serverName || '-' }} {{ detailRow.serverIp || '' }}</el-descriptions-item>
         <el-descriptions-item label="负责人">{{ detailRow.ownerUserName || '-' }}</el-descriptions-item>
         <el-descriptions-item label="调度">{{ scheduleText(detailRow) }}</el-descriptions-item>
@@ -401,9 +396,9 @@ function applyDefinition() {
   createLocksText.value = (row.resourceLocks || []).join(',')
 }
 async function saveTask() {
-  if (!createContext.projectId || !createForm.definitionId) { ElMessage.warning('请选择项目和可创建的任务目录'); return }
+  if (!createContext.projectId || !createForm.definitionId) { ElMessage.warning('请选择项目和可创建的平台任务'); return }
   let parameters: Record<string, unknown>
-  try { parameters = JSON.parse(createParamsText.value || '{}') } catch { ElMessage.error('任务参数不是合法 JSON'); return }
+  try { parameters = JSON.parse(createParamsText.value || '{}') } catch { ElMessage.error('运行参数格式不正确'); return }
   saving.value = true
   try {
     createForm.parameters = parameters
@@ -477,9 +472,9 @@ async function disableSelected() {
 function editSelected() { const row = assertSingleSelection('修改'); if (row) void openEdit(row) }
 function openLogsSelected() { const row = assertSingleSelection('查看日志'); if (row) void openLogs(row) }
 function exportRows() {
-  const headers = ['任务编号', '服务器', '任务平台', '任务名称', '上次任务完成时间', '目标任务路径', 'cron执行表达式', '下次执行时间', '开发人员', '状态', '目标状态']
+  const headers = ['任务号', '服务器', '所属平台', '任务名称', '最近完成', '执行计划', '下次执行时间', '开发人员', '状态', '最近结果']
   const source = selectedRows.value.length ? selectedRows.value : rows.value
-  const lines = [headers, ...source.map((row) => [row.taskId, row.serverIp || row.serverName || '', row.taskPlatform || row.projectName || '', row.taskName, formatTime(row.lastFinishedAt), row.entryPath, cronText(row), formatTime(row.nextRunAt), row.ownerUserName || '', statusText(row.taskStatus), statusText(row.lastRunStatus)])]
+  const lines = [headers, ...source.map((row) => [row.taskId, row.serverIp || row.serverName || '', row.taskPlatform || row.projectName || '', row.taskName, formatTime(row.lastFinishedAt), cronText(row), formatTime(row.nextRunAt), row.ownerUserName || '', statusText(row.taskStatus), statusText(row.lastRunStatus)])]
   const csv = lines.map((line) => line.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
   const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)

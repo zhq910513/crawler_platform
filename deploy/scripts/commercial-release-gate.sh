@@ -38,6 +38,7 @@ cp_python_tool_sh "python -m compileall backend/app backend/tests backend/migrat
 
 run_step "商业契约扫描（Docker 工具容器）" cp_python_tool deploy/scripts/commercial-contract-scan.py
 run_step "宿主机兼容扫描（Docker 工具容器）" cp_python_tool deploy/scripts/host-compat-scan.py
+run_step "前端可见文案检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-frontend-ui-copy.py
 run_step "版本一致性检查" bash deploy/scripts/check-version-consistency.sh
 run_step "MySQL 标识符长度检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-mysql-identifiers.py backend/app/models.py
 run_step "MySQL JSON 默认值兼容检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-mysql-json-defaults.py

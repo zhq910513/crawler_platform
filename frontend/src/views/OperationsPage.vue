@@ -1,1 +1,1 @@
-<template><div class="page-card"><el-alert title="操作日志接口已保留，后续可扩展筛选与详情。" type="info" :closable="false" /></div></template>
+<template><div class="page-card"><el-empty description="暂无操作日志" /></div></template>
