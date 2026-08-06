@@ -10,7 +10,7 @@ export const statusText: Record<string, string> = {
   DEPLOYED: '已部署', DEPLOYING: '部署中', DEPLOY_FAILED: '部署失败', REMOVED: '已移除',
   PAUSED: '人工暂停', DRAINING: '排空中', AUTO_EJECTED: '自动摘除', RECOVERING: '恢复观察',
   READY_TO_IMPORT: '可接入', IMPORTED: '已接入', PARSE_FAILED: '解析失败', INVALID: '无效', IGNORED: '已忽略', SUCCESS: '成功',
-  AVAILABLE: '可用', CREATED: '已创建', PARSE_ERROR: '解析异常',
+  CREATED: '已创建', PARSE_ERROR: '解析异常',
   PRIMARY_STANDBY: '主备模式', LOAD_BALANCE: '负载均衡', PRIMARY: '主服务器', STANDBY: '备用服务器', ACTIVE: '活动节点', CANDIDATE: '候选节点',
   SINGLE: '单节点', SHARDED: '多节点分片', SHARED_ENV_ISOLATED: '标准容器', WORKER_POOL: '常驻服务', DEDICATED_CONTAINER: '独占容器', IDEMPOTENT: '可自动重试', CHECKPOINTABLE: '可断点续跑', MANUAL_CONFIRM: '需人工确认', NON_IDEMPOTENT: '禁止自动重试',
   QUEUED: '排队中', ASSIGNED: '已领取', STARTING: '启动中', RUNNING: '运行中', SUCCEEDED: '成功', UPLOADING: '上传中', COMPLETE: '完整', TRUNCATED: '已截断', PARTIAL_SUCCESS: '部分成功', FAILED: '失败', CANCELLED: '已取消', TIMED_OUT: '超时', LOST: '失联',
