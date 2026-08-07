@@ -40,6 +40,7 @@ run_step "商业契约扫描（Docker 工具容器）" cp_python_tool deploy/scr
 run_step "宿主机兼容扫描（Docker 工具容器）" cp_python_tool deploy/scripts/host-compat-scan.py
 run_step "前端字典重复键检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-frontend-dictionary-duplicates.py
 run_step "前端可见文案检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-frontend-ui-copy.py
+run_step "执行节点接入合约检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-agent-onboarding-contract.py
 run_step "版本一致性检查" bash deploy/scripts/check-version-consistency.sh
 run_step "MySQL 标识符长度检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-mysql-identifiers.py backend/app/models.py
 run_step "MySQL JSON 默认值兼容检查（Docker 工具容器）" cp_python_tool deploy/scripts/check-mysql-json-defaults.py

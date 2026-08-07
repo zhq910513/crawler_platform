@@ -13,9 +13,15 @@ from app.services.server_service import ServerService
 router = APIRouter(tags=["Agent 接入"])
 
 
+def _installer_script_path() -> Path:
+    # API 镜像只复制 backend/app，不能依赖仓库根目录的 deploy/scripts。
+    # 因此安装脚本模板随后端代码一起打包，避免生产环境 /api/v1/agent-installers/linux.sh 返回 500。
+    return Path(__file__).resolve().parents[1] / "templates" / "install-agent.sh"
+
+
 @router.get("/agent-installers/linux.sh", response_class=PlainTextResponse)
 def get_linux_agent_installer() -> PlainTextResponse:
-    script_path = Path(__file__).resolve().parents[3] / "deploy" / "scripts" / "install-agent.sh"
+    script_path = _installer_script_path()
     return PlainTextResponse(script_path.read_text(encoding="utf-8"), media_type="text/x-shellscript; charset=utf-8")
 
 

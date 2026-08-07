@@ -7,7 +7,7 @@
       <el-table-column label="状态"><template #default="s">{{ zh(s.row.status) }}</template></el-table-column>
       <el-table-column label="时区" prop="timezone" />
       <el-table-column label="创建时间"><template #default="s">{{ formatTime(s.row.createdAt) }}</template></el-table-column>
-      <el-table-column label="操作" width="170"><template #default="s"><el-button size="small" @click="createToken(s.row.companyId)">生成接入凭证</el-button></template></el-table-column>
+      <el-table-column label="操作" width="190"><template #default="s"><el-button size="small" @click="createToken(s.row.companyId)">生成项目发布凭证</el-button></template></el-table-column>
     </el-table>
     <el-dialog v-model="dialogVisible" title="新增公司" width="420px">
       <el-form label-position="top">
@@ -21,13 +21,16 @@
 </template>
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { createCompany, createDiscoveryToken, listCompanies } from '../api/platform'
 import type { Company } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 const rows = ref<Company[]>([]); const dialogVisible = ref(false); const form = reactive({ companyCode: '', companyName: '', timezone: 'Asia/Shanghai' })
 async function load() { rows.value = await listCompanies() }
-async function save() { await createCompany(form); dialogVisible.value = false; await load() }
-async function createToken(companyId: number) { const data = await createDiscoveryToken(companyId); await ElMessageBox.alert(data.discoveryToken, '项目接入凭证，只显示一次') }
+async function save() { await createCompany(form); dialogVisible.value = false; ElMessage.success('公司已创建，请继续配置数据库、采集平台、平台账号和执行节点。'); await load() }
+async function createToken(companyId: number) {
+  const data = await createDiscoveryToken(companyId)
+  await ElMessageBox.alert(`该凭证用于爬虫项目流水线向平台发布版本，不用于接入执行节点。请将下面内容保存到代码仓库的安全变量中，只显示一次：\n\n${data.discoveryToken}`, '项目发布凭证')
+}
 onMounted(load)
 </script>

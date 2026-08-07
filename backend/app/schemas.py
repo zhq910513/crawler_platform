@@ -351,6 +351,8 @@ class AgentJoinTokenCreate(ApiModel):
     capabilities: dict[str, Any] = Field(default_factory=dict)
     registry_credential_ref: str = Field(default="", max_length=200)
     install_mode: Literal["AUTO", "ROOT", "USER"] = "AUTO"
+    install_target: Literal["LOCAL", "REMOTE"] = "REMOTE"
+    platform_url: str = Field(default="", max_length=500)
     expires_in_hours: int = Field(default=24, ge=1, le=720)
 
 

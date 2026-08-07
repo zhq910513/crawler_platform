@@ -400,8 +400,8 @@ export interface RunLogChunk { chunkId: number; runId: number; stream: string; s
 export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: boolean; chunks: RunLogChunk[] }
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
 
-export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; expiresInHours?: number }
-export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken: string; installCommand: string; note: string }
+export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; platformUrl?: string; expiresInHours?: number }
+export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; platformUrl?: string; installTarget?: string; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
 export interface ProjectReleaseDeploymentResult { deploymentId: number; projectId: number; releaseId: number; releaseVersion: string; imageRepository: string; imageDigest: string; targets: Array<Record<string, unknown>>; message: string }
 

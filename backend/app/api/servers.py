@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -11,6 +11,14 @@ from app.schemas import AgentJoinTokenCreate, AgentRegistration, ServerCreate, S
 from app.services.server_service import ServerService
 
 router = APIRouter(prefix="/servers", tags=["服务器"])
+
+
+def _detected_base_url(request: Request) -> str:
+    forwarded_proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    forwarded_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    if forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    return str(request.base_url).rstrip("/")
 
 
 @router.get("")
@@ -29,8 +37,8 @@ def update_server(server_id: int, payload: ServerUpdate, user: SysUser = Depends
 
 
 @router.post("/agent-join-tokens")
-def create_agent_join_token(payload: AgentJoinTokenCreate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    return ok(ServerService(db).create_agent_join_token(user, payload))
+def create_agent_join_token(payload: AgentJoinTokenCreate, request: Request, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).create_agent_join_token(user, payload, _detected_base_url(request)))
 
 
 @router.get("/agent-join-tokens")

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import secrets
+import shlex
 from datetime import timedelta
+from urllib.parse import urlparse
 from fastapi import status
 from sqlalchemy.orm import Session
 
@@ -70,7 +72,7 @@ class ServerService:
         self.db.commit()
         return server
 
-    def create_agent_join_token(self, user: SysUser, payload: AgentJoinTokenCreate) -> dict:
+    def create_agent_join_token(self, user: SysUser, payload: AgentJoinTokenCreate, detected_base_url: str = "") -> dict:
         require_super_admin(user)
         if not self.companies.get(payload.company_id):
             raise AppError("公司不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
@@ -101,7 +103,9 @@ class ServerService:
         )
         self.db.add(token)
         self.db.flush()
-        command = self._install_command(raw_token)
+        platform_url = self._resolve_platform_url(payload.platform_url, detected_base_url, payload.install_target)
+        command = self._install_command(raw_token, platform_url)
+        connectivity_command = f"curl -fsSL {platform_url.rstrip('/')}/health && echo"
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
         self.db.commit()
         return {
@@ -112,7 +116,11 @@ class ServerService:
             "expiresAt": token.expires_at,
             "joinToken": raw_token,
             "installCommand": command,
-            "note": "该命令会先做平台端口、Docker、权限、磁盘、镜像仓库等初检；令牌只展示一次，请妥善保存。",
+            "connectivityCommand": connectivity_command,
+            "platformUrl": platform_url,
+            "joinTokenMasked": self._mask_token(raw_token),
+            "installTarget": payload.install_target,
+            "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
         }
 
     def list_agent_join_tokens(self, user: SysUser, company_id: int | None = None) -> list[dict]:
@@ -190,9 +198,35 @@ class ServerService:
         }
         return "\n".join(f"{k}={self._quote_env(v)}" for k, v in lines.items()) + "\n"
 
-    def _install_command(self, token: str) -> str:
-        base = settings.platform_public_url or "http://127.0.0.1:8000"
-        return f"curl -fsSL {base.rstrip('/')}/api/v1/agent-installers/linux.sh | bash -s -- --platform-url {base.rstrip('/')} --join-token {token}"
+    def _install_command(self, token: str, base: str) -> str:
+        public_base = base.rstrip("/")
+        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --platform-url {public_base} --join-token {self._quote_shell(token)}"
+
+    def _resolve_platform_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
+        base = (requested_url or settings.platform_public_url or detected_base_url or "").strip().rstrip("/")
+        if not base:
+            raise AppError("请先填写执行节点可以访问的平台地址", code=40071)
+        parsed = urlparse(base)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise AppError("平台访问地址必须以 http:// 或 https:// 开头", code=40072)
+        host = (parsed.hostname or "").lower()
+        if install_target == "REMOTE" and self._is_loopback_host(host):
+            raise AppError("远程服务器接入不能使用 127.0.0.1 或 localhost，请填写执行节点可访问的平台地址", code=40073)
+        return base
+
+    @staticmethod
+    def _is_loopback_host(host: str) -> bool:
+        return host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+
+    @staticmethod
+    def _mask_token(token: str) -> str:
+        if len(token) <= 12:
+            return "*" * len(token)
+        return token[:6] + "********" + token[-6:]
+
+    @staticmethod
+    def _quote_shell(value: str) -> str:
+        return shlex.quote(str(value or ""))
 
     @staticmethod
     def _quote_env(value) -> str:

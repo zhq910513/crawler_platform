@@ -946,6 +946,26 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     }).json()['data']
     assert token_body['joinToken']
     assert '--join-token' in token_body['installCommand']
+    assert token_body['platformUrl'].startswith('http://')
+    assert 'connectivityCommand' in token_body
+    bad_remote = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-srv-loopback',
+        'serverName': '远程服务器',
+        'agentCode': 'join-agent-loopback',
+        'platformUrl': 'http://127.0.0.1:8080',
+        'installTarget': 'REMOTE',
+    })
+    assert bad_remote.status_code == 400
+    local_token = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-srv-local',
+        'serverName': '本机测试服务器',
+        'agentCode': 'join-agent-local',
+        'platformUrl': 'http://127.0.0.1:8080',
+        'installTarget': 'LOCAL',
+    }).json()['data']
+    assert '127.0.0.1:8080' in local_token['installCommand']
     script = client.get('/api/v1/agent-installers/linux.sh')
     assert script.status_code == 200
     assert '平台连通' in script.text and 'Docker' in script.text
