@@ -1,9 +1,16 @@
 import { http, request } from './client'
-import type { AgentJoinTokenCreateRequest, AgentJoinTokenResult, AgentRegistrationRequest, Company, DashboardSummary, DiscoveredProject, AlertEvent, NotificationChannel, NotificationChannelCreateRequest, Project, ProjectImportRequest, ProjectReleaseDeploymentResult, ProjectReleaseDeployRequest, ProjectServer, ProjectServerPoolUpdateRequest, ProjectUpdateRequest, RunRecord, ServerCreateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskUpdateRequest, UserAccount, UserCreateRequest, ScheduleUpdateRequest, CronPreviewRequest, CronPreviewResult, OwnPasswordUpdateRequest, UserPasswordResetRequest, AccountCredential, AccountStatusEvent, AccountStatusEventCreateRequest, RunDiagnosis, RunEvent, RunLogTail, CredentialSubjectBinding, CredentialSubjectBindingCreateRequest, CredentialSubjectBindingUpdateRequest, CredentialLease } from '../types/api'
+import type { AgentJoinTokenCreateRequest, AgentJoinTokenResult, AgentRegistrationRequest, Company, DashboardSummary, DiscoveredProject, AlertEvent, NotificationChannel, NotificationChannelCreateRequest, Project, ProjectImportRequest, ProjectReleaseDeploymentResult, ProjectReleaseDeployRequest, ProjectServer, ProjectServerPoolUpdateRequest, ProjectUpdateRequest, RunRecord, ServerCreateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskUpdateRequest, UserAccount, UserCreateRequest, ScheduleUpdateRequest, CronPreviewRequest, CronPreviewResult, OwnPasswordUpdateRequest, UserPasswordResetRequest, AccountCredential, AccountStatusEvent, AccountStatusEventCreateRequest, RunDiagnosis, RunEvent, RunLogTail, CredentialSubjectBinding, CredentialSubjectBindingCreateRequest, CredentialSubjectBindingUpdateRequest, CredentialLease, SystemSettings, CompanyResourceConfig, CompanySetupStatus } from '../types/api'
 
 export function listCompanies() { return request<Company[]>(http.get('/companies')) }
 export function createCompany(payload: { companyCode: string; companyName: string; timezone?: string; description?: string }) { return request<Company>(http.post('/companies', payload)) }
 export function createDiscoveryToken(companyId: number) { return request<{ tokenId: number; discoveryToken: string }>(http.post(`/companies/${companyId}/discovery-tokens`)) }
+
+export function getSystemSettings() { return request<SystemSettings>(http.get('/system-settings')) }
+export function updateSystemSettings(payload: { platformPublicUrl?: string }) { return request<SystemSettings>(http.patch('/system-settings', payload)) }
+export function getCompanySetupStatus(companyId: number) { return request<CompanySetupStatus>(http.get(`/companies/${companyId}/setup-status`)) }
+export function listCompanyResourceConfigs(companyId?: number) { return request<CompanyResourceConfig[]>(http.get('/company-resource-configs', { params: { companyId } })) }
+export function saveCompanyResourceConfig(payload: { companyId: number; resourceType: string; resourceName?: string; config: Record<string, unknown> }) { return request<CompanyResourceConfig>(http.post('/company-resource-configs', payload)) }
+export function testCompanyResourceConfig(configId: number, forceSuccess = false) { return request<CompanyResourceConfig>(http.post(`/company-resource-configs/${configId}/tests`, { forceSuccess })) }
 
 export function listUsers() { return request<UserAccount[]>(http.get('/users')) }
 export function createUser(payload: UserCreateRequest) { return request<UserAccount>(http.post('/users', payload)) }

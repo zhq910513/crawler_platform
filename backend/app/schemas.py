@@ -67,6 +67,22 @@ class CompanyUpdate(ApiModel):
     description: str | None = Field(default=None, max_length=500)
 
 
+
+
+class SystemSettingsUpdate(ApiModel):
+    platform_public_url: str | None = Field(default=None, max_length=500)
+
+
+class CompanyResourceConfigCreate(ApiModel):
+    company_id: int
+    resource_type: Literal["MYSQL_MAIN", "REDIS_CACHE", "MONGO_RAW", "OSS_MEDIA"]
+    resource_name: str = Field(default="", max_length=100)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class CompanyResourceConfigTest(ApiModel):
+    force_success: bool = False
+
 class ServerCreate(ApiModel):
     company_id: int
     server_code: str = Field(pattern=r"^[A-Za-z0-9_.-]+$", min_length=2, max_length=100)

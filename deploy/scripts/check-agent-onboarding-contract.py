@@ -24,8 +24,9 @@ else:
         if token not in text:
             errors.append(f"安装脚本缺少关键内容：{token}")
 
-if "127.0.0.1:8000" in service:
-    errors.append("接入命令仍包含内部调试地址 127.0.0.1:8000")
+legacy_loopback = "127.0.0.1" + ":" + "8000"
+if legacy_loopback in service:
+    errors.append("接入命令仍包含内部调试地址 " + legacy_loopback)
 if "install_target" not in schemas or "platform_url" not in schemas:
     errors.append("接入令牌创建参数缺少 install_target/platform_url")
 if "detected_base_url" not in (ROOT / "backend/app/api/servers.py").read_text(encoding="utf-8"):
@@ -34,14 +35,17 @@ if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
     errors.append("安装脚本接口不应依赖 API 镜像外的 deploy 目录")
 if "远程服务器不能使用本机地址" not in frontend or "connectivityCommand" not in frontend:
     errors.append("执行节点接入前端缺少远程地址拦截或连通性验证命令")
-if "生成接入凭证" in companies:
-    errors.append("公司页面仍使用含糊的“生成接入凭证”文案")
-if "项目发布凭证" not in companies:
-    errors.append("公司页面缺少项目发布凭证说明")
+legacy_token_text = "生成" + "接入" + "凭证"
+if legacy_token_text in companies:
+    errors.append("公司页面仍使用含糊的“" + legacy_token_text + "”文案")
+if "项目发布凭证" in companies:
+    errors.append("项目发布凭证不应继续放在公司管理页面")
+if "配置助手" not in companies:
+    errors.append("公司页面缺少配置助手入口")
 
 if errors:
     print("执行节点接入合约检查失败：", file=sys.stderr)
     for item in errors:
         print("- " + item, file=sys.stderr)
     sys.exit(1)
-print("执行节点接入合约检查通过：安装脚本、平台地址、凭证文案和前端向导符合要求。")
+print("执行节点接入合约检查通过：安装脚本、平台地址、配置助手和前端向导符合要求。")

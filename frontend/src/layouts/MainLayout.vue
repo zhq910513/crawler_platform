@@ -35,6 +35,7 @@
       <el-main class="content-wrap"><router-view /></el-main>
     </el-container>
   </el-container>
+  <ConfigAssistantDrawer />
 
   <el-dialog v-model="passwordDialogVisible" title="修改密码" width="460px" :close-on-click-modal="!passwordRequired" :show-close="!passwordRequired">
     <el-form label-position="top">
@@ -59,32 +60,37 @@ import { frontendBuildVersion } from '../config/version'
 import type { BackendHealthData, SystemVersionInfo } from '../types/api'
 import { deleteSession } from '../api/sessions'
 import { clearSession, sessionState } from '../stores/session'
-import { DataAnalysis, FolderOpened, Histogram, Key, List, Monitor, Operation, Setting, User, OfficeBuilding } from '@element-plus/icons-vue'
+import { DataAnalysis, FolderOpened, Histogram, Key, List, Monitor, Operation, Setting, User, OfficeBuilding, Coin, Guide } from '@element-plus/icons-vue'
+import ConfigAssistantDrawer from '../components/ConfigAssistantDrawer.vue'
 
 const router = useRouter()
 const menus = [
   { path: '/dashboard', title: '运行总览', adminOnly: true, icon: Histogram },
   { path: '/companies', title: '公司管理', adminOnly: true, icon: OfficeBuilding },
   { path: '/users', title: '用户管理', adminOnly: true, icon: User },
+  { path: '/resources', title: '数据库配置', adminOnly: false, icon: Coin },
   { path: '/servers', title: '执行节点', adminOnly: false, icon: Monitor },
   { path: '/projects', title: '项目管理', adminOnly: false, icon: FolderOpened },
   { path: '/tasks', title: '任务调度', adminOnly: false, icon: List },
   { path: '/runs', title: '执行记录', adminOnly: false, icon: DataAnalysis },
+  { path: '/platforms', title: '采集平台', adminOnly: false, icon: Guide },
   { path: '/accounts', title: '平台账号', adminOnly: false, icon: Key },
   { path: '/operations', title: '操作日志', adminOnly: true, icon: Operation },
   { path: '/settings', title: '系统设置', adminOnly: true, icon: Setting },
 ]
 const subtitles: Record<string, string> = {
   '/dashboard': '整体运行情况与待处理事项',
-  '/companies': '公司边界与项目接入凭证',
+  '/companies': '公司边界与基础信息管理',
   '/users': '用户、角色与登录安全',
+  '/resources': '公司数据库、缓存与存储资源',
   '/servers': '执行节点健康、容量与部署状态',
   '/projects': '项目版本、任务发现与执行节点配置',
   '/tasks': '任务创建、账号分配、排程与手动执行',
   '/runs': '任务执行过程、日志与失败诊断',
+  '/platforms': '被采集网站与系统的接入准备情况',
   '/accounts': '平台账号健康、对象绑定与占用情况',
   '/operations': '关键操作审计记录',
-  '/settings': '通知渠道与系统配置',
+  '/settings': '平台访问地址、通知渠道与系统配置',
 }
 const visibleMenus = computed(() => menus.filter((item) => !item.adminOnly || sessionState.user?.isSuperAdmin))
 const routeSubtitle = computed(() => subtitles[router.currentRoute.value.path] || '爬虫项目统一交付与运行管理')

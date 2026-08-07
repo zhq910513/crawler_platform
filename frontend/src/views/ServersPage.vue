@@ -120,13 +120,15 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { createAgentJoinToken, createServer, listCompanies, listServers } from '../api/platform'
+import { createAgentJoinToken, createServer, getSystemSettings, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
+import { useRoute } from 'vue-router'
 import type { AgentJoinTokenResult, Company, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
+const route = useRoute()
 const rows = ref<ServerNode[]>([])
 const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
@@ -140,7 +142,9 @@ function boolText(value?: boolean | null) { if (value === null || value === unde
 function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
-function currentOrigin() { return window.location.origin }
+const platformPublicUrl = ref('')
+async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); platformPublicUrl.value = data?.platformPublicUrl || '' }
+function currentOrigin() { return platformPublicUrl.value || window.location.origin }
 function slug(value: string) { return (value || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server' }
 const addressWarning = computed(() => {
   if (!joinForm.platformUrl) return '请填写执行节点可以访问的平台地址。'
@@ -172,6 +176,7 @@ function openOnboarding() {
   applyInstallTarget()
 }
 async function load() {
+  await loadSystemSettings()
   companies.value = await listCompanies()
   if (!form.companyId) form.companyId = sessionState.user?.companyId || companies.value[0]?.companyId || 0
   if (!joinForm.companyId) joinForm.companyId = form.companyId
@@ -189,7 +194,8 @@ async function copyText(text: string) {
   ElMessage.success('已复制')
 }
 async function save() { await createServer(form); dialogVisible.value = false; await load() }
-onMounted(load)
+onMounted(async () => { await load(); if (route.query.companyId) { joinForm.companyId = Number(route.query.companyId) || joinForm.companyId; form.companyId = joinForm.companyId } if (route.query.openOnboarding === '1') openOnboarding() })
+watch(() => route.query.openOnboarding, (value) => { if (value === '1') openOnboarding() })
 </script>
 <style scoped>
 .server-name { font-weight: 700; color: #111827; }

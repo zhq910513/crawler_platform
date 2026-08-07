@@ -241,7 +241,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, Edit, Operation, Plus, Refresh, Search, Tickets, VideoPlay, View } from '@element-plus/icons-vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { createRun, createTask, deleteTask, listCompanies, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
 import { listTaskSchedulePanels } from '../api/taskSchedules'
 import { sessionState } from '../stores/session'
@@ -249,6 +249,7 @@ import type { Company, Project, ProjectServer, ScheduleUpdateRequest, ServerNode
 import { formatTime } from '../utils/dictionaries'
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref<TaskSchedulePanelItem[]>([])
@@ -322,6 +323,8 @@ async function loadOptions() {
   companies.value = companyRows
   projects.value = projectRows
   servers.value = serverRows
+  const qCompany = Number(route.query.companyId || 0) || undefined
+  if (sessionState.user?.isSuperAdmin && qCompany) query.companyId = qCompany
   if (!sessionState.user?.isSuperAdmin) query.companyId = sessionState.user?.companyId || undefined
   if (sessionState.user?.isSuperAdmin) ownerUsers.value = await listUsers()
 }

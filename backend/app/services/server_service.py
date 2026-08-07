@@ -15,6 +15,7 @@ from app.security import hash_password
 from app.services.permissions import require_company_scope, require_super_admin, scoped_company_id
 from app.services.audit import write_operation_log
 from app.config import settings
+from app.services.system_config_service import SystemConfigService
 from app.utils import sha256_text, utcnow
 
 
@@ -186,7 +187,7 @@ class ServerService:
         token.last_preflight_report = payload.install_report or {}
         self.db.commit()
         lines = {
-            "AGENT_PLATFORM_URL": settings.platform_public_url or "",
+            "AGENT_PLATFORM_URL": SystemConfigService(self.db).resolve_platform_public_url() or "",
             "AGENT_AGENT_TOKEN": raw_agent_token,
             "AGENT_AGENT_CODE": token.agent_code,
             "AGENT_SERVER_CODE": token.server_code,
@@ -203,7 +204,7 @@ class ServerService:
         return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --platform-url {public_base} --join-token {self._quote_shell(token)}"
 
     def _resolve_platform_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
-        base = (requested_url or settings.platform_public_url or detected_base_url or "").strip().rstrip("/")
+        base = (requested_url or SystemConfigService(self.db).resolve_platform_public_url() or detected_base_url or "").strip().rstrip("/")
         if not base:
             raise AppError("请先填写执行节点可以访问的平台地址", code=40071)
         parsed = urlparse(base)

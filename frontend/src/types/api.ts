@@ -549,3 +549,50 @@ export interface CredentialSubjectBindingUpdateRequest {
   reason?: string
   metadata?: Record<string, unknown>
 }
+
+export interface SystemSettings {
+  platformPublicUrl: string
+  platformPublicUrlSource: string
+  platformPublicUrlConfigured: boolean
+}
+
+export interface CompanyResourceConfig {
+  configId: number
+  companyId: number
+  resourceType: string
+  resourceLabel: string
+  resourceName: string
+  testStatus: string
+  lastTestAt: string | null
+  lastTestMessage: string
+  configMasked: Record<string, unknown>
+  updatedAt: string
+}
+
+export interface CompanySetupStep {
+  key: string
+  label: string
+  description: string
+  status: 'DONE' | 'MISSING' | 'ACTION' | 'RISK' | 'BLOCKED'
+  route: string
+  actionLabel: string
+  metrics: Record<string, unknown>
+  blocked: boolean
+  blockReason: string
+}
+
+export interface CompanySetupStatus {
+  companyId: number
+  companyName: string
+  companyCode: string
+  mode: 'FIRST_SETUP' | 'CONTINUE_SETUP' | 'RECHECK' | 'READY'
+  summary: string
+  completedCount: number
+  totalCount: number
+  nextStepKey: string
+  nextStepLabel: string
+  platformPublicUrl: string
+  platformPublicUrlConfigured: boolean
+  steps: CompanySetupStep[]
+  counts: Record<string, number>
+}

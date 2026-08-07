@@ -81,11 +81,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useRoute } from 'vue-router'
 import { analyzeProjectServers, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectServers, listProjects, listServers, updateProjectServers } from '../api/platform'
 import { sessionState } from '../stores/session'
 import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
+const route = useRoute()
 const companies = ref<Company[]>([])
 const projects = ref<Project[]>([])
 const discoveredProjects = ref<DiscoveredProject[]>([])
@@ -103,7 +105,7 @@ const poolAnalysis = ref<Record<string, unknown> | null>(null)
 const importForm = reactive({ remark: '', dispatchMode: 'LOAD_BALANCE' })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
 
-async function loadCompanies() { companies.value = await listCompanies(); if (!selectedCompanyId.value && sessionState.user?.isSuperAdmin) selectedCompanyId.value = companies.value[0]?.companyId; if (!importCompanyId.value) importCompanyId.value = selectedCompanyId.value || sessionState.user?.companyId || undefined }
+async function loadCompanies() { companies.value = await listCompanies(); const qCompany = Number(route.query.companyId || 0) || undefined; if (qCompany) { selectedCompanyId.value = qCompany; importCompanyId.value = qCompany } if (!selectedCompanyId.value && sessionState.user?.isSuperAdmin) selectedCompanyId.value = companies.value[0]?.companyId; if (!importCompanyId.value) importCompanyId.value = selectedCompanyId.value || sessionState.user?.companyId || undefined }
 async function loadProjects() { projects.value = await listProjects(sessionState.user?.isSuperAdmin ? selectedCompanyId.value : sessionState.user?.companyId || undefined) }
 async function loadAll() { await loadCompanies(); await loadProjects() }
 function openImport() { importVisible.value = true; selectedDiscovered.value = null; void loadDiscovered() }
@@ -177,7 +179,7 @@ async function deploySelectedRelease() {
 }
 
 async function savePool() { if (!selectedProject.value) return; await updateProjectServers(selectedProject.value.projectId, poolPayload()); ElMessage.success('执行服务器池已更新'); serverPoolVisible.value = false; await loadProjectServers(); await loadProjects() }
-onMounted(loadAll)
+onMounted(async () => { await loadAll(); if (route.query.openImport === '1') openImport() })
 </script>
 <style scoped>
 .section-title { display: flex; justify-content: space-between; align-items: center; }

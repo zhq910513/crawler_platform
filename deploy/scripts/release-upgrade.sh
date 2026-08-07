@@ -24,7 +24,7 @@ cp_compose up -d migrate api scheduler maintenance web
 
 cp_info "等待 API 健康检查。"
 for i in $(seq 1 60); do
-  health_json="$(cp_compose exec -T api sh -lc 'curl -fsS http://127.0.0.1:8000/health' 2>/dev/null || true)"
+  health_json="$(cp_compose exec -T api sh -lc 'api_port="${API_INTERNAL_PORT:-8000}"; curl -fsS "http://127.0.0.1:${api_port}/health"' 2>/dev/null || true)"
   if printf '%s' "$health_json" | grep -q '"status":"ok"'; then
     break
   fi
