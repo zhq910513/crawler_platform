@@ -1200,3 +1200,21 @@ def test_delete_project_cleans_project_servers_and_archives_when_runs_exist() ->
     assert len(pending) == 1
     assert pending[0]['cleanupScope'] == 'PROJECT'
     assert pending[0]['taskId'] is None
+
+
+def test_company_page_can_generate_one_time_discovery_secret() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'secretco', 'companyName': '密钥公司'}).json()['data']
+    generated = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']
+    assert generated['tokenId'] > 0
+    assert generated['discoveryToken']
+
+    page = Path('frontend/src/views/CompaniesPage.vue').read_text(encoding='utf-8')
+    assert 'generateSecret' in page
+    assert 'createDiscoveryToken' in page
+    assert '生成接入密钥' in page
+    assert '只显示这一次' in page
+    assert 'CRAWLER_DISCOVERY_TOKEN' in page
+    assert 'CRAWLER_PLATFORM_DISCOVERY_TOKEN' not in page
