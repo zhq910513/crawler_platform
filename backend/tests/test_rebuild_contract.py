@@ -1211,7 +1211,8 @@ def test_company_page_can_generate_one_time_discovery_secret() -> None:
     assert generated['tokenId'] > 0
     assert generated['discoveryToken']
 
-    page = Path('frontend/src/views/CompaniesPage.vue').read_text(encoding='utf-8')
+    repo_root = Path(__file__).resolve().parents[2]
+    page = (repo_root / 'frontend/src/views/CompaniesPage.vue').read_text(encoding='utf-8')
     assert 'generateSecret' in page
     assert 'createDiscoveryToken' in page
     assert '生成接入密钥' in page
