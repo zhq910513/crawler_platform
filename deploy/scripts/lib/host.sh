@@ -175,7 +175,6 @@ cp_fix_project_permissions() {
   find deploy agent cicd -type f \( -name '*.sh' -o -name '*.py' \) -exec sed -i 's/\r$//' {} \; 2>/dev/null || true
   chmod +x deploy/scripts/*.sh 2>/dev/null || true
   chmod +x agent/install-linux.sh 2>/dev/null || true
-  chmod +x deploy/templates/project/bootstrap.sh 2>/dev/null || true
 }
 
 cp_has_docker_mirror() {

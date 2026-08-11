@@ -146,3 +146,16 @@ class PlatformAPI:
             "failedCount": int(result.get("failedCount") or 0),
             "message": str(result.get("message") or "")[:4000],
         }) or {}
+
+    def agent_command_result(self, command: dict[str, Any], success: bool, message: str = "", result: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request("POST", "/agent-command-results", json={
+            "commandId": command.get("commandId") or "",
+            "commandType": command.get("commandType") or "",
+            "success": bool(success),
+            "message": str(message or "")[:4000],
+            "projectId": command.get("projectId"),
+            "releaseId": command.get("releaseId"),
+            "deploymentId": command.get("deploymentId"),
+            "targetId": command.get("targetId"),
+            "result": result or {},
+        }) or {}

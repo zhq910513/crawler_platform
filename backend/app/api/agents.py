@@ -7,7 +7,7 @@ from app.db import get_db
 from app.deps import get_agent, get_current_user
 from app.models import CrawlerAgent, SysUser
 from app.responses import ok
-from app.schemas import AgentContainerCleanupResult, AgentHeartbeat, AgentImagePullResult, AgentRegistration, AgentRunClaim, AgentRunHeartbeat, AgentRunResult, AgentRunEventCreate, AgentRunLogChunkCreate, AgentRunLogFinalizeCreate, AgentRunContainerSnapshotCreate
+from app.schemas import AgentCommandResult, AgentContainerCleanupResult, AgentHeartbeat, AgentImagePullResult, AgentRegistration, AgentRunClaim, AgentRunHeartbeat, AgentRunResult, AgentRunEventCreate, AgentRunLogChunkCreate, AgentRunLogFinalizeCreate, AgentRunContainerSnapshotCreate
 from app.services.agent_service import AgentService
 from app.services.server_service import ServerService
 from app.services.run_log_service import RunLogService
@@ -38,6 +38,11 @@ def create_agent_image_pull_result(payload: AgentImagePullResult, agent: Crawler
 @router.post("/agent-container-cleanup-results")
 def create_agent_container_cleanup_result(payload: AgentContainerCleanupResult, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)):
     return ok(AgentService(db).report_container_cleanup_result(agent, payload))
+
+
+@router.post("/agent-command-results")
+def create_agent_command_result(payload: AgentCommandResult, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)):
+    return ok(AgentService(db).report_agent_command_result(agent, payload))
 
 
 

@@ -161,7 +161,7 @@ class ProjectManifest(ApiModel):
 
 
 class ProjectDiscoveryCreate(ApiModel):
-    company_id: int
+    company_id: int | None = None
     server_code: str | None = Field(default=None, min_length=1, max_length=100)
     server_codes: list[str] = Field(default_factory=list)
     manifest: ProjectManifest
@@ -381,6 +381,7 @@ class AgentBootstrapEnvRequest(ApiModel):
 class ProjectReleaseDeploy(ApiModel):
     release_id: int | None = None
     server_ids: list[int] = Field(default_factory=list)
+    auto_select: bool = False
     prewarm_when_idle: bool = True
     max_parallel_pulls: int = Field(default=2, ge=1, le=100)
     reason: str = Field(default="", max_length=500)
@@ -428,6 +429,20 @@ class AgentContainerCleanupResult(ApiModel):
     removed_count: int = Field(default=0, ge=0)
     failed_count: int = Field(default=0, ge=0)
     message: str = Field(default="", max_length=4000)
+
+
+
+
+class AgentCommandResult(ApiModel):
+    command_id: str = Field(min_length=1, max_length=100)
+    command_type: str = Field(default="", max_length=80)
+    success: bool = True
+    message: str = Field(default="", max_length=4000)
+    project_id: int | None = None
+    release_id: int | None = None
+    deployment_id: int | None = None
+    target_id: int | None = None
+    result: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentRunClaim(ApiModel):

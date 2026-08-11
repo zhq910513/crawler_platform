@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-TARGETS = [ROOT / "deploy" / "scripts", ROOT / "deploy" / "templates" / "project"]
+TARGETS = [ROOT / "deploy" / "scripts"]
 FAILURES: list[str] = []
 
 
@@ -36,7 +36,7 @@ def scan_shell(path: Path) -> None:
                 add(path, line_no, "禁止直接用宿主机 npm 构建前端", raw)
         if "jq " in line or line.endswith("jq"):
             add(path, line_no, "部署脚本禁止依赖宿主机 jq", raw)
-        if "command -v python" in line and "doctor.sh" not in rel(path) and "lib/host.sh" not in rel(path) and "bootstrap.sh" not in rel(path):
+        if "command -v python" in line and "doctor.sh" not in rel(path) and "lib/host.sh" not in rel(path):
             add(path, line_no, "不应把宿主机 Python 探测散落在脚本中，请走 host.sh 工具函数", raw)
         if "command -v npm" in line and "doctor.sh" not in rel(path):
             add(path, line_no, "不应把宿主机 npm 探测散落在脚本中，请走 Node 工具容器", raw)

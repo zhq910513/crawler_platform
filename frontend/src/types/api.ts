@@ -497,8 +497,28 @@ export interface RunDiagnosis { runId: number; failedStage: string; errorType: s
 
 export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; platformUrl?: string; expiresInHours?: number }
 export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; platformUrl?: string; installTarget?: string; note: string }
-export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
-export interface ProjectReleaseDeploymentResult { deploymentId: number; projectId: number; releaseId: number; releaseVersion: string; imageRepository: string; imageDigest: string; targets: Array<Record<string, unknown>>; message: string }
+export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
+
+export interface SpiderProjectCicdGuide {
+  provider: string
+  mode: string
+  platformPublicUrl: string
+  platformPublicUrlConfigured: boolean
+  companyId: number
+  companyCode?: string
+  globalVariables: Array<Record<string, unknown>>
+  globalSecrets: Array<Record<string, unknown>>
+  projectDefaults: Array<Record<string, unknown>>
+  workflowPath: string
+  workflowContent: string
+  helperScriptUrl: string
+  initScriptUrl: string
+  oneLineInitCommand: string
+  commitCommand: string
+  notes: string[]
+}
+
+export interface ProjectReleaseDeploymentResult { deploymentId: number; projectId: number; releaseId: number; releaseVersion: string; imageRepository: string; imageDigest: string; deploymentStatus?: string; steps?: Array<Record<string, unknown>>; targets: Array<Record<string, unknown>>; message: string }
 
 export interface AccountCredential {
   credentialId: number

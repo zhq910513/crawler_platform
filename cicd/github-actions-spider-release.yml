@@ -1,0 +1,115 @@
+name: crawler-platform-spider-release
+
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  CRAWLER_PLATFORM_URL: ${{ vars.CRAWLER_PLATFORM_URL }}
+  CRAWLER_PLATFORM_REGISTRY_HOST: ${{ vars.CRAWLER_PLATFORM_REGISTRY_HOST || 'ghcr.io' }}
+  CRAWLER_PLATFORM_REGISTRY_NAMESPACE: ${{ vars.CRAWLER_PLATFORM_REGISTRY_NAMESPACE || github.repository_owner }}
+  CRAWLER_PLATFORM_RELEASE_CHANNEL: ${{ vars.CRAWLER_PLATFORM_RELEASE_CHANNEL || 'stable' }}
+
+jobs:
+  build-push-register:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Resolve project metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, re
+          repo_name = os.environ['GITHUB_REPOSITORY'].rsplit('/', 1)[-1]
+          meta = {}
+          if os.path.exists('crawler_project.json'):
+              with open('crawler_project.json', encoding='utf-8') as f:
+                  meta = json.load(f)
+          def pick(*names, default=''):
+              for name in names:
+                  value = os.environ.get(name) or meta.get(name)
+                  if value:
+                      return str(value).strip()
+              return default
+          def clean(value):
+              value = re.sub(r'[^A-Za-z0-9_.-]+', '-', value.strip()).strip('-_.')
+              return value or 'crawler-project'
+          project_code = clean(pick('CRAWLER_PROJECT_CODE', 'PROJECT_CODE', 'projectCode', 'project_code', default=repo_name))
+          company_code = clean(pick('CRAWLER_COMPANY_CODE', 'COMPANY_CODE', 'companyCode', 'company_code', default=''))
+          print(f'project_code={project_code}')
+          print(f'company_code={company_code}')
+          PY
+
+      - name: Validate project ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CRAWLER_PLATFORM_URL"
+          if [ -z "${{ steps.meta.outputs.company_code }}" ]; then echo "missing crawler_project.json.companyCode or CRAWLER_COMPANY_CODE" >&2; exit 2; fi
+
+      - name: Resolve image repository
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          registry_host="${CRAWLER_PLATFORM_REGISTRY_HOST:-ghcr.io}"
+          namespace="${CRAWLER_PLATFORM_REGISTRY_NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+          image_repository="${CRAWLER_IMAGE_REPOSITORY:-$registry_host/$namespace/${{ steps.meta.outputs.project_code }}}"
+          image_repository="$(printf '%s' "$image_repository" | tr '[:upper:]' '[:lower:]')"
+          echo "image_repository=$image_repository" >> "$GITHUB_OUTPUT"
+
+      - name: Login registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.CRAWLER_PLATFORM_REGISTRY_HOST || 'ghcr.io' }}
+          username: ${{ secrets.CRAWLER_REGISTRY_USERNAME || github.actor }}
+          password: ${{ secrets.CRAWLER_REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="${GITHUB_REF_NAME#v}"; elif [[ -f VERSION ]]; then version="$(tr -d '[:space:]' < VERSION | sed 's/^v//')"; else echo "missing VERSION or vX.Y.Z tag" >&2; exit 2; fi
+          echo "release_version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.image.outputs.image_repository }}:${{ steps.version.outputs.release_version }}
+          labels: |
+            crawler.platform.project_code=${{ steps.meta.outputs.project_code }}
+            crawler.platform.company_code=${{ steps.meta.outputs.company_code }}
+            crawler.platform.release_version=${{ steps.version.outputs.release_version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Register release to crawler platform
+        shell: bash
+        env:
+          CRAWLER_PLATFORM_DISCOVERY_TOKEN: ${{ secrets.CRAWLER_PLATFORM_DISCOVERY_TOKEN }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.image_repository }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
+          CRAWLER_PROJECT_CODE: ${{ steps.meta.outputs.project_code }}
+          CRAWLER_COMPANY_CODE: ${{ steps.meta.outputs.company_code }}
+        run: |
+          set -euo pipefail
+          test -n "$CRAWLER_PLATFORM_URL"
+          test -n "$CRAWLER_PLATFORM_DISCOVERY_TOKEN"
+          curl -fsSL "$CRAWLER_PLATFORM_URL/api/v1/cicd/spider-release-register.py" -o /tmp/spider_release_register.py
+          python3 /tmp/spider_release_register.py

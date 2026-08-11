@@ -1040,19 +1040,62 @@ def test_project_release_deployment_to_multiple_agents() -> None:
         'serverIds': [],
     })
     assert deployment.status_code == 400
+    for idx, agent in enumerate(agents):
+        client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f'inst-deploy-precheck-{idx}',
+            'dockerStatus': 'OK',
+            'availableSlots': 2,
+            'runningContainers': 0,
+            'currentRuns': {'runIds': []},
+        })
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
     server_ids = [row['serverId'] for row in servers if row['serverCode'] in {'srv-dep-a', 'srv-dep-b'}]
     deployment = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={'serverIds': server_ids, 'reason': '部署到两台服务器'}).json()['data']
     assert deployment['releaseVersion'] == '1.0.1'
+    assert deployment['deploymentStatus'] == 'DEPLOYING'
     assert len(deployment['targets']) == 2
+    assert {target['commandId'] for target in deployment['targets']}
     pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
     assert {item['serverId'] for item in pool} >= set(server_ids)
     for item in pool:
         if item['serverId'] in server_ids:
             assert item['latestImageDigest'] == discovery['manifest']['imageDigest']
-            assert item['imageReadinessStatus'] in {'OUTDATED', 'READY', 'WARMING'}
+            assert item['deploymentStatus'] == 'DEPLOYING'
+            assert item['imageReadinessStatus'] == 'DEPLOYING'
+            assert item['schedulingStatus'] == 'PAUSED'
     history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data']
-    assert history and history[0]['deploymentStatus'] == 'READY_TO_PREWARM'
+    assert history and history[0]['deploymentStatus'] == 'DEPLOYING'
+    assert history[0]['strategy']['steps'][-1]['key'] == 'AGENT_DEPLOY_PREPARE'
+
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
+        'agentInstanceId': 'inst-deploy-a',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+    }).json()['data']
+    pending = [item for item in heartbeat['pendingAgentCommands'] if item['projectId'] == project['projectId']]
+    assert len(pending) == 1
+    assert pending[0]['commandType'] == 'PROJECT_DEPLOY_PREPARE'
+    assert heartbeat['pendingImagePulls'] == []
+
+    ack = client.post('/api/v1/agent-command-results', headers=agents[0]['headers'], json={
+        'commandId': pending[0]['commandId'],
+        'commandType': 'PROJECT_DEPLOY_PREPARE',
+        'projectId': project['projectId'],
+        'releaseId': pending[0]['releaseId'],
+        'deploymentId': pending[0]['deploymentId'],
+        'targetId': pending[0]['targetId'],
+        'success': True,
+        'message': 'ok',
+        'result': {'imageRef': discovery['manifest']['imageRepository'] + '@' + discovery['manifest']['imageDigest']},
+    }).json()['data']
+    assert ack['accepted'] is True
+    pool_after_ack = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    deployed = [item for item in pool_after_ack if item['serverId'] == pending[0]['serverId']][0]
+    assert deployed['deploymentStatus'] == 'DEPLOYED'
+    assert deployed['imageReadinessStatus'] == 'READY'
+    assert deployed['schedulingStatus'] == 'ENABLED'
 
 
 

@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.errors import AppError
 from app.models import (
+    CrawlerAgent,
+    CrawlerCompany,
     CrawlerCompanyDiscoveryToken,
     CrawlerDiscoveredProject,
     CrawlerDiscoveredProjectServer,
@@ -33,6 +35,7 @@ from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectReleaseDep
 from app.services.permissions import is_super_admin, require_company_scope, require_project_role, scoped_company_id
 from app.services.audit import write_operation_log
 from app.services.container_cleanup_service import ContainerCleanupService
+from app.services.agent_command_service import AgentCommandService
 from app.utils import sha256_text, utcnow
 
 
@@ -44,16 +47,34 @@ class ProjectService:
         self.servers = ServerRepository(db)
         self.project_servers = ProjectServerRepository(db)
 
-    def validate_discovery_token(self, payload: ProjectDiscoveryCreate, authorization: str | None) -> None:
+    def validate_discovery_token(self, payload: ProjectDiscoveryCreate, authorization: str | None) -> int:
         if not authorization or not authorization.startswith("Discovery "):
             raise AppError("项目接入凭证无效", code=40150, http_status=status.HTTP_401_UNAUTHORIZED)
         token_hash = sha256_text(authorization[10:].strip())
         token = self.db.scalar(select(CrawlerCompanyDiscoveryToken).where(CrawlerCompanyDiscoveryToken.token_hash == token_hash, CrawlerCompanyDiscoveryToken.status == "ENABLED"))
-        if not token or token.company_id != payload.company_id:
+        if not token:
             raise AppError("项目接入凭证无效", code=40151, http_status=status.HTTP_401_UNAUTHORIZED)
         if token.expires_at and token.expires_at < utcnow():
             raise AppError("项目接入凭证已过期", code=40152, http_status=status.HTTP_401_UNAUTHORIZED)
+
+        manifest_company_code = (payload.manifest.company_code or "").strip()
+        target_company_id = payload.company_id
+        if manifest_company_code:
+            company = self.db.scalar(select(CrawlerCompany).where(CrawlerCompany.company_code == manifest_company_code, CrawlerCompany.status == "ENABLED"))
+            if not company:
+                raise AppError("项目声明的公司编码不存在或已禁用", code=40153, http_status=status.HTTP_401_UNAUTHORIZED, data={"companyCode": manifest_company_code})
+            if target_company_id and target_company_id != company.company_id:
+                raise AppError("项目声明的公司编码与 companyId 不一致", code=40154, http_status=status.HTTP_401_UNAUTHORIZED, data={"companyCode": manifest_company_code, "companyId": target_company_id})
+            target_company_id = company.company_id
+
+        if not target_company_id:
+            target_company_id = token.company_id
+        if token.company_id != target_company_id:
+            raise AppError("项目接入凭证与目标公司不匹配", code=40151, http_status=status.HTTP_401_UNAUTHORIZED)
+
+        payload.company_id = target_company_id
         token.last_used_at = utcnow()
+        return target_company_id
 
     def list_discovered(self, user: SysUser, company_id: int | None = None) -> list[dict]:
         scoped = scoped_company_id(user, company_id)
@@ -62,16 +83,19 @@ class ProjectService:
 
     def upsert_discovered(self, payload: ProjectDiscoveryCreate) -> CrawlerDiscoveredProject:
         server_codes = self._normalize_server_codes(payload.server_codes or ([payload.server_code] if payload.server_code else []))
-        servers = self._resolve_registration_servers(payload.company_id, server_codes)
+        company_id = payload.company_id
+        if not company_id:
+            raise AppError("缺少项目归属公司：请提供 crawler_project.json.companyCode 或 companyId", code=40047)
+        servers = self._resolve_registration_servers(company_id, server_codes)
         manifest = payload.manifest
         self._validate_release_version(manifest.release_version)
         if not manifest.task_definitions:
             raise AppError("manifest 中未发现任务定义，sch.py 解析结果不能为空", code=40043)
-        project = self.discovered.by_company_key(payload.company_id, manifest.project_key)
+        project = self.discovered.by_company_key(company_id, manifest.project_key)
         now = utcnow()
         if not project:
             project = CrawlerDiscoveredProject(
-                company_id=payload.company_id,
+                company_id=company_id,
                 project_key=manifest.project_key,
                 project_code=manifest.project_code,
                 project_name=manifest.project_name,
@@ -101,7 +125,7 @@ class ProjectService:
             if project.discovery_status != "IMPORTED":
                 project.discovery_status = "READY_TO_IMPORT"
         artifact = self._upsert_artifact(manifest, now)
-        release = self._upsert_release(payload.company_id, project, artifact.artifact_id, manifest)
+        release = self._upsert_release(company_id, project, artifact.artifact_id, manifest)
         project.latest_release_id = release.release_id
         for server in servers:
             self._upsert_discovered_server(project, server, manifest.image_digest, now)
@@ -255,57 +279,117 @@ class ProjectService:
         release = self.db.get(CrawlerProjectRelease, payload.release_id) if payload.release_id else self._latest_project_release(project.project_id)
         if not release or release.project_id != project.project_id or release.release_status != "PUBLISHED":
             raise AppError("项目 release 不存在或不可部署", code=40451, http_status=status.HTTP_404_NOT_FOUND)
-        if not payload.server_ids:
-            raise AppError("请选择至少一台已安装 Agent 的服务器", code=40051)
+        self._validate_release_contract(release)
+        target_server_ids = sorted(set(payload.server_ids or []))
+        if payload.auto_select and not target_server_ids:
+            target_server_ids = [server.server_id for server in self._auto_select_deploy_servers(project)]
+        if not target_server_ids:
+            raise AppError("请选择至少一台已安装 Agent 的服务器，或开启自动选择", code=40051)
         servers = []
         unavailable = []
-        for server_id in sorted(set(payload.server_ids)):
+        for server_id in target_server_ids:
             server = self.db.get(CrawlerServer, server_id)
-            if not server or server.company_id != project.company_id:
-                unavailable.append({"serverId": server_id, "reason": "服务器不存在或不属于该公司"})
-                continue
-            if server.manage_status == "DISABLED":
-                unavailable.append({"serverId": server_id, "reason": "服务器已禁用"})
-                continue
-            if not server.agent:
-                unavailable.append({"serverId": server_id, "reason": "该服务器尚未安装或绑定 Agent"})
+            reason = self._server_deploy_block_reason(project, server)
+            if reason:
+                unavailable.append({"serverId": server_id, "reason": reason})
                 continue
             servers.append(server)
         if unavailable:
             raise AppError("部署目标校验未通过", code=40052, data={"unavailableServers": unavailable})
+        active_deploying = self.db.scalar(select(func.count(CrawlerProjectServer.project_server_id)).where(
+            CrawlerProjectServer.project_id == project.project_id,
+            CrawlerProjectServer.server_id.in_([server.server_id for server in servers]),
+            CrawlerProjectServer.deployment_status.in_(["DEPLOYING", "ROLLING_BACK", "CLEANING"]),
+        )) or 0
+        if active_deploying:
+            raise AppError("所选服务器已有部署/清理动作未完成，请等待状态结束后再重试", code=40053)
         now = utcnow()
         deployment = CrawlerProjectDeployment(
             company_id=project.company_id,
             project_id=project.project_id,
             release_id=release.release_id,
-            deployment_name=payload.reason or f"部署 {release.version}",
-            strategy={"prewarmWhenIdle": payload.prewarm_when_idle, "maxParallelPulls": payload.max_parallel_pulls},
-            deployment_status="CREATED",
+            deployment_name=payload.reason or f"一键部署 {release.version}",
+            strategy=self._initial_deployment_strategy(project, release, payload, servers),
+            deployment_status="DISPATCHING_AGENT",
             created_by=user.user_id,
         )
         self.db.add(deployment)
         self.db.flush()
         targets = []
+        command_service = AgentCommandService(self.db)
         existing_count = len(self.project_servers.list_by_project(project.project_id))
+        strategy_targets: list[dict] = []
         for idx, server in enumerate(servers):
             ps = self._upsert_project_server(project, server.server_id, release, release.image_digest, now, existing_count + idx, project.dispatch_mode)
-            ps.scheduling_status = "ENABLED" if ps.scheduling_status in {"DISABLED"} else ps.scheduling_status
+            desired_scheduling_status = "ENABLED"
+            ps.deployment_status = "DEPLOYING"
+            ps.image_readiness_status = "DEPLOYING"
+            ps.scheduling_status = "PAUSED"
+            ps.disabled_reason = "项目首次/版本部署中：等待 Agent 完成镜像拉取、目录准备和运行时自检"
             target = CrawlerProjectDeploymentTarget(
                 deployment_id=deployment.deployment_id,
                 company_id=project.company_id,
                 project_id=project.project_id,
                 release_id=release.release_id,
                 server_id=server.server_id,
-                target_status=ps.image_readiness_status or "OUTDATED",
-                image_readiness_status=ps.image_readiness_status or "OUTDATED",
-                last_deployed_at=now,
+                target_status="PENDING_AGENT",
+                image_readiness_status="DEPLOYING",
+                last_deployed_at=None,
             )
             self.db.add(target)
-            targets.append({"serverId": server.server_id, "serverCode": server.server_code, "serverName": server.server_name, "imageReadinessStatus": ps.image_readiness_status, "latestImageDigest": ps.latest_image_digest})
-        deployment.deployment_status = "READY_TO_PREWARM"
-        write_operation_log(self.db, user, None, operation_type="DEPLOY_PROJECT_RELEASE", resource_type="project", resource_id=str(project.project_id), after_data={"projectId": project.project_id, "releaseId": release.release_id, "serverIds": [s.server_id for s in servers]})
+            self.db.flush()
+            command = command_service.enqueue_project_deploy_prepare(
+                server=server,
+                project_id=project.project_id,
+                project_code=project.project_code,
+                release_id=release.release_id,
+                release_version=release.version,
+                image_repository=release.image_repository,
+                image_digest=release.image_digest,
+                deployment_id=deployment.deployment_id,
+                target_id=target.target_id,
+                desired_scheduling_status=desired_scheduling_status,
+                reason=payload.reason or "项目一键部署",
+            )
+            target.target_status = "DISPATCHED"
+            strategy_targets.append({
+                "targetId": target.target_id,
+                "serverId": server.server_id,
+                "serverCode": server.server_code,
+                "serverName": server.server_name,
+                "commandId": command["commandId"],
+                "status": "DISPATCHED",
+                "message": "已下发 Agent 部署指令，等待心跳执行",
+            })
+            targets.append({
+                "targetId": target.target_id,
+                "serverId": server.server_id,
+                "serverCode": server.server_code,
+                "serverName": server.server_name,
+                "targetStatus": target.target_status,
+                "imageReadinessStatus": target.image_readiness_status,
+                "latestImageDigest": ps.latest_image_digest,
+                "commandId": command["commandId"],
+            })
+        strategy = dict(deployment.strategy or {})
+        strategy["targets"] = strategy_targets
+        strategy["updatedAt"] = utcnow().isoformat()
+        deployment.strategy = strategy
+        deployment.deployment_status = "DEPLOYING"
+        write_operation_log(self.db, user, None, operation_type="DEPLOY_PROJECT_RELEASE", resource_type="project", resource_id=str(project.project_id), after_data={"projectId": project.project_id, "releaseId": release.release_id, "serverIds": [s.server_id for s in servers], "deploymentId": deployment.deployment_id})
         self.db.commit()
-        return {"deploymentId": deployment.deployment_id, "projectId": project.project_id, "releaseId": release.release_id, "releaseVersion": release.version, "imageRepository": release.image_repository, "imageDigest": release.image_digest, "targets": targets, "message": "部署计划已创建；Agent 心跳会收到待预热镜像，已有运行实例不会被打断。"}
+        return {
+            "deploymentId": deployment.deployment_id,
+            "projectId": project.project_id,
+            "releaseId": release.release_id,
+            "releaseVersion": release.version,
+            "imageRepository": release.image_repository,
+            "imageDigest": release.image_digest,
+            "deploymentStatus": deployment.deployment_status,
+            "steps": strategy.get("steps", []),
+            "targets": targets,
+            "message": "一键部署单已创建；Agent 心跳会执行镜像拉取、项目目录准备和运行时自检，成功前不会放开任务调度。",
+        }
 
     def list_deployments(self, user: SysUser, project_id: int) -> list[dict]:
         require_project_role(self.db, user, project_id, "VIEWER")
@@ -382,6 +466,109 @@ class ProjectService:
         write_operation_log(self.db, user, None, operation_type="UPDATE_PROJECT_SERVER_POOL", resource_type="project", resource_id=str(project.project_id), before_data={"servers": before}, after_data={"servers": after, "reason": payload.reason})
         self.db.commit()
         return self.list_project_servers(user, project_id)
+
+    def _validate_release_contract(self, release: CrawlerProjectRelease) -> None:
+        manifest = release.manifest or {}
+        task_items = manifest.get("taskDefinitions") or []
+        if not isinstance(task_items, list) or not task_items:
+            raise AppError("项目 release 未包含任务定义，不能部署", code=40054)
+        seen: set[str] = set()
+        errors: list[str] = []
+        for idx, item in enumerate(task_items, start=1):
+            if not isinstance(item, dict):
+                errors.append(f"taskDefinitions[{idx}] 不是对象")
+                continue
+            key = str(item.get("definitionKey") or "").strip()
+            entry_module = str(item.get("entryModule") or "").strip()
+            entry_function = str(item.get("entryFunction") or "").strip()
+            if not key:
+                errors.append(f"taskDefinitions[{idx}] 缺少 definitionKey")
+            elif key in seen:
+                errors.append(f"taskDefinitions[{idx}] definitionKey 重复：{key}")
+            else:
+                seen.add(key)
+            if not entry_module:
+                errors.append(f"taskDefinitions[{idx}] 缺少 entryModule")
+            if not entry_function:
+                errors.append(f"taskDefinitions[{idx}] 缺少 entryFunction")
+        if errors:
+            raise AppError("项目 release 契约校验未通过", code=40055, data={"errors": errors})
+        if not str(release.image_repository or "").strip() or not str(release.image_digest or "").strip():
+            raise AppError("项目 release 缺少镜像仓库或 digest，不能部署", code=40056)
+
+    def _server_deploy_block_reason(self, project: CrawlerProject, server: CrawlerServer | None) -> str:
+        if not server or server.company_id != project.company_id:
+            return "服务器不存在或不属于该公司"
+        if server.manage_status != "ENABLED":
+            return "服务器已禁用"
+        if not server.agent:
+            return "服务器未接入 Agent"
+        if server.agent.connection_status != "ONLINE" or not server.agent.last_heartbeat_at:
+            return "Agent 尚未心跳上线"
+        metrics = server.metrics or {}
+        docker_status = str(metrics.get("dockerStatus") or metrics.get("docker_status") or "").upper()
+        if docker_status and docker_status not in {"OK", "READY", "UNKNOWN"}:
+            return f"Docker 状态异常：{docker_status}"
+        if metrics.get("dockerSockPerm") is False or metrics.get("docker_sock_perm") is False:
+            return "Agent 无 Docker socket 权限"
+        if metrics.get("projectDirWritable") is False or metrics.get("project_dir_writable") is False:
+            return "项目运行目录不可写"
+        return ""
+
+    def _auto_select_deploy_servers(self, project: CrawlerProject) -> list[CrawlerServer]:
+        selected: list[CrawlerServer] = []
+        seen: set[int] = set()
+        existing_pool = list(self.db.scalars(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id).order_by(CrawlerProjectServer.priority.asc(), CrawlerProjectServer.project_server_id.asc())).all())
+        for item in existing_pool:
+            server = self.db.get(CrawlerServer, item.server_id)
+            if item.scheduling_status in {"ENABLED", "RECOVERING"} and not self._server_deploy_block_reason(project, server):
+                selected.append(server)
+                seen.add(server.server_id)
+        if len(selected) >= project.min_available_servers:
+            return selected[: max(project.min_available_servers, 1)]
+        company_servers = list(self.db.scalars(select(CrawlerServer).where(CrawlerServer.company_id == project.company_id, CrawlerServer.manage_status == "ENABLED").order_by(CrawlerServer.server_id.asc())).all())
+        for server in company_servers:
+            if server.server_id in seen:
+                continue
+            if self._server_deploy_block_reason(project, server):
+                continue
+            selected.append(server)
+            seen.add(server.server_id)
+            if len(selected) >= max(project.min_available_servers, 1):
+                break
+        return selected
+
+    def _initial_deployment_strategy(self, project: CrawlerProject, release: CrawlerProjectRelease, payload: ProjectReleaseDeploy, servers: list[CrawlerServer]) -> dict:
+        now = utcnow().isoformat()
+        manifest = release.manifest or {}
+        task_items = manifest.get("taskDefinitions") or []
+        return {
+            "mode": "ONE_CLICK_PROJECT_DEPLOY",
+            "autoSelect": bool(payload.auto_select),
+            "reason": payload.reason or "项目一键部署",
+            "source": {
+                "repositoryUrl": project.repository_url,
+                "gitBranch": release.git_branch,
+                "gitCommit": release.git_commit,
+            },
+            "release": {
+                "releaseId": release.release_id,
+                "version": release.version,
+                "imageRepository": release.image_repository,
+                "imageDigest": release.image_digest,
+                "taskCount": len(task_items),
+            },
+            "selectedServers": [{"serverId": server.server_id, "serverCode": server.server_code, "serverName": server.server_name} for server in servers],
+            "steps": [
+                {"key": "SOURCE_CONFIRMED", "status": "SUCCEEDED", "message": "已固化 release、git commit 与镜像 digest", "finishedAt": now},
+                {"key": "CONTRACT_VALIDATED", "status": "SUCCEEDED", "message": "任务定义与镜像契约已通过平台校验", "finishedAt": now},
+                {"key": "SERVER_PRECHECKED", "status": "SUCCEEDED", "message": "目标服务器 Agent、Docker 与目录权限基础校验已通过", "finishedAt": now},
+                {"key": "DISPATCHING_AGENT", "status": "SUCCEEDED", "message": "部署指令已写入目标服务器队列", "finishedAt": now},
+                {"key": "AGENT_DEPLOY_PREPARE", "status": "PENDING", "message": "等待 Agent 拉取镜像、准备目录并执行运行时自检"},
+            ],
+            "targets": [],
+            "createdAt": now,
+        }
 
     def _upsert_artifact(self, manifest, now):
         artifact = self.db.scalar(select(CrawlerImageArtifact).where(CrawlerImageArtifact.image_repository == manifest.image_repository, CrawlerImageArtifact.image_digest == manifest.image_digest))

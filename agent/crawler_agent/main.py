@@ -108,6 +108,31 @@ class AgentApp:
             "lastError": self.last_error,
         }
 
+
+    def handle_agent_commands(self, heartbeat_response: dict[str, Any]) -> None:
+        commands = heartbeat_response.get("pendingAgentCommands") or []
+        if not isinstance(commands, list) or not commands:
+            return
+        for command in commands[:10]:
+            if not isinstance(command, dict):
+                continue
+            command_id = command.get("commandId")
+            command_type = str(command.get("commandType") or "").upper()
+            try:
+                if command_type == "PROJECT_DEPLOY_PREPARE":
+                    result = self.executor.prepare_project_runtime(command)
+                    self.api.agent_command_result(command, True, "项目镜像、目录和运行时自检已完成", result)
+                else:
+                    self.api.agent_command_result(command, False, f"不支持的 Agent 指令类型：{command_type}", {})
+            except Exception as exc:
+                self.last_error = f"Agent 指令执行失败 command_id={command_id}: {exc}"[:4000]
+                logger.warning("agent command failed command_id=%s type=%s error=%s", command_id, command_type, exc, exc_info=True)
+                try:
+                    self.api.agent_command_result(command, False, str(exc), {})
+                except Exception as report_exc:
+                    self.last_error = f"Agent 指令结果回报失败 command_id={command_id}: {report_exc}"[:4000]
+                    logger.warning("agent command result report failed command_id=%s error=%s", command_id, report_exc, exc_info=True)
+
     def handle_image_updates(self, heartbeat_response: dict[str, Any]) -> None:
         updates = heartbeat_response.get("pendingImagePulls") or []
         if not isinstance(updates, list) or not updates:
@@ -152,6 +177,7 @@ class AgentApp:
                 now = time.monotonic()
                 if now - last_heartbeat >= config.heartbeat_interval_seconds:
                     heartbeat_response = self.api.heartbeat(self.heartbeat_payload())
+                    self.handle_agent_commands(heartbeat_response or {})
                     self.handle_container_cleanups(heartbeat_response or {})
                     self.handle_image_updates(heartbeat_response or {})
                     last_heartbeat = now

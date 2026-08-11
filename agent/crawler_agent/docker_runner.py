@@ -101,6 +101,86 @@ class RunExecutor:
                 continue
         return run_ids
 
+    def prepare_project_runtime(self, command: dict[str, Any]) -> dict[str, Any]:
+        payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+        project_id = str(payload.get("projectId") or command.get("projectId") or "")
+        project_code = _safe(payload.get("projectCode") or command.get("projectCode") or project_id or "project")
+        release_id = str(payload.get("releaseId") or command.get("releaseId") or "")
+        image_repository = str(payload.get("imageRepository") or "")
+        image_digest = str(payload.get("imageDigest") or "")
+        image_ref = self._pull_digest(image_repository, image_digest)
+        root = self.config.project_data_root / project_code
+        dirs = {
+            "projectRoot": root,
+            "cache": root / "cache",
+            "work": root / "work",
+            "logs": root / "logs",
+            "profiles": root / "profiles",
+            "tmp": root / "tmp",
+        }
+        for path in dirs.values():
+            path.mkdir(parents=True, exist_ok=True)
+        smoke = self._runtime_smoke_test(command, image_ref) if payload.get("smokeTest", True) else {"skipped": True}
+        return {
+            "imageRef": image_ref,
+            "projectRoot": str(root),
+            "releaseId": release_id,
+            "projectId": project_id,
+            "smokeTest": smoke,
+        }
+
+    def _runtime_smoke_test(self, command: dict[str, Any], image_ref: str) -> dict[str, Any]:
+        command_id = str(command.get("commandId") or "")
+        labels = {
+            "crawler.platform.command_id": command_id,
+            "crawler.platform.command_type": str(command.get("commandType") or "PROJECT_DEPLOY_PREPARE"),
+            "crawler.platform.project_id": str(command.get("projectId") or ""),
+            "crawler.platform.release_id": str(command.get("releaseId") or ""),
+        }
+        container = None
+        started = time.monotonic()
+        try:
+            kwargs: dict[str, Any] = {
+                "image": image_ref,
+                "command": ["python", "-c", "import crawler_runtime; print('crawler_runtime import ok')"],
+                "detach": True,
+                "labels": labels,
+                "name": f"crawler_deploy_check_{_safe(command_id, 'command')}",
+                "init": True,
+                "mem_limit": "512m",
+                "memswap_limit": "512m",
+                "nano_cpus": 500_000_000,
+                "security_opt": ["no-new-privileges:true"],
+            }
+            if self.config.docker_network:
+                kwargs["network"] = self.config.docker_network
+            if self.config.container_user:
+                kwargs["user"] = self.config.container_user
+            container = self.client.containers.run(**kwargs)
+            while time.monotonic() - started <= 60:
+                container.reload()
+                if container.status in {"exited", "dead"}:
+                    break
+                time.sleep(1)
+            else:
+                try:
+                    container.stop(timeout=5)
+                except Exception:
+                    pass
+                raise RuntimeError("运行时自检超时：60 秒内未退出")
+            result = container.wait() or {}
+            exit_code = int(result.get("StatusCode", 1))
+            logs = self._container_logs_text(container, tail=100)
+            if exit_code != 0:
+                raise RuntimeError(f"运行时自检失败 exitCode={exit_code} logs={logs[-1000:]}")
+            return {"exitCode": exit_code, "logsTail": logs[-1000:]}
+        finally:
+            if container:
+                try:
+                    container.remove(force=True)
+                except Exception:
+                    logger.warning("deploy smoke test container remove failed command_id=%s", command_id, exc_info=True)
+
     def prewarm_image(self, image_task: dict[str, Any]) -> bool:
         image_repository = str(image_task.get("imageRepository") or "")
         image_digest = str(image_task.get("imageDigest") or "")

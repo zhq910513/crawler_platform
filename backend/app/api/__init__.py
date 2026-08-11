@@ -1,4 +1,4 @@
-from app.api import running_center, account_status, agent_bootstrap, agents, alerts, companies, company_resources, cron_previews, dashboard, operations, projects, releases, runs, sessions, servers, system_settings, task_schedule_panels, tasks, users
+from app.api import running_center, account_status, agent_bootstrap, agents, alerts, cicd, companies, company_resources, cron_previews, dashboard, operations, projects, releases, runs, sessions, servers, system_settings, task_schedule_panels, tasks, users
 
 routers = [
     sessions.router,
@@ -9,6 +9,7 @@ routers = [
     agents.router,
     account_status.router,
     agent_bootstrap.router,
+    cicd.router,
     projects.router,
     tasks.router,
     task_schedule_panels.router,

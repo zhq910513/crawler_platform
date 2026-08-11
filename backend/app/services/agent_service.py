@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.errors import AppError
 from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectDeploymentTarget, CrawlerProjectRelease, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
-from app.schemas import AgentContainerCleanupResult, AgentHeartbeat, AgentImagePullResult, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
+from app.schemas import AgentCommandResult, AgentContainerCleanupResult, AgentHeartbeat, AgentImagePullResult, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
 from app.services.routing_service import RoutingService
 from app.services.container_cleanup_service import ContainerCleanupService
+from app.services.agent_command_service import AgentCommandService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status
 from app.services.audit import write_operation_log
 from app.utils import utcnow
@@ -42,7 +43,8 @@ class AgentService:
         self._sync_project_server_scheduling(server)
         self.db.flush()
         RoutingService(self.db).reroute_or_wait_unclaimed(commit=False)
-        pending_image_pulls = self._pending_image_pulls(server, payload)
+        pending_agent_commands = AgentCommandService(self.db).pending_for_server(server)
+        pending_image_pulls = self._pending_image_pulls(server, payload) if not pending_agent_commands else []
         pending_cleanups = ContainerCleanupService(self.db).pending_for_server(server)
         self.db.commit()
         return {
@@ -50,6 +52,8 @@ class AgentService:
             "connectionStatus": agent.connection_status,
             "serverCapacityStatus": server.capacity_status,
             "replacedPreviousInstance": replaced,
+            "pendingAgentCommands": pending_agent_commands,
+            "agentCommandCount": len(pending_agent_commands),
             "pendingImagePulls": pending_image_pulls,
             "imageUpdateCount": len(pending_image_pulls),
             "pendingContainerCleanups": pending_cleanups,
@@ -187,6 +191,16 @@ class AgentService:
         })
         self.db.commit()
         return {"accepted": accepted, "cleanupId": payload.cleanup_id}
+
+    def report_agent_command_result(self, agent: CrawlerAgent, payload: AgentCommandResult) -> dict:
+        server = self.db.get(CrawlerServer, agent.server_id)
+        if not server:
+            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        service = AgentCommandService(self.db)
+        ack = service.acknowledge(server, payload.model_dump(by_alias=True))
+        service.apply_project_deploy_result(server, ack)
+        self.db.commit()
+        return {"accepted": bool(ack.get("accepted")), "commandId": payload.command_id, "reason": ack.get("reason", "")}
 
     def _pending_image_pulls(self, server: CrawlerServer, payload: AgentHeartbeat) -> list[dict]:
         running_count = int(payload.running_containers or 0)

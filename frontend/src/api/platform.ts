@@ -1,5 +1,5 @@
 import { http, request } from './client'
-import type { AgentJoinTokenCreateRequest, AgentJoinTokenResult, AgentRegistrationRequest, Company, DashboardSummary, DiscoveredProject, AlertEvent, NotificationChannel, NotificationChannelCreateRequest, Project, ProjectImportRequest, ProjectReleaseDeploymentResult, ProjectReleaseDeployRequest, ProjectServer, ProjectServerPoolUpdateRequest, ProjectUpdateRequest, RunRecord, ServerCreateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskUpdateRequest, UserAccount, UserCreateRequest, ScheduleUpdateRequest, CronPreviewRequest, CronPreviewResult, OwnPasswordUpdateRequest, UserPasswordResetRequest, AccountCredential, AccountStatusEvent, AccountStatusEventCreateRequest, RunDiagnosis, RunEvent, RunLogTail, CredentialSubjectBinding, CredentialSubjectBindingCreateRequest, CredentialSubjectBindingUpdateRequest, CredentialLease, SystemSettings, CompanyResourceConfig, CompanySetupStatus, RunningCenterSummary } from '../types/api'
+import type { AgentJoinTokenCreateRequest, AgentJoinTokenResult, AgentRegistrationRequest, Company, DashboardSummary, DiscoveredProject, AlertEvent, NotificationChannel, NotificationChannelCreateRequest, Project, ProjectImportRequest, ProjectReleaseDeploymentResult, ProjectReleaseDeployRequest, ProjectServer, ProjectServerPoolUpdateRequest, ProjectUpdateRequest, RunRecord, ServerCreateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskUpdateRequest, UserAccount, UserCreateRequest, ScheduleUpdateRequest, CronPreviewRequest, CronPreviewResult, OwnPasswordUpdateRequest, UserPasswordResetRequest, AccountCredential, AccountStatusEvent, AccountStatusEventCreateRequest, RunDiagnosis, RunEvent, RunLogTail, CredentialSubjectBinding, CredentialSubjectBindingCreateRequest, CredentialSubjectBindingUpdateRequest, CredentialLease, SystemSettings, CompanyResourceConfig, CompanySetupStatus, RunningCenterSummary, SpiderProjectCicdGuide } from '../types/api'
 
 export function listCompanies() { return request<Company[]>(http.get('/companies')) }
 export function createCompany(payload: { companyCode: string; companyName: string; timezone?: string; description?: string }) { return request<Company>(http.post('/companies', payload)) }
@@ -24,6 +24,9 @@ export function registerAgent(payload: AgentRegistrationRequest) { return reques
 
 export function createAgentJoinToken(payload: AgentJoinTokenCreateRequest) { return request<AgentJoinTokenResult>(http.post('/servers/agent-join-tokens', payload)) }
 export function listAgentJoinTokens(companyId?: number) { return request<Record<string, unknown>[]>(http.get('/servers/agent-join-tokens', { params: { companyId } })) }
+
+
+export function getSpiderProjectCicdOneClickGuide(params?: { provider?: 'github' | 'gitlab'; companyId?: number }) { return request<SpiderProjectCicdGuide>(http.get('/cicd/spider-projects/one-click-guide', { params })) }
 
 export function listDiscoveredProjects(companyId?: number) { return request<DiscoveredProject[]>(http.get('/discovered-projects', { params: { companyId } })) }
 export function listProjects(companyId?: number) { return request<Project[]>(http.get('/projects', { params: { companyId } })) }

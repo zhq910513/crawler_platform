@@ -6,6 +6,7 @@
       </el-select>
       <span v-else class="muted">当前公司：{{ currentCompanyName }}</span>
       <el-button type="primary" @click="openImport">接入项目</el-button>
+      <el-button @click="openCicdGuide">CI一键初始化</el-button>
       <el-button @click="loadAll">刷新</el-button>
     </div>
 
@@ -18,14 +19,14 @@
       <el-table-column label="启用节点数" prop="executionServerCount" />
       <el-table-column label="调度模式"><template #default="s">{{ zh(s.row.dispatchMode) }}</template></el-table-column>
       <el-table-column label="创建时间"><template #default="s">{{ formatTime(s.row.createdAt) }}</template></el-table-column>
-      <el-table-column label="操作" width="100" fixed="right"><template #default="s"><el-button size="small" type="danger" link @click.stop="deleteProjectRow(s.row)">删除</el-button></template></el-table-column>
+      <el-table-column label="操作" width="180" fixed="right"><template #default="s"><el-button size="small" type="primary" link @click.stop="oneClickDeploy(s.row)">一键部署</el-button><el-button size="small" type="danger" link @click.stop="deleteProjectRow(s.row)">删除</el-button></template></el-table-column>
     </el-table>
 
     <el-divider />
     <section v-if="selectedProject">
       <div class="section-title">
         <h3>部署与执行节点：{{ selectedProject.projectName }}</h3>
-        <div><el-button size="small" @click="openServerPoolEditor">配置执行节点</el-button><el-button size="small" @click="loadProjectServers">刷新</el-button></div>
+        <div><el-button size="small" type="primary" @click="oneClickDeploy(selectedProject)">一键部署当前版本</el-button><el-button size="small" @click="openServerPoolEditor">配置执行节点</el-button><el-button size="small" @click="refreshSelectedProject">刷新</el-button></div>
       </div>
       <el-table :data="projectServers" border>
         <el-table-column label="服务器名称" prop="serverName" />
@@ -38,6 +39,15 @@
         <el-table-column label="权重" prop="weight" />
         <el-table-column label="项目并发" prop="maxConcurrency" />
         <el-table-column label="暂停原因" prop="disabledReason" min-width="180" />
+      </el-table>
+      <el-divider />
+      <h3>最近部署单</h3>
+      <el-table :data="deploymentHistory" border>
+        <el-table-column label="部署单" prop="deploymentName" min-width="180" />
+        <el-table-column label="状态"><template #default="s">{{ zh(s.row.deploymentStatus) }}</template></el-table-column>
+        <el-table-column label="目标数"><template #default="s">{{ Array.isArray(s.row.targets) ? s.row.targets.length : 0 }}</template></el-table-column>
+        <el-table-column label="步骤" min-width="260"><template #default="s"><span>{{ deploymentStepText(s.row) }}</span></template></el-table-column>
+        <el-table-column label="创建时间"><template #default="s">{{ formatTime(s.row.createdAt) }}</template></el-table-column>
       </el-table>
     </section>
 
@@ -78,15 +88,56 @@
       <div v-if="poolAnalysis" class="soft-panel">影响分析已完成，请确认后保存。</div>
       <template #footer><el-button @click="serverPoolVisible = false">取消</el-button><el-button @click="analyzePool">影响分析</el-button><el-button @click="deploySelectedRelease">部署当前版本</el-button><el-button type="primary" @click="savePool">保存</el-button></template>
     </el-dialog>
+
+    <el-dialog v-model="cicdGuideVisible" title="爬虫项目 CI 一键初始化" width="980px">
+      <div class="toolbar">
+        <el-select v-model="cicdProvider" style="width: 160px" @change="loadCicdGuide">
+          <el-option label="GitHub Actions" value="github" />
+          <el-option label="GitLab CI" value="gitlab" />
+        </el-select>
+        <el-button @click="loadCicdGuide">刷新配置</el-button>
+      </div>
+      <el-alert v-if="cicdGuide && !cicdGuide.platformPublicUrlConfigured" type="warning" show-icon :closable="false" title="系统设置里还没有配置平台访问地址，下面命令里的地址需要先替换。" />
+      <div v-if="cicdGuide" class="cicd-guide">
+        <h4>Git 仓库 Variables</h4>
+        <el-table :data="cicdGuide.globalVariables" border size="small">
+          <el-table-column label="名称" prop="name" min-width="220" />
+          <el-table-column label="建议值" prop="value" min-width="260" />
+          <el-table-column label="作用域" prop="scope" width="160" />
+          <el-table-column label="必填" width="80"><template #default="s">{{ s.row.required ? '是' : '否' }}</template></el-table-column>
+        </el-table>
+        <h4>Git 仓库 Secrets</h4>
+        <el-table :data="cicdGuide.globalSecrets" border size="small">
+          <el-table-column label="名称" prop="name" min-width="240" />
+          <el-table-column label="说明" prop="description" min-width="360" />
+          <el-table-column label="必填" width="80"><template #default="s">{{ s.row.required ? '是' : '否' }}</template></el-table-column>
+        </el-table>
+        <h4>项目归属文件：crawler_project.json</h4>
+        <el-table :data="cicdGuide.projectDefaults" border size="small">
+          <el-table-column label="名称" prop="name" min-width="240" />
+          <el-table-column label="建议值" prop="value" min-width="180" />
+          <el-table-column label="说明" prop="description" min-width="360" />
+          <el-table-column label="必填" width="80"><template #default="s">{{ s.row.required ? '是' : '否' }}</template></el-table-column>
+        </el-table>
+        <h4>每个新项目仓库执行一次</h4>
+        <el-input :model-value="cicdGuide.oneLineInitCommand" type="textarea" :rows="2" readonly />
+        <div style="margin-top: 8px"><el-button size="small" @click="copyText(cicdGuide.oneLineInitCommand)">复制初始化命令</el-button></div>
+        <h4>生成文件：{{ cicdGuide.workflowPath }}</h4>
+        <el-input :model-value="cicdGuide.workflowContent" type="textarea" :rows="12" readonly />
+        <h4>提交命令</h4>
+        <el-input :model-value="cicdGuide.commitCommand" readonly />
+        <ul class="muted"><li v-for="note in cicdGuide.notes" :key="note">{{ note }}</li></ul>
+      </div>
+    </el-dialog>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
-import { analyzeProjectServers, deleteProject, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectServers, listProjects, listServers, updateProjectServers } from '../api/platform'
+import { analyzeProjectServers, deleteProject, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectReleaseDeployments, listProjectServers, listProjects, listServers, updateProjectServers, getSpiderProjectCicdOneClickGuide } from '../api/platform'
 import { sessionState } from '../stores/session'
-import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode } from '../types/api'
+import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode, SpiderProjectCicdGuide } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
 const route = useRoute()
@@ -94,6 +145,7 @@ const companies = ref<Company[]>([])
 const projects = ref<Project[]>([])
 const discoveredProjects = ref<DiscoveredProject[]>([])
 const projectServers = ref<ProjectServer[]>([])
+const deploymentHistory = ref<Array<Record<string, unknown>>>([])
 const allServers = ref<ServerNode[]>([])
 const selectedProject = ref<Project | null>(null)
 const selectedDiscovered = ref<DiscoveredProject | null>(null)
@@ -104,6 +156,9 @@ const serverPoolVisible = ref(false)
 const serverPoolDraft = ref<Array<ProjectServer & { enabled: boolean }>>([])
 const serverPoolReason = ref('')
 const poolAnalysis = ref<Record<string, unknown> | null>(null)
+const cicdGuideVisible = ref(false)
+const cicdProvider = ref<'github' | 'gitlab'>('github')
+const cicdGuide = ref<SpiderProjectCicdGuide | null>(null)
 const importForm = reactive({ remark: '', dispatchMode: 'LOAD_BALANCE' })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
 
@@ -115,8 +170,10 @@ async function loadDiscovered() { discoveredProjects.value = await listDiscovere
 function setDiscovered(row: DiscoveredProject) { if (row.selectable) selectedDiscovered.value = row }
 function discoveredRowClass({ row }: { row: DiscoveredProject }) { return row.selectable ? '' : 'disabled-row' }
 async function submitImport() { if (!selectedDiscovered.value) return; await importProject({ discoveredProjectId: selectedDiscovered.value.discoveredProjectId, remark: importForm.remark, dispatchMode: importForm.dispatchMode }); ElMessage.success('项目已接入'); importVisible.value = false; await loadAll() }
-async function selectProject(row: Project) { selectedProject.value = row; await loadProjectServers() }
+async function selectProject(row: Project) { selectedProject.value = row; await refreshSelectedProject() }
+async function refreshSelectedProject() { await loadProjectServers(); await loadProjectDeployments() }
 async function loadProjectServers() { if (selectedProject.value) projectServers.value = await listProjectServers(selectedProject.value.projectId) }
+async function loadProjectDeployments() { if (selectedProject.value) deploymentHistory.value = await listProjectReleaseDeployments(selectedProject.value.projectId) }
 async function deleteProjectRow(row: Project) {
   try {
     await ElMessageBox.confirm(`确认删除项目“${row.projectName}”？删除后会向项目执行服务器下发容器清理指令；存在历史运行记录的项目会归档隐藏。`, '删除项目确认', { type: 'warning' })
@@ -126,6 +183,7 @@ async function deleteProjectRow(row: Project) {
     if (selectedProject.value?.projectId === row.projectId) {
       selectedProject.value = null
       projectServers.value = []
+      deploymentHistory.value = []
     }
     await loadProjects()
   } catch (error) {
@@ -186,13 +244,47 @@ function poolPayload(): ProjectServerPoolUpdateRequest {
 }
 async function analyzePool() { if (!selectedProject.value) return; poolAnalysis.value = await analyzeProjectServers(selectedProject.value.projectId, poolPayload()) }
 
+async function openCicdGuide() {
+  cicdGuideVisible.value = true
+  await loadCicdGuide()
+}
+async function loadCicdGuide() {
+  const companyId = sessionState.user?.isSuperAdmin ? selectedCompanyId.value : sessionState.user?.companyId || undefined
+  cicdGuide.value = await getSpiderProjectCicdOneClickGuide({ provider: cicdProvider.value, companyId })
+}
+async function copyText(value: string) {
+  await navigator.clipboard.writeText(value)
+  ElMessage.success('已复制')
+}
+
 async function deploySelectedRelease() {
   if (!selectedProject.value) return
   const serverIds = serverPoolDraft.value.filter((item) => item.enabled).map((item) => item.serverId)
   const result = await deployProjectRelease(selectedProject.value.projectId, { serverIds, reason: serverPoolReason.value || '项目部署中心手动部署' })
-  ElMessage.success(result.message || '部署计划已创建')
-  await loadProjectServers()
+  ElMessage.success(result.message || '部署单已创建')
+  await refreshSelectedProject()
   await loadProjects()
+}
+
+async function oneClickDeploy(row: Project | null) {
+  if (!row) return
+  try {
+    await ElMessageBox.confirm(`确认一键部署项目“${row.projectName}”的当前最新版本？平台会自动选择可用 Agent 服务器，下发镜像拉取、目录准备和运行时自检指令。`, '一键部署确认', { type: 'warning' })
+    const result = await deployProjectRelease(row.projectId, { serverIds: [], autoSelect: true, reason: '项目一键部署' })
+    ElMessage.success(result.message || '一键部署单已创建')
+    selectedProject.value = row
+    await refreshSelectedProject()
+    await loadProjects()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error instanceof Error ? error.message : '一键部署失败')
+  }
+}
+
+function deploymentStepText(row: Record<string, unknown>) {
+  const strategy = row.strategy as Record<string, unknown> | undefined
+  const steps = Array.isArray(strategy?.steps) ? strategy.steps as Array<Record<string, unknown>> : []
+  const active = steps.find((item) => item.status === 'RUNNING' || item.status === 'FAILED') || steps[steps.length - 1]
+  return active ? `${active.name || active.key}：${zh(String(active.status || ''))}` : '-'
 }
 
 async function savePool() { if (!selectedProject.value) return; await updateProjectServers(selectedProject.value.projectId, poolPayload()); ElMessage.success('执行服务器池已更新'); serverPoolVisible.value = false; await loadProjectServers(); await loadProjects() }
@@ -201,5 +293,6 @@ onMounted(async () => { await loadAll(); if (route.query.openImport === '1') ope
 <style scoped>
 .section-title { display: flex; justify-content: space-between; align-items: center; }
 .analysis-box { background: #111827; color: #e5e7eb; padding: 12px; border-radius: 6px; max-height: 260px; overflow: auto; }
+.cicd-guide { display: grid; gap: 10px; }
 :deep(.disabled-row) { color: #999; background: #f5f7fa; }
 </style>
