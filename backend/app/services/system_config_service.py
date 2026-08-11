@@ -14,7 +14,6 @@ from app.services.audit import write_operation_log
 from app.services.permissions import require_super_admin
 
 CONTROL_PLANE_PUBLIC_BASE_URL_KEY = "control_plane.public_base_url"
-PLATFORM_PUBLIC_URL_KEY = "platform.public_url"
 
 
 class SystemConfigService:
@@ -29,25 +28,17 @@ class SystemConfigService:
             "controlPlanePublicBaseUrlSource": resolved["source"],
             "controlPlanePublicBaseUrlConfigured": bool(value),
             "controlPlanePublicBaseUrlWarnings": resolved["warnings"],
-            # 旧字段保留给前端/脚本兼容；新文案不再使用“平台访问地址”。
-            "platformPublicUrl": value,
-            "platformPublicUrlSource": resolved["source"],
-            "platformPublicUrlConfigured": bool(value),
         }
 
     def update_system_settings(self, user: SysUser, payload: SystemSettingsUpdate) -> dict:
         require_super_admin(user)
         raw_value = payload.control_plane_public_base_url
-        if raw_value is None:
-            raw_value = payload.platform_public_url
         if raw_value is not None:
             value = raw_value.strip().rstrip("/")
             if value:
                 self._validate_url(value, "控制端公网回调地址")
-            before = {"controlPlanePublicBaseUrl": self._get_value(CONTROL_PLANE_PUBLIC_BASE_URL_KEY) or self._get_value(PLATFORM_PUBLIC_URL_KEY)}
-            self._set_value(CONTROL_PLANE_PUBLIC_BASE_URL_KEY, "控制端公网回调地址", value, "Git CI、Agent 和外部执行节点访问控制端 API 时使用的公网地址")
-            # 同步旧 key，避免旧安装脚本/旧页面读取不到。
-            self._set_value(PLATFORM_PUBLIC_URL_KEY, "控制端公网回调地址", value, "兼容旧配置项；新代码优先读取 control_plane.public_base_url")
+            before = {"controlPlanePublicBaseUrl": self._get_value(CONTROL_PLANE_PUBLIC_BASE_URL_KEY)}
+            self._set_value(CONTROL_PLANE_PUBLIC_BASE_URL_KEY, "控制端公网回调地址", value, "代码构建流程和外部执行节点访问控制端服务使用的公网地址")
             after = {"controlPlanePublicBaseUrl": value}
             write_operation_log(self.db, user, None, operation_type="UPDATE_SYSTEM_SETTINGS", resource_type="system_settings", resource_id="control_plane_public_base_url", before_data=before, after_data=after)
             self.db.commit()
@@ -59,9 +50,7 @@ class SystemConfigService:
     def inspect_control_plane_public_base_url(self, detected_base_url: str = "") -> dict:
         candidates = [
             ("SYSTEM_SETTING", self._get_value(CONTROL_PLANE_PUBLIC_BASE_URL_KEY)),
-            ("LEGACY_SYSTEM_SETTING", self._get_value(PLATFORM_PUBLIC_URL_KEY)),
             ("ENV", settings.control_plane_public_base_url),
-            ("LEGACY_ENV", settings.platform_public_url),
             ("DETECTED_ORIGIN", detected_base_url),
         ]
         for source, value in candidates:
@@ -73,10 +62,6 @@ class SystemConfigService:
                 warnings = self._url_warnings(parsed)
                 return {"controlPlanePublicBaseUrl": cleaned, "source": source, "warnings": warnings}
         return {"controlPlanePublicBaseUrl": "", "source": "EMPTY", "warnings": []}
-
-    # 旧方法名保留，避免 server/agent 接入链路大范围改名带来风险。
-    def resolve_platform_public_url(self) -> str:
-        return self.resolve_control_plane_public_base_url()
 
     @staticmethod
     def detected_base_url_from_request(request: Request) -> str:
@@ -114,7 +99,7 @@ class SystemConfigService:
     def _url_warnings(parsed) -> list[str]:
         host = (parsed.hostname or "").lower()
         if host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}:
-            return ["该地址是本机地址，GitHub Actions 和远程 Agent 通常无法访问。"]
+            return ["该地址是本机地址，GitHub Actions 和远程执行节点通常无法访问。"]
         if host.startswith("192.168.") or host.startswith("10."):
             return ["该地址看起来是内网地址，GitHub Actions 可能无法访问。"]
         if host.startswith("172."):

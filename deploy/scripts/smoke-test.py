@@ -161,7 +161,7 @@ def start_agent_container(agent_token, agent_code, server_code, base_url, capabi
         "--name", container_name,
         "--restart", "unless-stopped",
         "--network", "host",
-        "-e", f"AGENT_PLATFORM_URL={base_url}",
+        "-e", f"AGENT_CONTROL_PLANE_URL={base_url}",
         "-e", "AGENT_VERIFY_TLS=false",
         "-e", f"AGENT_AGENT_TOKEN={agent_token}",
         "-e", f"AGENT_AGENT_CODE={agent_code}",
@@ -335,7 +335,7 @@ def main():
         ],
     }
     print("上报待接入项目...")
-    discovered = client.request("POST", "/discovered-projects", {"companyId": company_id, "serverCode": server_code, "manifest": manifest}, token="", discovery_token=discovery_token)
+    discovered = client.request("POST", "/discovered-projects", {"companyId": company_id, "manifest": manifest}, token="", discovery_token=discovery_token)
     discovered_id = int(discovered["discoveredProjectId"])
     print(f"discoveredProjectId={discovered_id}")
 

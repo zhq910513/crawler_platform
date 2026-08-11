@@ -18,7 +18,7 @@ crawler_platform_spider_release:
   before_script:
     - apk add --no-cache bash curl python3
     - case "$CRAWLER_CONTROL_BASE_URL" in http://*|https://*) ;; *) echo "workflow 未初始化控制端公网回调地址，请从平台 CI一键初始化 页面重新生成 workflow" >&2; exit 2 ;; esac
-    - test -n "$CRAWLER_PLATFORM_DISCOVERY_TOKEN"
+    - test -n "$CRAWLER_DISCOVERY_TOKEN"
     - |
       eval "$(python3 - <<'PY'
       import json, os, re, shlex

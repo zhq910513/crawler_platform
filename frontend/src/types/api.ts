@@ -495,8 +495,8 @@ export interface RunLogChunk { chunkId: number; runId: number; stream: string; s
 export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: boolean; chunks: RunLogChunk[] }
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
 
-export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; platformUrl?: string; expiresInHours?: number }
-export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; platformUrl?: string; installTarget?: string; note: string }
+export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number }
+export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
 
 export interface SpiderProjectCicdGuide {
@@ -506,9 +506,7 @@ export interface SpiderProjectCicdGuide {
   controlPlanePublicBaseUrlSource: string
   controlPlanePublicBaseUrlConfigured: boolean
   controlPlanePublicBaseUrlWarnings: string[]
-  platformPublicUrl: string
-  platformPublicUrlConfigured: boolean
-  companyId: number
+    companyId: number
   companyCode?: string
   globalVariables: Array<Record<string, unknown>>
   globalSecrets: Array<Record<string, unknown>>
@@ -674,10 +672,7 @@ export interface SystemSettings {
   controlPlanePublicBaseUrlSource: string
   controlPlanePublicBaseUrlConfigured: boolean
   controlPlanePublicBaseUrlWarnings: string[]
-  platformPublicUrl: string
-  platformPublicUrlSource: string
-  platformPublicUrlConfigured: boolean
-}
+  }
 
 export interface CompanyResourceConfig {
   configId: number
@@ -718,8 +713,6 @@ export interface CompanySetupStatus {
   controlPlanePublicBaseUrlSource: string
   controlPlanePublicBaseUrlConfigured: boolean
   controlPlanePublicBaseUrlWarnings: string[]
-  platformPublicUrl: string
-  platformPublicUrlConfigured: boolean
-  steps: CompanySetupStep[]
+    steps: CompanySetupStep[]
   counts: Record<string, number>
 }

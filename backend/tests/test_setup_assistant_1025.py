@@ -37,8 +37,8 @@ def test_setup_assistant_status_and_resource_config() -> None:
     assert status['mode'] == 'FIRST_SETUP'
     assert any(item['key'] == 'database' and item['status'] == 'MISSING' for item in status['steps'])
 
-    settings = client.patch('/api/v1/system-settings', headers=headers, json={'platformPublicUrl': 'http://10.1.0.13:8080'}).json()['data']
-    assert settings['platformPublicUrl'] == 'http://10.1.0.13:8080'
+    settings = client.patch('/api/v1/system-settings', headers=headers, json={'controlPlanePublicBaseUrl': 'http://10.1.0.13:8080'}).json()['data']
+    assert settings['controlPlanePublicBaseUrl'] == 'http://10.1.0.13:8080'
 
     resource = client.post('/api/v1/company-resource-configs', headers=headers, json={'companyId': company['companyId'], 'resourceType': 'MYSQL_MAIN', 'resourceName': '主业务数据库', 'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u', 'password': 'secret'}}).json()['data']
     assert resource['configMasked']['password'] == '******'
@@ -48,4 +48,4 @@ def test_setup_assistant_status_and_resource_config() -> None:
     status = client.get(f"/api/v1/companies/{company['companyId']}/setup-status", headers=headers).json()['data']
     database_step = [item for item in status['steps'] if item['key'] == 'database'][0]
     assert database_step['status'] == 'DONE'
-    assert status['platformPublicUrlConfigured'] is True
+    assert status['controlPlanePublicBaseUrlConfigured'] is True

@@ -101,7 +101,7 @@ jobs:
       - name: Register release to crawler platform
         shell: bash
         env:
-          CRAWLER_PLATFORM_DISCOVERY_TOKEN: ${{ secrets.CRAWLER_PLATFORM_DISCOVERY_TOKEN }}
+          CRAWLER_DISCOVERY_TOKEN: ${{ secrets.CRAWLER_DISCOVERY_TOKEN }}
           IMAGE_REPOSITORY: ${{ steps.image.outputs.image_repository }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
           RELEASE_VERSION: ${{ steps.version.outputs.release_version }}
@@ -109,6 +109,6 @@ jobs:
           CRAWLER_COMPANY_CODE: ${{ steps.meta.outputs.company_code }}
         run: |
           set -euo pipefail
-          test -n "$CRAWLER_PLATFORM_DISCOVERY_TOKEN"
+          test -n "$CRAWLER_DISCOVERY_TOKEN"
           curl -fsSL "$CRAWLER_CONTROL_BASE_URL/api/v1/cicd/spider-release-register.py" -o /tmp/spider_release_register.py
           python3 /tmp/spider_release_register.py

@@ -28,7 +28,7 @@ http://1.2.3.4:8080
 https://crawler.example.com
 ```
 
-从 1.0.32 开始，Git 仓库不再配置 `CRAWLER_PLATFORM_URL`。平台会在“CI一键初始化”里生成带回调地址的一行命令，初始化脚本会把该地址固化到 workflow 的 `CRAWLER_CONTROL_BASE_URL`。
+从 1.0.34 开始，Git 仓库不需要手工配置控制端链接。控制端会在“CI一键初始化”里生成带回调地址的一行命令，初始化脚本会把该地址固化到 workflow 的 `CRAWLER_CONTROL_BASE_URL`。
 
 如果平台处在 Nginx、SLB、CDN 或端口映射后面，建议在“系统设置 -> 控制端公网回调地址”里显式保存最终公网地址。
 
@@ -67,7 +67,7 @@ sch.py 示例
 仓库只必须配置一个 Secret：
 
 ```text
-CRAWLER_PLATFORM_DISCOVERY_TOKEN
+CRAWLER_DISCOVERY_TOKEN
 ```
 
 该 token 是公司级项目发现凭证。A 公司 token 不能注册 B 公司项目。

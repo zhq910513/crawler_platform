@@ -32,14 +32,11 @@ class CicdGuideService:
         init_url = f"{control_base_url.rstrip('/')}/api/v1/cicd/spider-project-init.sh?provider={provider}&companyCode={company_code}"
         return {
             "provider": provider,
-            "mode": "PERSONAL_GIT_ACCOUNT_COMPANY_CODE_INIT",
+            "mode": "COMPANY_CODE_CONTROL_PLANE_INIT",
             "controlPlanePublicBaseUrl": url_info["controlPlanePublicBaseUrl"],
             "controlPlanePublicBaseUrlSource": url_info["source"],
             "controlPlanePublicBaseUrlConfigured": bool(url_info["controlPlanePublicBaseUrl"]),
             "controlPlanePublicBaseUrlWarnings": url_info["warnings"],
-            # 旧字段保留给旧前端兼容。
-            "platformPublicUrl": url_info["controlPlanePublicBaseUrl"],
-            "platformPublicUrlConfigured": bool(url_info["controlPlanePublicBaseUrl"]),
             "companyId": scoped,
             "companyCode": company_code,
             "globalVariables": self._global_variables(provider),
@@ -48,7 +45,7 @@ class CicdGuideService:
                 {"name": "crawler_project.json.companyCode", "required": True, "value": company_code, "description": "项目所属公司编码；不同公司项目放在个人 GitHub 下时靠它区分公司"},
                 {"name": "crawler_project.json.projectCode", "required": False, "description": "不配置时默认使用 Git 仓库名"},
                 {"name": "crawler_project.json.projectName", "required": False, "description": "不配置时默认使用 Git 仓库名"},
-                {"name": "CRAWLER_IMAGE_REPOSITORY", "required": False, "description": "不配置时由 registry host + namespace + 项目编码推导"},
+                {"name": "CRAWLER_IMAGE_REPOSITORY", "required": False, "description": "不配置时由镜像仓库主机 + 命名空间 + 项目编码推导"},
             ],
             "workflowPath": workflow_path,
             "workflowContent": render_workflow_template(self._read(workflow_file), control_base_url),
@@ -57,11 +54,11 @@ class CicdGuideService:
             "oneLineInitCommand": f"curl -fsSL '{init_url}' | sh",
             "commitCommand": "git add . && git commit -m '接入 crawler platform 自动构建发布' && git push",
             "notes": [
-                "GitHub/GitLab 仓库不再配置平台链接；初始化脚本会把控制端公网回调地址写入 workflow。",
+                "GitHub/GitLab 仓库不再配置控制端链接；初始化脚本会把控制端公网回调地址写入 workflow。",
                 "个人 GitHub 账号下混放不同公司项目时，不要把 companyId 配成个人账号全局变量；项目归属写进 crawler_project.json.companyCode。",
-                "CRAWLER_PLATFORM_DISCOVERY_TOKEN 仍是公司级凭证；当前数据库没有全局多公司 discovery token，不能用 A 公司 token 注册 B 公司项目。",
-                "同一公司部署多台服务器不影响 Git 配置；CI 只构建并注册一个 digest，平台一键部署时选择多台服务器，多个 Agent 各自拉同一个 digest。",
-                "执行服务器 Agent 不拉 Git、不构建镜像，只拉取平台登记的 imageRepository@sha256:digest。",
+                "CRAWLER_DISCOVERY_TOKEN 是公司级凭证；当前数据库没有全局多公司 discovery token，不能用 A 公司 token 注册 B 公司项目。",
+                "同一公司部署多台服务器不影响 Git 配置；CI 只构建并注册一个 digest，控制台一键部署时选择多台服务器，多个执行节点各自拉同一个 digest。",
+                "执行服务器不拉 Git、不构建镜像，只拉取控制端登记的 imageRepository@sha256:digest。",
             ],
         }
 
@@ -83,7 +80,7 @@ class CicdGuideService:
     def _global_secrets(provider: str) -> list[dict]:
         registry_note = "GitHub ghcr.io 默认使用 github.token；私有 registry 再配置" if provider == "github" else "GitLab 自带 registry 可使用 CI_REGISTRY_USER/CI_REGISTRY_PASSWORD，也可单独配置"
         return [
-            {"name": "CRAWLER_PLATFORM_DISCOVERY_TOKEN", "scope": "repository secret；按公司使用对应公司的 token", "required": True, "description": "公司级项目发现 token，只能注册该公司项目；个人 GitHub 混放多公司时不能跨公司复用"},
+            {"name": "CRAWLER_DISCOVERY_TOKEN", "scope": "repository secret；按公司使用对应公司的 token", "required": True, "description": "公司级项目发现 token，只能注册该公司项目；个人 GitHub 混放多公司时不能跨公司复用"},
             {"name": "CRAWLER_REGISTRY_USERNAME", "scope": "repository secret", "required": False, "description": registry_note},
             {"name": "CRAWLER_REGISTRY_PASSWORD", "scope": "repository secret", "required": False, "description": registry_note},
         ]

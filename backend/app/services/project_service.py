@@ -82,11 +82,10 @@ class ProjectService:
         return [self._discovered_payload(row) for row in rows]
 
     def upsert_discovered(self, payload: ProjectDiscoveryCreate) -> CrawlerDiscoveredProject:
-        server_codes = self._normalize_server_codes(payload.server_codes or ([payload.server_code] if payload.server_code else []))
         company_id = payload.company_id
         if not company_id:
             raise AppError("缺少项目归属公司：请提供 crawler_project.json.companyCode 或 companyId", code=40047)
-        servers = self._resolve_registration_servers(company_id, server_codes)
+        servers: list[CrawlerServer] = []
         manifest = payload.manifest
         self._validate_release_version(manifest.release_version)
         if not manifest.task_definitions:
@@ -127,8 +126,6 @@ class ProjectService:
         artifact = self._upsert_artifact(manifest, now)
         release = self._upsert_release(company_id, project, artifact.artifact_id, manifest)
         project.latest_release_id = release.release_id
-        for server in servers:
-            self._upsert_discovered_server(project, server, manifest.image_digest, now)
         if project.formal_project_id:
             self._sync_formal_project(project, release, servers, now)
         self.db.commit()
@@ -579,27 +576,6 @@ class ProjectService:
         self.db.flush()
         return artifact
 
-    @staticmethod
-    def _normalize_server_codes(values) -> list[str]:
-        result: list[str] = []
-        seen: set[str] = set()
-        for value in values or []:
-            for raw in str(value or "").split(","):
-                code = raw.strip()
-                if code and code not in seen:
-                    result.append(code)
-                    seen.add(code)
-        return result
-
-    def _resolve_registration_servers(self, company_id: int, server_codes: list[str]) -> list[CrawlerServer]:
-        servers: list[CrawlerServer] = []
-        for code in server_codes:
-            server = self.servers.by_code(code)
-            if not server or server.company_id != company_id:
-                raise AppError(f"服务器不存在或不属于该公司：{code}", code=40401, http_status=status.HTTP_404_NOT_FOUND)
-            servers.append(server)
-        return servers
-
     def _latest_project_release(self, project_id: int) -> CrawlerProjectRelease | None:
         return self.db.scalar(select(CrawlerProjectRelease).where(CrawlerProjectRelease.project_id == project_id, CrawlerProjectRelease.release_status == "PUBLISHED", CrawlerProjectRelease.parse_status == "SUCCESS").order_by(CrawlerProjectRelease.published_at.desc(), CrawlerProjectRelease.release_id.desc()))
 
@@ -686,9 +662,9 @@ class ProjectService:
             ps.latest_release_id = release.release_id
             ps.latest_image_digest = release.image_digest
             ps.last_deployed_at = deployed_at
-            if ps.image_readiness_status == "READY":
+            if ps.image_readiness_status in {"READY", "WARMING", "OUTDATED", "UNKNOWN", "FAILED"}:
                 ps.image_readiness_status = "OUTDATED"
-                ps.disabled_reason = "项目发布了新镜像，Agent 下次执行时将按 digest 拉取并校验"
+                ps.disabled_reason = "项目发布了新镜像，执行节点下次执行时将按 digest 拉取并校验"
 
     def _upsert_project_server(self, project: CrawlerProject, server_id: int, release: CrawlerProjectRelease | None, digest: str, deployed_at, idx: int, dispatch_mode: str) -> CrawlerProjectServer:
         ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.server_id == server_id))

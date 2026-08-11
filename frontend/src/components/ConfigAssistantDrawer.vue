@@ -9,7 +9,7 @@
             <span>配置进度：{{ state.status.completedCount }} / {{ state.status.totalCount }}</span>
             <el-progress :percentage="progressPercent" :show-text="false" />
           </div>
-          <el-alert v-if="!state.status.platformPublicUrlConfigured" type="warning" show-icon :closable="false" title="请先配置控制端公网回调地址，远程执行节点才能正常接入。" />
+          <el-alert v-if="!state.status.controlPlanePublicBaseUrlConfigured" type="warning" show-icon :closable="false" title="请先配置控制端公网回调地址，远程执行节点才能正常接入。" />
         </div>
 
         <div class="step-list">
@@ -52,7 +52,7 @@ function stepIcon(status: string) { if (status === 'DONE') return '✓'; if (sta
 async function goStep(step: CompanySetupStep) {
   const query: Record<string, string> = { companyId: String(state.companyId) }
   if (step.key === 'agent') query.openOnboarding = '1'
-  if (step.key === 'platform_url') query.focus = 'platformUrl'
+  if (step.key === 'control_plane_url') query.focus = 'controlPlaneUrl'
   if (step.key === 'project') query.openImport = '1'
   await router.push({ path: step.route, query })
 }

@@ -13,7 +13,7 @@ from crawler_agent.version import default_build_time, default_git_commit, defaul
 class AgentConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AGENT_", extra="ignore")
 
-    platform_url: str = Field(default="http://api:8000")
+    control_plane_url: str = Field(default="http://api:8000")
     agent_token: str = Field(default="")
     agent_code: str = Field(default="")
     server_code: str = Field(default="")
@@ -54,8 +54,8 @@ class AgentConfig(BaseSettings):
         return value
 
     def validate_runtime(self) -> None:
-        if not self.platform_url:
-            raise RuntimeError("AGENT_PLATFORM_URL is required")
+        if not self.control_plane_url:
+            raise RuntimeError("AGENT_CONTROL_PLANE_URL is required")
         if not self.agent_token:
             raise RuntimeError("AGENT_AGENT_TOKEN is required")
 

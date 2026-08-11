@@ -16,15 +16,15 @@ def test_cicd_one_click_guide_and_public_templates() -> None:
     client.patch('/api/v1/system-settings', headers=headers, json={'controlPlanePublicBaseUrl': 'https://control.example.com'})
 
     guide = client.get('/api/v1/cicd/spider-projects/one-click-guide', headers=headers, params={'companyId': company['companyId'], 'provider': 'github'}).json()['data']
-    assert guide['mode'] == 'PERSONAL_GIT_ACCOUNT_COMPANY_CODE_INIT'
+    assert guide['mode'] == 'COMPANY_CODE_CONTROL_PLANE_INIT'
     assert guide['companyCode'] == 'hc_cicd_1032'
     assert guide['controlPlanePublicBaseUrlConfigured'] is True
     assert guide['controlPlanePublicBaseUrl'] == 'https://control.example.com'
     assert 'companyCode=hc_cicd_1032' in guide['oneLineInitCommand']
     assert '.github/workflows/crawler-platform-spider-release.yml' == guide['workflowPath']
-    assert 'CRAWLER_PLATFORM_COMPANY_ID' not in guide['workflowContent']
-    assert 'CRAWLER_PLATFORM_DISCOVERY_TOKEN' in str(guide['globalSecrets'])
-    assert 'CRAWLER_PLATFORM_URL' not in str(guide['globalVariables'])
+    assert 'CRAWLER_COMPANY_ID' not in guide['workflowContent']
+    assert 'CRAWLER_DISCOVERY_TOKEN' in str(guide['globalSecrets'])
+    assert 'CRAWLER_CONTROL_BASE_URL' not in str(guide['globalVariables'])
     assert 'crawler_project.json.companyCode' in str(guide['projectDefaults'])
     assert 'docker/build-push-action' in guide['workflowContent']
     assert 'Validate control callback and project ownership' in guide['workflowContent']
@@ -45,13 +45,13 @@ def test_spider_release_register_helper_builds_payload_from_crawler_project_json
     assert spec and spec.loader
     spec.loader.exec_module(module)
 
-    (tmp_path / 'VERSION').write_text('1.0.32\n', encoding='utf-8')
+    (tmp_path / 'VERSION').write_text('1.0.34\n', encoding='utf-8')
     (tmp_path / 'crawler_project.json').write_text('{"companyCode":"company_a","projectCode":"demo_project","projectName":"演示项目","releaseChannel":"stable"}\n', encoding='utf-8')
     (tmp_path / 'sch.py').write_text('TASKS = [{"definitionKey":"demo","taskName":"示例","entryModule":"spiders.demo","entryFunction":"main"}]\n', encoding='utf-8')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('IMAGE_DIGEST', 'sha256:' + 'a' * 64)
     monkeypatch.setenv('CRAWLER_CONTROL_BASE_URL', 'https://control.example.com')
-    monkeypatch.setenv('CRAWLER_PLATFORM_DISCOVERY_TOKEN', 'token')
+    monkeypatch.setenv('CRAWLER_DISCOVERY_TOKEN', 'token')
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/source_repo_name')
     monkeypatch.setenv('GITHUB_REPOSITORY_OWNER', 'org')
     monkeypatch.setenv('GITHUB_SERVER_URL', 'https://github.com')
@@ -63,7 +63,7 @@ def test_spider_release_register_helper_builds_payload_from_crawler_project_json
     assert payload['manifest']['companyCode'] == 'company_a'
     assert payload['manifest']['projectCode'] == 'demo_project'
     assert payload['manifest']['projectName'] == '演示项目'
-    assert payload['manifest']['releaseVersion'] == '1.0.32'
+    assert payload['manifest']['releaseVersion'] == '1.0.34'
     assert payload['manifest']['imageRepository'] == 'ghcr.io/org/demo_project'
     assert payload['manifest']['taskDefinitions'][0]['entryFunction'] == 'main'
 
@@ -85,7 +85,7 @@ def test_discovered_project_can_resolve_company_by_company_code() -> None:
         'repositoryUrl': 'git@example/project-company-code',
         'imageRepository': 'repo/project-company-code',
         'imageDigest': 'sha256:' + 'b' * 64,
-        'releaseVersion': '1.0.32',
+        'releaseVersion': '1.0.34',
         'releaseChannel': 'stable',
         'taskDefinitions': [{'definitionKey': 'task_company_code', 'taskName': '任务', 'entryModule': 'spiders.task', 'entryFunction': 'run'}],
     }
@@ -104,12 +104,11 @@ def test_spider_release_templates_do_not_depend_on_legacy_server_bootstrap() -> 
         text = (cicd_dir / name).read_text(encoding='utf-8')
         assert 'ssh-action' not in text
         assert 'DEPLOY_HOST' not in text
-        assert 'CRAWLER_PLATFORM_SERVER_CODE' not in text
-        assert 'CRAWLER_PLATFORM_COMPANY_ID' not in text
+        assert 'CRAWLER_SERVER_CODE' not in text
+        assert 'CRAWLER_COMPANY_ID' not in text
         assert 'bootstrap.sh' not in text
         assert 'spider-release-register.py' in text
         assert 'missing crawler_project.json.companyCode' in text
-        assert 'CRAWLER_PLATFORM_URL' not in text
         assert 'CRAWLER_CONTROL_BASE_URL' in text
     gitlab = (cicd_dir / 'gitlab-ci-spider-release.yml').read_text(encoding='utf-8')
     assert 'CI_REGISTRY_USER' in gitlab

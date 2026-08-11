@@ -105,9 +105,9 @@ class ServerService:
         )
         self.db.add(token)
         self.db.flush()
-        platform_url = self._resolve_platform_url(payload.platform_url, detected_base_url, payload.install_target)
-        command = self._install_command(raw_token, platform_url)
-        connectivity_command = f"curl -fsSL {platform_url.rstrip('/')}/health && echo"
+        control_plane_url = self._resolve_control_plane_url(payload.control_plane_url, detected_base_url, payload.install_target)
+        command = self._install_command(raw_token, control_plane_url)
+        connectivity_command = f"curl -fsSL {control_plane_url.rstrip('/')}/health && echo"
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
         self.db.commit()
         return {
@@ -119,7 +119,7 @@ class ServerService:
             "joinToken": raw_token,
             "installCommand": command,
             "connectivityCommand": connectivity_command,
-            "platformUrl": platform_url,
+            "controlPlaneUrl": control_plane_url,
             "joinTokenMasked": self._mask_token(raw_token),
             "installTarget": payload.install_target,
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
@@ -191,7 +191,7 @@ class ServerService:
         token.last_preflight_report = payload.install_report or {}
         self.db.commit()
         lines = {
-            "AGENT_PLATFORM_URL": SystemConfigService(self.db).resolve_control_plane_public_base_url() or "",
+            "AGENT_CONTROL_PLANE_URL": SystemConfigService(self.db).resolve_control_plane_public_base_url() or "",
             "AGENT_AGENT_TOKEN": raw_agent_token,
             "AGENT_AGENT_CODE": token.agent_code,
             "AGENT_SERVER_CODE": token.server_code,
@@ -205,9 +205,9 @@ class ServerService:
 
     def _install_command(self, token: str, base: str) -> str:
         public_base = base.rstrip("/")
-        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --platform-url {public_base} --join-token {self._quote_shell(token)}"
+        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)}"
 
-    def _resolve_platform_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
+    def _resolve_control_plane_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
         base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")
         if not base:
             raise AppError("请先填写执行节点可以访问的控制端公网回调地址", code=40071)

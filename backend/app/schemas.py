@@ -71,7 +71,6 @@ class CompanyUpdate(ApiModel):
 
 class SystemSettingsUpdate(ApiModel):
     control_plane_public_base_url: str | None = Field(default=None, max_length=500)
-    platform_public_url: str | None = Field(default=None, max_length=500)
 
 
 class CompanyResourceConfigCreate(ApiModel):
@@ -163,23 +162,7 @@ class ProjectManifest(ApiModel):
 
 class ProjectDiscoveryCreate(ApiModel):
     company_id: int | None = None
-    server_code: str | None = Field(default=None, min_length=1, max_length=100)
-    server_codes: list[str] = Field(default_factory=list)
     manifest: ProjectManifest
-
-    @model_validator(mode="after")
-    def normalize_server_codes(self) -> "ProjectDiscoveryCreate":
-        seen: set[str] = set()
-        items: list[str] = []
-        for value in [self.server_code or "", *(self.server_codes or [])]:
-            for raw in str(value or "").split(","):
-                code = raw.strip()
-                if code and code not in seen:
-                    items.append(code)
-                    seen.add(code)
-        self.server_codes = items
-        self.server_code = items[0] if items else None
-        return self
 
 
 class ProjectImport(ApiModel):
@@ -369,7 +352,7 @@ class AgentJoinTokenCreate(ApiModel):
     registry_credential_ref: str = Field(default="", max_length=200)
     install_mode: Literal["AUTO", "ROOT", "USER"] = "AUTO"
     install_target: Literal["LOCAL", "REMOTE"] = "REMOTE"
-    platform_url: str = Field(default="", max_length=500)
+    control_plane_url: str = Field(default="", max_length=500)
     expires_in_hours: int = Field(default=24, ge=1, le=720)
 
 

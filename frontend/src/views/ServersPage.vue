@@ -67,7 +67,7 @@
           <el-col :span="12"><el-form-item label="最大并发"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="控制端公网回调地址">
-          <el-input v-model="joinForm.platformUrl" placeholder="请输入执行节点可以访问的控制端地址，例如：http://10.1.0.13:8080" />
+          <el-input v-model="joinForm.controlPlaneUrl" placeholder="请输入执行节点可以访问的控制端地址，例如：http://10.1.0.13:8080" />
           <div class="field-hint">远程服务器不能使用本机地址；请填写目标服务器能访问到的内网地址、外网地址或域名。</div>
         </el-form-item>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
@@ -134,7 +134,7 @@ const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
 const onboardingVisible = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
-const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', platformUrl: '' })
+const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '' })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
 
@@ -143,14 +143,14 @@ function boolText(value?: boolean | null) { if (value === null || value === unde
 function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
-const platformPublicUrl = ref('')
-async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); platformPublicUrl.value = data?.controlPlanePublicBaseUrl || data?.platformPublicUrl || '' }
-function currentOrigin() { return platformPublicUrl.value || window.location.origin }
+const configuredControlPlaneUrl = ref('')
+async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); configuredControlPlaneUrl.value = data?.controlPlanePublicBaseUrl || '' }
+function currentOrigin() { return configuredControlPlaneUrl.value || window.location.origin }
 function slug(value: string) { return (value || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server' }
 const addressWarning = computed(() => {
-  if (!joinForm.platformUrl) return '请填写执行节点可以访问的控制端公网回调地址。'
-  try { new URL(joinForm.platformUrl) } catch { return '控制端公网回调地址格式不正确。' }
-  if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(joinForm.platformUrl)) return '远程服务器不能使用本机地址，请填写内网地址、外网地址或域名。'
+  if (!joinForm.controlPlaneUrl) return '请填写执行节点可以访问的控制端公网回调地址。'
+  try { new URL(joinForm.controlPlaneUrl) } catch { return '控制端公网回调地址格式不正确。' }
+  if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(joinForm.controlPlaneUrl)) return '远程服务器不能使用本机地址，请填写内网地址、外网地址或域名。'
   return ''
 })
 function applyAutoCodes() {
@@ -160,11 +160,11 @@ function applyAutoCodes() {
 }
 function applyInstallTarget() {
   if (joinForm.installTarget === 'LOCAL') {
-    joinForm.platformUrl = joinForm.platformUrl || currentOrigin()
+    joinForm.controlPlaneUrl = joinForm.controlPlaneUrl || currentOrigin()
     joinForm.workDir = '/var/lib/crawler-agent'
   } else {
-    joinForm.platformUrl = currentOrigin()
-    if (isLoopbackUrl(joinForm.platformUrl)) joinForm.platformUrl = ''
+    joinForm.controlPlaneUrl = currentOrigin()
+    if (isLoopbackUrl(joinForm.controlPlaneUrl)) joinForm.controlPlaneUrl = ''
     joinForm.workDir = '/var/lib/crawler-agent'
   }
 }

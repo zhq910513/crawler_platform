@@ -59,10 +59,11 @@ def test_full_platform_flow() -> None:
         'releaseChannel': 'stable',
         'taskDefinitions': [{'definitionKey': 'task_one', 'taskName': '任务一', 'entryModule': 'spiders.task_one', 'entryFunction': 'run'}],
     }
-    discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery_token}, json={'companyId': company['companyId'], 'serverCode': 'srv-b', 'manifest': manifest}).json()['data']
+    discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery_token}, json={'companyId': company['companyId'], 'manifest': manifest}).json()['data']
     assert discovered['discoveryStatus'] == 'READY_TO_IMPORT'
 
     project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId']}).json()['data']
+    client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json={'servers': [{'serverId': server['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 100, 'weight': 100, 'maxConcurrency': 4, 'autoEjectEnabled': True, 'autoRecoverEnabled': True}]})
     definitions = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     assert definitions[0]['definitionStatus'] == 'AVAILABLE'
 
@@ -94,8 +95,10 @@ def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: li
     server_codes = server_codes or [f'srv-{suffix}']
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': f'hc_{suffix}', 'companyName': f'H公司{suffix}'}).json()['data']
     agent_tokens = []
+    server_items = []
     for code in server_codes:
-        client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器'}).json()['data']
+        server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器'}).json()['data']
+        server_items.append(server)
         agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器', 'agentCode': f'agent-{code}', 'agentName': f'{code} Agent'}).json()['data']
         agent_tokens.append({'serverCode': code, 'headers': {'Authorization': 'Agent ' + agent['agentToken']}})
     discovery_token = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']['discoveryToken']
@@ -107,8 +110,10 @@ def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: li
     }
     discovered = None
     for code in server_codes:
-        discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery_token}, json={'companyId': company['companyId'], 'serverCode': code, 'manifest': manifest}).json()['data']
+        discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery_token}, json={'companyId': company['companyId'], 'manifest': manifest}).json()['data']
     project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId'], 'dispatchMode': 'LOAD_BALANCE'}).json()['data']
+    pool_payload = {'servers': [{'serverId': item['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE' if len(server_items) > 1 else 'ACTIVE', 'priority': 100 + idx, 'weight': 100, 'maxConcurrency': 4, 'autoEjectEnabled': True, 'autoRecoverEnabled': True} for idx, item in enumerate(server_items)]}
+    client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json=pool_payload)
     return company, project, agent_tokens, {'token': discovery_token, 'manifest': manifest}
 
 
@@ -138,7 +143,7 @@ def test_formal_project_release_sync_after_cicd_report() -> None:
         {'definitionKey': 'task_one', 'taskName': '任务一新版', 'entryModule': 'spiders.task_one', 'entryFunction': 'run'},
         {'definitionKey': 'task_two', 'taskName': '任务二', 'entryModule': 'spiders.task_two', 'entryFunction': 'run'},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-sync', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     releases = client.get('/api/v1/releases', headers=headers, params={'projectId': project['projectId']}).json()['data']
     assert releases[0]['version'] == '1.1.0'
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
@@ -204,7 +209,7 @@ def test_sharded_task_creates_child_runs() -> None:
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('d' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_shard', 'taskName': '分片任务', 'entryModule': 'spiders.shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-shard', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     shard_def = [item for item in defs if item['definitionKey'] == 'task_shard'][0]
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_shard', 'taskName': '分片任务', 'status': 'ENABLED'}).json()['data']
@@ -286,7 +291,7 @@ def test_scheduled_sharded_unique_key_and_parent_aggregation() -> None:
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('e' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_sched_shard', 'taskName': '定时分片任务', 'entryModule': 'spiders.shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-schedshard', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     shard_def = [item for item in defs if item['definitionKey'] == 'task_sched_shard'][0]
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_sched_shard', 'taskName': '定时分片任务', 'status': 'ENABLED', 'scheduleStatus': 'ENABLED', 'scheduleType': 'CRON', 'cronExpression': '* * * * *'}).json()['data']
@@ -377,7 +382,7 @@ def test_shared_environment_task_runtime_policy_and_claim_payload() -> None:
     manifest = {**discovery['manifest'], 'releaseVersion': '1.2.0', 'imageDigest': 'sha256:' + ('f' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_shared', 'taskName': '共享环境任务', 'entryModule': 'spiders.shared', 'entryFunction': 'run', 'runtimeMode': 'SHARED_ENV_ISOLATED', 'taskGroup': 'api', 'taskMaxConcurrency': 2, 'groupMaxConcurrency': 3, 'shmSizeMb': 128, 'logLimitMb': 20, 'resourceLocks': ['account:demo']},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-sharedenv', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     definition = [item for item in defs if item['definitionKey'] == 'task_shared'][0]
     assert definition['runtimeMode'] == 'SHARED_ENV_ISOLATED'
@@ -405,7 +410,7 @@ def test_resource_lock_blocks_conflicting_runs() -> None:
         {'definitionKey': 'task_lock_a', 'taskName': '锁任务A', 'entryModule': 'spiders.a', 'entryFunction': 'run', 'taskMaxConcurrency': 10, 'groupMaxConcurrency': 10, 'resourceLocks': ['account:x']},
         {'definitionKey': 'task_lock_b', 'taskName': '锁任务B', 'entryModule': 'spiders.b', 'entryFunction': 'run', 'taskMaxConcurrency': 10, 'groupMaxConcurrency': 10, 'resourceLocks': ['account:x']},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-lock', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     by_key = {item['definitionKey']: item for item in defs}
     a = client.post('/api/v1/tasks', headers=headers, json={'definitionId': by_key['task_lock_a']['definitionId'], 'taskCode': 'task_lock_a', 'taskName': '锁任务A', 'status': 'ENABLED'}).json()['data']
@@ -660,7 +665,7 @@ def test_scheduler_duplicate_trigger_does_not_rollback_previous_schedule() -> No
         {'definitionKey': 'task_dup_a', 'taskName': '重复A', 'entryModule': 'spiders.dup_a', 'entryFunction': 'run'},
         {'definitionKey': 'task_dup_b', 'taskName': '重复B', 'entryModule': 'spiders.dup_b', 'entryFunction': 'run'},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-scheddup', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     defs_by_key = {row['definitionKey']: row for row in defs}
     task_a = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs_by_key['task_dup_a']['definitionId'], 'taskCode': 'task_dup_a', 'taskName': '重复A', 'status': 'ENABLED', 'scheduleStatus': 'ENABLED', 'scheduleType': 'CRON', 'cronExpression': '* * * * *'}).json()['data']
@@ -708,7 +713,7 @@ def test_task_schedule_panel_uses_sharded_parent_as_latest_run() -> None:
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('1' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_panel_shard', 'taskName': '面板分片任务', 'entryModule': 'spiders.panel_shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
     ]}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCode': 'srv-panelshard', 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     shard_def = [item for item in defs if item['definitionKey'] == 'task_panel_shard'][0]
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_panel_shard', 'taskName': '面板分片任务', 'status': 'ENABLED'}).json()['data']
@@ -843,7 +848,7 @@ def test_cicd_release_registration_without_server_and_multi_agent_pool() -> None
     assert claim['imageDigest'] == manifest['imageDigest']
 
 
-def test_cicd_release_registration_with_server_codes_marks_existing_pool_outdated() -> None:
+def test_cicd_release_registration_marks_existing_pool_outdated() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
@@ -851,7 +856,7 @@ def test_cicd_release_registration_with_server_codes_marks_existing_pool_outdate
     pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
     assert pool[0]['latestImageDigest'] == discovery['manifest']['imageDigest']
     manifest = {**discovery['manifest'], 'releaseVersion': '1.0.6', 'imageDigest': 'sha256:' + ('3' * 64)}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCodes': ['srv-cicdout-a'], 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     updated_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
     assert updated_pool[0]['latestImageDigest'] == manifest['imageDigest']
     assert updated_pool[0]['imageReadinessStatus'] == 'OUTDATED'
@@ -907,7 +912,7 @@ def test_new_release_does_not_interrupt_running_run_and_waits_idle_prewarm() -> 
     client.post('/api/v1/agent-run-heartbeats', headers=agent_headers, json={'runId': run['runId'], 'leaseToken': claim['leaseToken'], 'message': 'running', 'agentInstanceId': 'inst-nointerrupt-a'})
 
     manifest = {**discovery['manifest'], 'releaseVersion': '1.0.19', 'imageDigest': 'sha256:' + ('4' * 64)}
-    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'serverCodes': ['srv-nointerrupt-a'], 'manifest': manifest})
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
     assert pool[0]['latestImageDigest'] == manifest['imageDigest']
     assert pool[0]['imageReadinessStatus'] == 'OUTDATED'
@@ -996,14 +1001,14 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     }).json()['data']
     assert token_body['joinToken']
     assert '--join-token' in token_body['installCommand']
-    assert token_body['platformUrl'].startswith('http://')
+    assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
     bad_remote = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-loopback',
         'serverName': '远程服务器',
         'agentCode': 'join-agent-loopback',
-        'platformUrl': 'http://127.0.0.1:8080',
+        'controlPlaneUrl': 'http://127.0.0.1:8080',
         'installTarget': 'REMOTE',
     })
     assert bad_remote.status_code == 400
@@ -1012,13 +1017,13 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
         'serverCode': 'join-srv-local',
         'serverName': '本机测试服务器',
         'agentCode': 'join-agent-local',
-        'platformUrl': 'http://127.0.0.1:8080',
+        'controlPlaneUrl': 'http://127.0.0.1:8080',
         'installTarget': 'LOCAL',
     }).json()['data']
     assert '127.0.0.1:8080' in local_token['installCommand']
     script = client.get('/api/v1/agent-installers/linux.sh')
     assert script.status_code == 200
-    assert '平台连通' in script.text and 'Docker' in script.text
+    assert '控制端连通' in script.text and 'Docker' in script.text
     env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host', 'installReport': {'pass': 5}})
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text

@@ -116,8 +116,8 @@ def default_image_repository(project_code: str) -> str:
     configured = env("IMAGE_REPOSITORY") or env("CRAWLER_IMAGE_REPOSITORY")
     if configured:
         return configured.rstrip(":")
-    registry_host = env("CRAWLER_REGISTRY_HOST", env("CRAWLER_PLATFORM_REGISTRY_HOST", env("REGISTRY_HOST", "ghcr.io"))).rstrip("/")
-    namespace = env("CRAWLER_REGISTRY_NAMESPACE", env("CRAWLER_PLATFORM_REGISTRY_NAMESPACE", env("REGISTRY_NAMESPACE")))
+    registry_host = env("CRAWLER_REGISTRY_HOST", env("REGISTRY_HOST", "ghcr.io")).rstrip("/")
+    namespace = env("CRAWLER_REGISTRY_NAMESPACE", env("REGISTRY_NAMESPACE"))
     if not namespace and env("GITHUB_REPOSITORY_OWNER"):
         namespace = env("GITHUB_REPOSITORY_OWNER")
     if not namespace and env("CI_PROJECT_NAMESPACE"):
@@ -205,7 +205,7 @@ def load_task_definitions() -> list[dict[str, Any]]:
 
 
 def platform_api_url() -> str:
-    base = env("CRAWLER_CONTROL_BASE_URL") or env("CONTROL_PLANE_URL") or env("CRAWLER_PLATFORM_URL") or env("PLATFORM_URL")
+    base = env("CRAWLER_CONTROL_BASE_URL") or env("CONTROL_PLANE_URL")
     if not base:
         die("缺少控制端回调地址：请使用平台 CI一键初始化 生成的 workflow，或设置 CRAWLER_CONTROL_BASE_URL")
     base = base.rstrip("/")
@@ -237,8 +237,6 @@ def build_payload() -> dict[str, Any]:
         die("releaseVersion 必须是 X.Y.Z，不允许 main/dev/latest")
     digest = normalize_digest(require_env("IMAGE_DIGEST"))
     image_repository = default_image_repository(project_code)
-    company_value = env("CRAWLER_PLATFORM_COMPANY_ID") or env("PLATFORM_COMPANY_ID")
-    server_codes = [item.strip() for item in env("SERVER_CODES", env("CRAWLER_SERVER_CODES", pick(meta, "serverCodes", "server_codes"))).split(",") if item.strip()]
     manifest = {
         "manifestVersion": "1",
         "companyCode": company_code,
@@ -251,26 +249,21 @@ def build_payload() -> dict[str, Any]:
         "gitBranch": git_branch(),
         "gitCommit": git_commit(),
         "releaseVersion": version,
-        "releaseChannel": env("RELEASE_CHANNEL", env("CRAWLER_RELEASE_CHANNEL", env("CRAWLER_PLATFORM_RELEASE_CHANNEL", pick(meta, "releaseChannel", "release_channel", default="stable")))),
+        "releaseChannel": env("RELEASE_CHANNEL", env("CRAWLER_RELEASE_CHANNEL", pick(meta, "releaseChannel", "release_channel", default="stable"))),
         "runtimeType": env("RUNTIME_TYPE", pick(meta, "runtimeType", "runtime_type", default="python")),
         "supportedArch": env("SUPPORTED_ARCH", pick(meta, "supportedArch", "supported_arch", default="linux/amd64")),
         "requiredCapabilities": meta.get("requiredCapabilities") or meta.get("required_capabilities") or {},
         "taskDefinitions": load_task_definitions(),
     }
-    if not company_value and not company_code:
-        die("缺少项目归属：请在 crawler_project.json 写 companyCode，或设置 CRAWLER_PLATFORM_COMPANY_ID")
-    payload: dict[str, Any] = {"serverCodes": server_codes, "manifest": manifest}
-    if company_value:
-        if not company_value.isdigit():
-            die("CRAWLER_PLATFORM_COMPANY_ID / PLATFORM_COMPANY_ID 必须是数字")
-        payload["companyId"] = int(company_value)
-    return payload
+    if not company_code:
+        die("缺少项目归属：请在 crawler_project.json 写 companyCode")
+    return {"manifest": manifest}
 
 
 def post_release(payload: dict[str, Any]) -> dict[str, Any]:
-    token = env("CRAWLER_PLATFORM_DISCOVERY_TOKEN") or env("PLATFORM_DISCOVERY_TOKEN")
+    token = env("CRAWLER_DISCOVERY_TOKEN")
     if not token:
-        die("缺少环境变量：CRAWLER_PLATFORM_DISCOVERY_TOKEN 或 PLATFORM_DISCOVERY_TOKEN")
+        die("缺少环境变量：CRAWLER_DISCOVERY_TOKEN")
     url = platform_api_url() + "/discovered-projects"
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = Request(url, data=data, method="POST", headers={"Content-Type": "application/json", "Authorization": "Discovery " + token})
@@ -279,9 +272,9 @@ def post_release(payload: dict[str, Any]) -> dict[str, Any]:
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
-        die(f"平台注册 release 失败 HTTP {exc.code}: {body}", 1)
+        die(f"控制端注册 release 失败 HTTP {exc.code}: {body}", 1)
     except URLError as exc:
-        die(f"无法访问爬虫平台：{exc}", 1)
+        die(f"无法访问控制端：{exc}", 1)
 
 
 def main() -> None:

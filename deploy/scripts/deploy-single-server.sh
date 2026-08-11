@@ -14,11 +14,11 @@ if cp_has_sudo; then
 else
   mkdir -p /var/lib/crawler-agent/runs /data/crawler-platform/projects 2>/dev/null || cp_die "无法创建 Agent 数据目录，请使用 root/sudo。"
 fi
-APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.32}"
+APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.34}"
 WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-8080}"
 if [ ! -f agent/.env.local ]; then
   cat > agent/.env.local <<AGENT_ENV
-AGENT_PLATFORM_URL=http://127.0.0.1:${WEB_PORT_VALUE}
+AGENT_CONTROL_PLANE_URL=http://127.0.0.1:${WEB_PORT_VALUE}
 AGENT_VERIFY_TLS=false
 AGENT_AGENT_TOKEN=${AGENT_AGENT_TOKEN:-replace-with-agent-token-from-platform}
 AGENT_AGENT_CODE=${AGENT_AGENT_CODE:-agent-local-01}

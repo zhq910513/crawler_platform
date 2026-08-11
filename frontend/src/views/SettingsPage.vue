@@ -5,7 +5,7 @@
       <el-form label-position="top" class="base-form">
         <el-form-item label="控制端公网回调地址">
           <el-input v-model="baseForm.controlPlanePublicBaseUrl" placeholder="例如：http://公网IP:8080 或 https://crawler.example.com" />
-          <div class="field-hint">Git CI、Agent 和外部执行节点访问控制端 API 时使用。通常就是你当前打开平台的公网 IP + 端口或域名。</div>
+          <div class="field-hint">代码构建流程和外部执行节点访问控制端服务时使用。通常就是你当前打开平台的公网 IP + 端口或域名。</div>
         </el-form-item>
         <div class="base-status"><el-tag :type="settings?.controlPlanePublicBaseUrlConfigured ? 'success' : 'warning'" effect="light">{{ settings?.controlPlanePublicBaseUrlConfigured ? '已配置' : '未配置' }}</el-tag><span class="muted">来源：{{ settings?.controlPlanePublicBaseUrlSource || '-' }}</span></div>
         <el-alert v-if="settings?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="settings.controlPlanePublicBaseUrlWarnings.join('；')" />
@@ -67,13 +67,13 @@ const rows = ref<NotificationChannel[]>([]); const alerts = ref<AlertEvent[]>([]
 const settings = ref<SystemSettings | null>(null)
 const baseForm = reactive({ controlPlanePublicBaseUrl: '' })
 const form = reactive<NotificationChannelCreateRequest>({ scopeType: 'SYSTEM', channelName: '', channelType: 'FEISHU', channelStatus: 'DISABLED', p0Only: true, cooldownSeconds: 1800, config: {} })
-async function load() { settings.value = await getSystemSettings(); baseForm.controlPlanePublicBaseUrl = settings.value.controlPlanePublicBaseUrl || settings.value.platformPublicUrl || ''; rows.value = await listNotificationChannels(); alerts.value = await listAlertEvents() }
+async function load() { settings.value = await getSystemSettings(); baseForm.controlPlanePublicBaseUrl = settings.value.controlPlanePublicBaseUrl || ''; rows.value = await listNotificationChannels(); alerts.value = await listAlertEvents() }
 async function saveBaseSettings() { savingBase.value = true; try { settings.value = await updateSystemSettings({ controlPlanePublicBaseUrl: baseForm.controlPlanePublicBaseUrl }); ElMessage.success('基础配置已保存') } finally { savingBase.value = false } }
 async function save() { await createNotificationChannel({ ...form, config: webhookUrl.value ? { webhook: webhookUrl.value } : {} }); dialogVisible.value = false; webhookUrl.value = ''; await load() }
 async function testChannel(channelId: number) { const result = await testNotificationChannel(channelId, '爬虫管理平台测试通知', '这是一条告警渠道测试消息。'); if (result.success) { ElMessage.success(result.message) } else { ElMessage.warning(result.message) } await load() }
 async function ack(alertId: number) { await acknowledgeAlert(alertId); await load() }
 async function resolveItem(alertId: number) { await resolveAlert(alertId); await load() }
-onMounted(async () => { await load(); if (route.query.focus === 'platformUrl' || route.query.focus === 'controlPlaneUrl') setTimeout(() => document.querySelector('.base-form input')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100) })
+onMounted(async () => { await load(); if (route.query.focus === 'controlPlaneUrl') setTimeout(() => document.querySelector('.base-form input')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100) })
 </script>
 <style scoped>
 .first-section { margin-top: 0; }

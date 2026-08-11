@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PLATFORM_URL="${PLATFORM_URL:-}"
+CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
 JOIN_TOKEN="${JOIN_TOKEN:-}"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.32}"
+AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.34}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
 FORCE="${FORCE:-0}"
 HEALTH_PORT="${AGENT_LOCAL_HEALTH_PORT:-18080}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --platform-url) PLATFORM_URL="${2:-}"; shift 2 ;;
+    --control-plane-url) CONTROL_PLANE_URL="${2:-}"; shift 2 ;;
     --join-token) JOIN_TOKEN="${2:-}"; shift 2 ;;
     --agent-image) AGENT_IMAGE="${2:-}"; shift 2 ;;
     --force) FORCE="1"; shift ;;
@@ -24,8 +24,8 @@ warn(){ echo "[WARN] $*"; WARN_COUNT=$((WARN_COUNT+1)); }
 fail(){ echo "[FAIL] $*"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 has_cmd(){ command -v "$1" >/dev/null 2>&1; }
 
-if [ -z "$PLATFORM_URL" ] || [ -z "$JOIN_TOKEN" ]; then fail "必须提供 --platform-url 和 --join-token"; fi
-PLATFORM_URL="${PLATFORM_URL%/}"
+if [ -z "$CONTROL_PLANE_URL" ] || [ -z "$JOIN_TOKEN" ]; then fail "必须提供 --control-plane-url 和 --join-token"; fi
+CONTROL_PLANE_URL="${CONTROL_PLANE_URL%/}"
 
 if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then
   INSTALL_MODE="root"
@@ -46,11 +46,11 @@ if has_cmd date; then pass "当前时间：$(date '+%F %T %Z' 2>/dev/null || tru
 if has_cmd curl; then pass "curl 已安装"; else fail "curl 未安装，无法连接平台和下载配置"; fi
 
 # outbound platform check
-if [ -n "$PLATFORM_URL" ] && has_cmd curl; then
-  if curl -fsSL --connect-timeout 5 "$PLATFORM_URL/health" >/dev/null 2>&1 || curl -fsSL --connect-timeout 5 "$PLATFORM_URL/api/v1/agent-bootstrap/ping" >/dev/null 2>&1; then
-    pass "平台连通：$PLATFORM_URL"
+if [ -n "$CONTROL_PLANE_URL" ] && has_cmd curl; then
+  if curl -fsSL --connect-timeout 5 "$CONTROL_PLANE_URL/health" >/dev/null 2>&1 || curl -fsSL --connect-timeout 5 "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/ping" >/dev/null 2>&1; then
+    pass "控制端连通：$CONTROL_PLANE_URL"
   else
-    fail "无法访问爬虫平台：$PLATFORM_URL，请检查平台 API 端口、防火墙、安全组和路由。"
+    fail "无法访问控制端：$CONTROL_PLANE_URL，请检查公网端口、防火墙、安全组和路由。"
   fi
 fi
 
@@ -86,17 +86,17 @@ chmod 700 "$AGENT_HOME" "$AGENT_STATE_DIR" 2>/dev/null || true
 
 INSTALL_REPORT="{\"installMode\":\"$INSTALL_MODE\",\"pass\":$PASS_COUNT,\"warn\":$WARN_COUNT,\"fail\":$FAIL_COUNT,\"agentHome\":\"$AGENT_HOME\",\"stateDir\":\"$AGENT_STATE_DIR\",\"projectRoot\":\"$AGENT_PROJECT_ROOT\"}"
 BODY="{\"joinToken\":\"$JOIN_TOKEN\",\"hostname\":\"$(hostname 2>/dev/null || echo unknown)\",\"installReport\":$INSTALL_REPORT}"
-if curl -fsSL -X POST "$PLATFORM_URL/api/v1/agent-bootstrap/env" -H 'Content-Type: application/json' --data "$BODY" > "$ENV_FILE.tmp"; then
+if curl -fsSL -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/env" -H 'Content-Type: application/json' --data "$BODY" > "$ENV_FILE.tmp"; then
   mv "$ENV_FILE.tmp" "$ENV_FILE"
   tmp_env="$ENV_FILE.platform.tmp"
-  grep -v '^AGENT_PLATFORM_URL=' "$ENV_FILE" > "$tmp_env" 2>/dev/null || true
-  printf "AGENT_PLATFORM_URL='%s'\n" "$PLATFORM_URL" >> "$tmp_env"
+  grep -v '^AGENT_CONTROL_PLANE_URL=' "$ENV_FILE" > "$tmp_env" 2>/dev/null || true
+  printf "AGENT_CONTROL_PLANE_URL='%s'\n" "$CONTROL_PLANE_URL" >> "$tmp_env"
   mv "$tmp_env" "$ENV_FILE"
   chmod 600 "$ENV_FILE" 2>/dev/null || true
-  pass "已从平台换取 Agent 配置：$ENV_FILE"
+  pass "已从控制端换取执行节点配置：$ENV_FILE"
 else
   rm -f "$ENV_FILE.tmp"
-  fail "换取 Agent 配置失败，joinToken 可能无效、过期或平台不可访问。"
+  fail "换取 Agent 配置失败，joinToken 可能无效、过期或控制端不可访问。"
   exit 1
 fi
 
@@ -109,4 +109,4 @@ fi
 docker rm -f "$AGENT_CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$AGENT_CONTAINER_NAME" --restart=always --network host --env-file "$ENV_FILE" -v /var/run/docker.sock:/var/run/docker.sock -v "$AGENT_STATE_DIR":/var/lib/crawler-agent -v "$AGENT_PROJECT_ROOT":/data/crawler-agent "$AGENT_IMAGE" >/dev/null
 pass "crawler-agent 已安装/启动：$AGENT_CONTAINER_NAME"
-echo "✅ Agent 接入完成。请回到爬虫平台查看心跳、Docker、磁盘、镜像仓库和首次 doctor 结果。"
+echo "✅ Agent 接入完成。请回到控制台查看心跳、Docker、磁盘、镜像仓库和首次 doctor 结果。"

@@ -20,15 +20,15 @@ if not installer.exists():
     errors.append("backend/app/templates/install-agent.sh 不存在，API 镜像内安装脚本接口会失败")
 else:
     text = installer.read_text(encoding="utf-8")
-    for token in ["--platform-url", "--join-token", "平台连通", "Docker"]:
+    for token in ["--control-plane-url", "--join-token", "控制端连通", "Docker"]:
         if token not in text:
             errors.append(f"安装脚本缺少关键内容：{token}")
 
 legacy_loopback = "127.0.0.1" + ":" + "8000"
 if legacy_loopback in service:
     errors.append("接入命令仍包含内部调试地址 " + legacy_loopback)
-if "install_target" not in schemas or "platform_url" not in schemas:
-    errors.append("接入令牌创建参数缺少 install_target/platform_url")
+if "install_target" not in schemas or "control_plane_url" not in schemas:
+    errors.append("接入令牌创建参数缺少 install_target/control_plane_url")
 if "detected_base_url" not in (ROOT / "backend/app/api/servers.py").read_text(encoding="utf-8"):
     errors.append("后端未根据请求识别控制端公网回调地址")
 if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
@@ -48,4 +48,4 @@ if errors:
     for item in errors:
         print("- " + item, file=sys.stderr)
     sys.exit(1)
-print("执行节点接入合约检查通过：安装脚本、平台地址、配置助手和前端向导符合要求。")
+print("执行节点接入合约检查通过：安装脚本、控制端地址、配置助手和前端向导符合要求。")

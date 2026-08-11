@@ -34,7 +34,7 @@ class PlatformAPI:
         try:
             response = self.session.request(
                 method,
-                f"{self.config.platform_url}/api/v1{path}",
+                f"{self.config.control_plane_url}/api/v1{path}",
                 headers=headers,
                 timeout=self.config.request_timeout_seconds,
                 verify=self.config.verify_tls,
