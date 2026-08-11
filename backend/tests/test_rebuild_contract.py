@@ -587,7 +587,8 @@ def test_128_frontend_forced_password_change_contract() -> None:
     assert 'payload?.message' in source
     assert 'passwordError' in source
     assert 'passwordFormProblem' in source
-    assert '<router-view v-else />' in source
+    assert '<router-view v-else v-slot=' in source
+    assert '<KeepAlive :max="10">' in source
     assert ':close-on-press-escape="!passwordRequired"' in source
     assert '新密码至少 8 位' in source
 
@@ -599,6 +600,22 @@ def test_128_frontend_user_admin_password_error_contract() -> None:
     assert 'showApiError' in source
     assert '密码至少 8 位' in source
     assert '首次登录后仍会被要求再次修改' in source
+
+
+def test_137_frontend_navigation_switch_performance_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    layout_source = (root / 'frontend' / 'src' / 'layouts' / 'MainLayout.vue').read_text(encoding='utf-8')
+    router_source = (root / 'frontend' / 'src' / 'router.ts').read_text(encoding='utf-8')
+    api_source = (root / 'frontend' / 'src' / 'api' / 'platform.ts').read_text(encoding='utf-8')
+    runs_source = (root / 'frontend' / 'src' / 'views' / 'RunsPage.vue').read_text(encoding='utf-8')
+    assert 'KeepAlive' in layout_source
+    assert 'preloadAuthenticatedRoutes' in layout_source
+    assert 'keepAliveMeta' in router_source
+    assert 'requestIdleCallback' in router_source
+    assert 'cachedReference' in api_source
+    assert "cachedReference('companies'" in api_source
+    assert 'onActivated' in runs_source
+    assert 'lastRouteKey' in runs_source
 
 
 def test_102_frontend_run_log_routes_match_backend_contract() -> None:

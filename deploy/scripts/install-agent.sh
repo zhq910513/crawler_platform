@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
 JOIN_TOKEN="${JOIN_TOKEN:-}"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.36}"
+AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.37}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
 FORCE="${FORCE:-0}"
 HEALTH_PORT="${AGENT_LOCAL_HEALTH_PORT:-18080}"

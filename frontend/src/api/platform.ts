@@ -1,8 +1,30 @@
 import { http, request } from './client'
 import type { AgentJoinTokenCreateRequest, AgentJoinTokenResult, AgentRegistrationRequest, Company, DashboardSummary, DiscoveredProject, AlertEvent, NotificationChannel, NotificationChannelCreateRequest, Project, ProjectImportRequest, ProjectReleaseDeploymentResult, ProjectReleaseDeployRequest, ProjectServer, ProjectServerPoolUpdateRequest, ProjectUpdateRequest, RunRecord, ServerCreateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskUpdateRequest, UserAccount, UserCreateRequest, ScheduleUpdateRequest, CronPreviewRequest, CronPreviewResult, OwnPasswordUpdateRequest, UserPasswordResetRequest, AccountCredential, AccountStatusEvent, AccountStatusEventCreateRequest, RunDiagnosis, RunEvent, RunLogTail, CredentialSubjectBinding, CredentialSubjectBindingCreateRequest, CredentialSubjectBindingUpdateRequest, CredentialLease, SystemSettings, CompanyResourceConfig, CompanySetupStatus, RunningCenterSummary, SpiderProjectCicdGuide } from '../types/api'
 
-export function listCompanies() { return request<Company[]>(http.get('/companies')) }
-export function createCompany(payload: { companyCode: string; companyName: string; timezone?: string; description?: string }) { return request<Company>(http.post('/companies', payload)) }
+
+const REFERENCE_CACHE_TTL_MS = 60000
+const referenceCache = new Map<string, { expiresAt: number; value: Promise<unknown> }>()
+
+function cachedReference<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const hit = referenceCache.get(key)
+  if (hit && hit.expiresAt > now) return hit.value as Promise<T>
+  const value = loader().catch((error) => {
+    referenceCache.delete(key)
+    throw error
+  })
+  referenceCache.set(key, { expiresAt: now + REFERENCE_CACHE_TTL_MS, value })
+  return value
+}
+
+function clearReferenceCache(prefix?: string) {
+  for (const key of Array.from(referenceCache.keys())) {
+    if (!prefix || key.startsWith(prefix)) referenceCache.delete(key)
+  }
+}
+
+export function listCompanies() { return cachedReference('companies', () => request<Company[]>(http.get('/companies'))) }
+export async function createCompany(payload: { companyCode: string; companyName: string; timezone?: string; description?: string }) { const result = await request<Company>(http.post('/companies', payload)); clearReferenceCache('companies'); return result }
 export function createDiscoveryToken(companyId: number) { return request<{ tokenId: number; discoveryToken: string }>(http.post(`/companies/${companyId}/discovery-tokens`)) }
 
 export function getSystemSettings() { return request<SystemSettings>(http.get('/system-settings')) }

@@ -1,23 +1,80 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { sessionState } from './stores/session'
 
+const loginView = () => import('./views/LoginPage.vue')
+const mainLayout = () => import('./layouts/MainLayout.vue')
+const dashboardView = () => import('./views/DashboardPage.vue')
+const runningCenterView = () => import('./views/RunningCenterPage.vue')
+const companiesView = () => import('./views/CompaniesPage.vue')
+const usersView = () => import('./views/UsersPage.vue')
+const resourcesView = () => import('./views/CompanyResourcesPage.vue')
+const serversView = () => import('./views/ServersPage.vue')
+const projectsView = () => import('./views/ProjectsPage.vue')
+const tasksView = () => import('./views/TasksPage.vue')
+const runsView = () => import('./views/RunsPage.vue')
+const platformsView = () => import('./views/TargetPlatformsPage.vue')
+const accountsView = () => import('./views/AccountCredentialsPage.vue')
+const operationsView = () => import('./views/OperationsPage.vue')
+const settingsView = () => import('./views/SettingsPage.vue')
+
+const commonPreloaders = [
+  runningCenterView,
+  projectsView,
+  tasksView,
+  runsView,
+  serversView,
+  accountsView,
+  resourcesView,
+  platformsView,
+]
+const adminPreloaders = [dashboardView, companiesView, usersView, operationsView, settingsView]
+const preloaded = new Set<() => Promise<unknown>>()
+
+type IdleWindow = Window & { requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number }
+
+function runWhenIdle(callback: () => void) {
+  if (typeof window === 'undefined') return
+  const requestIdleCallback = (window as IdleWindow).requestIdleCallback
+  if (requestIdleCallback) requestIdleCallback(callback, { timeout: 1800 })
+  else window.setTimeout(callback, 300)
+}
+
+export function preloadAuthenticatedRoutes(isSuperAdmin = false) {
+  const loaders = isSuperAdmin ? [...commonPreloaders, ...adminPreloaders] : commonPreloaders
+  runWhenIdle(() => {
+    let index = 0
+    const preloadNext = () => {
+      const loader = loaders[index]
+      index += 1
+      if (!loader) return
+      if (!preloaded.has(loader)) {
+        preloaded.add(loader)
+        void loader().catch(() => undefined)
+      }
+      window.setTimeout(preloadNext, 80)
+    }
+    preloadNext()
+  })
+}
+
+const keepAliveMeta = { keepAlive: true }
 const routes: RouteRecordRaw[] = [
-  { path: '/login', name: 'login', component: () => import('./views/LoginPage.vue'), meta: { title: '登录' } },
-  { path: '/', component: () => import('./layouts/MainLayout.vue'), children: [
+  { path: '/login', name: 'login', component: loginView, meta: { title: '登录' } },
+  { path: '/', component: mainLayout, children: [
     { path: '', redirect: () => sessionState.user?.isSuperAdmin ? '/dashboard' : '/running-center' },
-    { path: 'dashboard', component: () => import('./views/DashboardPage.vue'), meta: { title: '运行总览', adminOnly: true } },
-    { path: 'running-center', component: () => import('./views/RunningCenterPage.vue'), meta: { title: '运行中心' } },
-    { path: 'companies', component: () => import('./views/CompaniesPage.vue'), meta: { title: '公司管理', adminOnly: true } },
-    { path: 'users', component: () => import('./views/UsersPage.vue'), meta: { title: '用户管理', adminOnly: true } },
-    { path: 'resources', component: () => import('./views/CompanyResourcesPage.vue'), meta: { title: '数据库配置' } },
-    { path: 'servers', component: () => import('./views/ServersPage.vue'), meta: { title: '执行节点' } },
-    { path: 'projects', component: () => import('./views/ProjectsPage.vue'), meta: { title: '项目管理' } },
-    { path: 'tasks', component: () => import('./views/TasksPage.vue'), meta: { title: '任务调度' } },
-    { path: 'runs', component: () => import('./views/RunsPage.vue'), meta: { title: '执行记录' } },
-    { path: 'platforms', component: () => import('./views/TargetPlatformsPage.vue'), meta: { title: '采集平台' } },
-    { path: 'accounts', component: () => import('./views/AccountCredentialsPage.vue'), meta: { title: '平台账号' } },
-    { path: 'operations', component: () => import('./views/OperationsPage.vue'), meta: { title: '操作日志', adminOnly: true } },
-    { path: 'settings', component: () => import('./views/SettingsPage.vue'), meta: { title: '系统设置', adminOnly: true } },
+    { path: 'dashboard', name: 'dashboard', component: dashboardView, meta: { title: '运行总览', adminOnly: true, ...keepAliveMeta } },
+    { path: 'running-center', name: 'running-center', component: runningCenterView, meta: { title: '运行中心', ...keepAliveMeta } },
+    { path: 'companies', name: 'companies', component: companiesView, meta: { title: '公司管理', adminOnly: true, ...keepAliveMeta } },
+    { path: 'users', name: 'users', component: usersView, meta: { title: '用户管理', adminOnly: true, ...keepAliveMeta } },
+    { path: 'resources', name: 'resources', component: resourcesView, meta: { title: '数据库配置', ...keepAliveMeta } },
+    { path: 'servers', name: 'servers', component: serversView, meta: { title: '执行节点', ...keepAliveMeta } },
+    { path: 'projects', name: 'projects', component: projectsView, meta: { title: '项目管理', ...keepAliveMeta } },
+    { path: 'tasks', name: 'tasks', component: tasksView, meta: { title: '任务调度', ...keepAliveMeta } },
+    { path: 'runs', name: 'runs', component: runsView, meta: { title: '执行记录', ...keepAliveMeta } },
+    { path: 'platforms', name: 'platforms', component: platformsView, meta: { title: '采集平台', ...keepAliveMeta } },
+    { path: 'accounts', name: 'accounts', component: accountsView, meta: { title: '平台账号', ...keepAliveMeta } },
+    { path: 'operations', name: 'operations', component: operationsView, meta: { title: '操作日志', adminOnly: true, ...keepAliveMeta } },
+    { path: 'settings', name: 'settings', component: settingsView, meta: { title: '系统设置', adminOnly: true, ...keepAliveMeta } },
   ] },
 ]
 

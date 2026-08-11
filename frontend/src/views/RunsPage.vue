@@ -47,7 +47,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { downloadRunLogs, getRunDiagnosis, getRunLogTail, listRunEvents, listRuns } from '../api/platform'
@@ -65,6 +65,10 @@ const logStream = ref('')
 const logText = ref('')
 const logAfterSeq = ref(0)
 const selectedRunId = computed(() => selectedRun.value?.runId || 0)
+const lastRouteKey = ref('')
+
+function routeKey() { return `${route.query.taskId || ''}:${route.query.runId || ''}` }
+async function loadForRoute() { lastRouteKey.value = routeKey(); await load() }
 
 async function load() {
   const taskId = Number(route.query.taskId || 0) || undefined
@@ -91,7 +95,9 @@ async function downloadLogs(runId: number) {
   URL.revokeObjectURL(url)
   ElMessage.success(result.logTruncated ? '日志已下载，内容已按上限截断' : '日志已下载')
 }
-onMounted(load)
+onMounted(loadForRoute)
+onActivated(() => { if (lastRouteKey.value !== routeKey()) void loadForRoute() })
+watch(() => [route.query.taskId, route.query.runId], () => { if (route.path === '/runs' && lastRouteKey.value !== routeKey()) void loadForRoute() })
 </script>
 <style scoped>
 .error-summary { margin: 16px 0; padding: 12px 14px; border: 1px solid #fecaca; border-radius: 12px; color: #b91c1c; background: #fff5f5; }

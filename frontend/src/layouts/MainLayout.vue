@@ -34,7 +34,12 @@
       </el-header>
       <el-main class="content-wrap">
         <div v-if="passwordRequired" class="forced-password-panel">请先完成密码修改。完成后系统会要求重新登录，再进入业务页面。</div>
-        <router-view v-else />
+        <router-view v-else v-slot="{ Component, route }">
+          <KeepAlive :max="10">
+            <component :is="Component" v-if="route.meta.keepAlive" :key="route.name || route.path" />
+          </KeepAlive>
+          <component :is="Component" v-if="!route.meta.keepAlive" :key="route.fullPath" />
+        </router-view>
       </el-main>
     </el-container>
   </el-container>
@@ -59,6 +64,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
+import { preloadAuthenticatedRoutes } from '../router'
 import { changeOwnPassword } from '../api/platform'
 import { apiErrorData } from '../api/client'
 import { getBackendHealth, getFrontendVersion } from '../api/health'
@@ -114,6 +120,7 @@ const backendVersion = ref<BackendHealthData | null>(null)
 onMounted(() => {
   if (passwordRequired.value) passwordDialogVisible.value = true
   loadVersionInfo()
+  preloadAuthenticatedRoutes(Boolean(sessionState.user?.isSuperAdmin))
 })
 
 async function loadVersionInfo() {

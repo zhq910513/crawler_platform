@@ -135,7 +135,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
 import { analyzeProjectServers, deleteProject, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectReleaseDeployments, listProjectServers, listProjects, listServers, updateProjectServers, getSpiderProjectCicdOneClickGuide } from '../api/platform'
@@ -164,6 +164,20 @@ const cicdProvider = ref<'github' | 'gitlab'>('github')
 const cicdGuide = ref<SpiderProjectCicdGuide | null>(null)
 const importForm = reactive({ remark: '', dispatchMode: 'LOAD_BALANCE' })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
+const lastRouteIntent = ref('')
+
+function applyRouteIntent() {
+  const key = `${route.query.companyId || ''}:${route.query.openImport || ''}`
+  if (lastRouteIntent.value === key) return
+  lastRouteIntent.value = key
+  const qCompany = Number(route.query.companyId || 0) || undefined
+  if (qCompany && qCompany !== selectedCompanyId.value) {
+    selectedCompanyId.value = qCompany
+    importCompanyId.value = qCompany
+    void loadProjects()
+  }
+  if (route.query.openImport === '1') openImport()
+}
 
 async function loadCompanies() { companies.value = await listCompanies(); const qCompany = Number(route.query.companyId || 0) || undefined; if (qCompany) { selectedCompanyId.value = qCompany; importCompanyId.value = qCompany } if (!selectedCompanyId.value && sessionState.user?.isSuperAdmin) selectedCompanyId.value = companies.value[0]?.companyId; if (!importCompanyId.value) importCompanyId.value = selectedCompanyId.value || sessionState.user?.companyId || undefined }
 async function loadProjects() { projects.value = await listProjects(sessionState.user?.isSuperAdmin ? selectedCompanyId.value : sessionState.user?.companyId || undefined) }
@@ -291,7 +305,8 @@ function deploymentStepText(row: Record<string, unknown>) {
 }
 
 async function savePool() { if (!selectedProject.value) return; await updateProjectServers(selectedProject.value.projectId, poolPayload()); ElMessage.success('执行服务器池已更新'); serverPoolVisible.value = false; await loadProjectServers(); await loadProjects() }
-onMounted(async () => { await loadAll(); if (route.query.openImport === '1') openImport() })
+onMounted(async () => { await loadAll(); applyRouteIntent() })
+onActivated(applyRouteIntent)
 </script>
 <style scoped>
 .section-title { display: flex; justify-content: space-between; align-items: center; }
