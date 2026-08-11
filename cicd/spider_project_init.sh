@@ -1,30 +1,37 @@
 #!/usr/bin/env sh
 set -eu
-provider="${1:-github}"
-platform_url="${CRAWLER_PLATFORM_URL:-${PLATFORM_URL:-}}"
+provider="${1:-__CRAWLER_CI_PROVIDER__}"
+control_base_url="__CRAWLER_CONTROL_BASE_URL__"
 force="${CRAWLER_PLATFORM_INIT_FORCE:-0}"
-company_code="${CRAWLER_COMPANY_CODE:-${COMPANY_CODE:-}}"
+company_code="${CRAWLER_COMPANY_CODE:-${COMPANY_CODE:-__CRAWLER_COMPANY_CODE__}}"
 project_code="${CRAWLER_PROJECT_CODE:-${PROJECT_CODE:-$(basename "$PWD" | tr -c 'A-Za-z0-9_.-' '-' | sed 's/^-*//;s/-*$//')}}"
 project_name="${CRAWLER_PROJECT_NAME:-${PROJECT_NAME:-$project_code}}"
-release_channel="${CRAWLER_PLATFORM_RELEASE_CHANNEL:-${RELEASE_CHANNEL:-stable}}"
-if [ -z "$platform_url" ]; then echo "缺少 CRAWLER_PLATFORM_URL 或 PLATFORM_URL" >&2; exit 2; fi
-if [ -z "$company_code" ]; then echo "缺少 CRAWLER_COMPANY_CODE。不同公司项目放在同一个个人 GitHub 下时，必须在 crawler_project.json 声明公司编码。" >&2; exit 2; fi
-platform_url="${platform_url%/}"
+release_channel="${CRAWLER_RELEASE_CHANNEL:-${CRAWLER_PLATFORM_RELEASE_CHANNEL:-${RELEASE_CHANNEL:-stable}}}"
+case "$control_base_url" in http://*|https://*) ;; *) echo "初始化脚本缺少有效控制端公网回调地址，请从平台的 CI一键初始化 页面复制命令。" >&2; exit 2 ;; esac
+if [ -z "$company_code" ]; then echo "缺少 companyCode。请从平台对应公司页面复制 CI 一键初始化命令。" >&2; exit 2; fi
+control_base_url="${control_base_url%/}"
+write_workflow() {
+  template_url="$1"
+  target="$2"
+  tmp="$(mktemp)"
+  curl -fsSL "$template_url" -o "$tmp"
+  awk -v base="$control_base_url" '{gsub(/__CRAWLER_CONTROL_BASE_URL__/, base); print}' "$tmp" > "$target"
+  rm -f "$tmp"
+  echo "已生成 $target"
+}
 case "$provider" in
   github|gha)
     mkdir -p .github/workflows
     target=".github/workflows/crawler-platform-spider-release.yml"
     if [ -f "$target" ] && [ "$force" != "1" ]; then echo "$target 已存在。如需覆盖：CRAWLER_PLATFORM_INIT_FORCE=1" >&2; exit 3; fi
-    curl -fsSL "$platform_url/api/v1/cicd/templates/github-actions-spider-release.yml" -o "$target"
-    echo "已生成 $target"
+    write_workflow "$control_base_url/api/v1/cicd/templates/github-actions-spider-release.yml" "$target"
     ;;
   gitlab)
     target=".gitlab-ci.yml"
     if [ -f "$target" ] && [ "$force" != "1" ]; then echo "$target 已存在。如需覆盖：CRAWLER_PLATFORM_INIT_FORCE=1" >&2; exit 3; fi
-    curl -fsSL "$platform_url/api/v1/cicd/templates/gitlab-ci-spider-release.yml" -o "$target"
-    echo "已生成 $target"
+    write_workflow "$control_base_url/api/v1/cicd/templates/gitlab-ci-spider-release.yml" "$target"
     ;;
-  *) echo "用法：CRAWLER_PLATFORM_URL=https://platform.example.com CRAWLER_COMPANY_CODE=company_code sh -s -- github|gitlab" >&2; exit 2 ;;
+  *) echo "用法：从平台 CI一键初始化 页面复制命令：curl -fsSL '<控制端>/api/v1/cicd/spider-project-init.sh?provider=github&companyCode=xxx' | sh" >&2; exit 2 ;;
 esac
 if [ ! -f crawler_project.json ] || [ "$force" = "1" ]; then cat > crawler_project.json <<JSON
 {

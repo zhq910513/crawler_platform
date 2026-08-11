@@ -502,6 +502,10 @@ export interface ProjectReleaseDeployRequest { releaseId?: number | null; server
 export interface SpiderProjectCicdGuide {
   provider: string
   mode: string
+  controlPlanePublicBaseUrl: string
+  controlPlanePublicBaseUrlSource: string
+  controlPlanePublicBaseUrlConfigured: boolean
+  controlPlanePublicBaseUrlWarnings: string[]
   platformPublicUrl: string
   platformPublicUrlConfigured: boolean
   companyId: number
@@ -666,6 +670,10 @@ export interface CredentialSubjectBindingUpdateRequest {
 }
 
 export interface SystemSettings {
+  controlPlanePublicBaseUrl: string
+  controlPlanePublicBaseUrlSource: string
+  controlPlanePublicBaseUrlConfigured: boolean
+  controlPlanePublicBaseUrlWarnings: string[]
   platformPublicUrl: string
   platformPublicUrlSource: string
   platformPublicUrlConfigured: boolean
@@ -706,6 +714,10 @@ export interface CompanySetupStatus {
   totalCount: number
   nextStepKey: string
   nextStepLabel: string
+  controlPlanePublicBaseUrl: string
+  controlPlanePublicBaseUrlSource: string
+  controlPlanePublicBaseUrlConfigured: boolean
+  controlPlanePublicBaseUrlWarnings: string[]
   platformPublicUrl: string
   platformPublicUrlConfigured: boolean
   steps: CompanySetupStep[]

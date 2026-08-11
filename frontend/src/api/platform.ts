@@ -6,7 +6,7 @@ export function createCompany(payload: { companyCode: string; companyName: strin
 export function createDiscoveryToken(companyId: number) { return request<{ tokenId: number; discoveryToken: string }>(http.post(`/companies/${companyId}/discovery-tokens`)) }
 
 export function getSystemSettings() { return request<SystemSettings>(http.get('/system-settings')) }
-export function updateSystemSettings(payload: { platformPublicUrl?: string }) { return request<SystemSettings>(http.patch('/system-settings', payload)) }
+export function updateSystemSettings(payload: { controlPlanePublicBaseUrl?: string; platformPublicUrl?: string }) { return request<SystemSettings>(http.patch('/system-settings', payload)) }
 export function getCompanySetupStatus(companyId: number) { return request<CompanySetupStatus>(http.get(`/companies/${companyId}/setup-status`)) }
 export function listCompanyResourceConfigs(companyId?: number) { return request<CompanyResourceConfig[]>(http.get('/company-resource-configs', { params: { companyId } })) }
 export function saveCompanyResourceConfig(payload: { companyId: number; resourceType: string; resourceName?: string; config: Record<string, unknown> }) { return request<CompanyResourceConfig>(http.post('/company-resource-configs', payload)) }
@@ -26,7 +26,7 @@ export function createAgentJoinToken(payload: AgentJoinTokenCreateRequest) { ret
 export function listAgentJoinTokens(companyId?: number) { return request<Record<string, unknown>[]>(http.get('/servers/agent-join-tokens', { params: { companyId } })) }
 
 
-export function getSpiderProjectCicdOneClickGuide(params?: { provider?: 'github' | 'gitlab'; companyId?: number }) { return request<SpiderProjectCicdGuide>(http.get('/cicd/spider-projects/one-click-guide', { params })) }
+export function getSpiderProjectCicdOneClickGuide(params?: { provider?: 'github' | 'gitlab'; companyId?: number; detectedBaseUrl?: string }) { return request<SpiderProjectCicdGuide>(http.get('/cicd/spider-projects/one-click-guide', { params })) }
 
 export function listDiscoveredProjects(companyId?: number) { return request<DiscoveredProject[]>(http.get('/discovered-projects', { params: { companyId } })) }
 export function listProjects(companyId?: number) { return request<Project[]>(http.get('/projects', { params: { companyId } })) }

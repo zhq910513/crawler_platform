@@ -191,7 +191,7 @@ class ServerService:
         token.last_preflight_report = payload.install_report or {}
         self.db.commit()
         lines = {
-            "AGENT_PLATFORM_URL": SystemConfigService(self.db).resolve_platform_public_url() or "",
+            "AGENT_PLATFORM_URL": SystemConfigService(self.db).resolve_control_plane_public_base_url() or "",
             "AGENT_AGENT_TOKEN": raw_agent_token,
             "AGENT_AGENT_CODE": token.agent_code,
             "AGENT_SERVER_CODE": token.server_code,
@@ -208,15 +208,15 @@ class ServerService:
         return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --platform-url {public_base} --join-token {self._quote_shell(token)}"
 
     def _resolve_platform_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
-        base = (requested_url or SystemConfigService(self.db).resolve_platform_public_url() or detected_base_url or "").strip().rstrip("/")
+        base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")
         if not base:
-            raise AppError("请先填写执行节点可以访问的平台地址", code=40071)
+            raise AppError("请先填写执行节点可以访问的控制端公网回调地址", code=40071)
         parsed = urlparse(base)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise AppError("平台访问地址必须以 http:// 或 https:// 开头", code=40072)
+            raise AppError("控制端公网回调地址必须以 http:// 或 https:// 开头", code=40072)
         host = (parsed.hostname or "").lower()
         if install_target == "REMOTE" and self._is_loopback_host(host):
-            raise AppError("远程服务器接入不能使用 127.0.0.1 或 localhost，请填写执行节点可访问的平台地址", code=40073)
+            raise AppError("远程服务器接入不能使用 127.0.0.1 或 localhost，请填写执行节点可访问的控制端公网回调地址", code=40073)
         return base
 
     @staticmethod

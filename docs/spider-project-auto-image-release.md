@@ -1,23 +1,55 @@
-# 爬虫项目自动构建镜像发布
+# 爬虫项目自动构建镜像与注册 Release
 
 ## 目标
 
-新增爬虫项目后，平台不要求执行服务器登录 Git，也不要求客户服务器构建镜像。标准流程是：
+爬虫项目推送到 Git 后，由 Git CI 自动完成：
+
+1. 构建 Docker 镜像；
+2. 推送镜像仓库；
+3. 获取 `sha256:digest`；
+4. 回调爬虫平台控制端 API 注册 release；
+5. 平台页面选择一台或多台服务器一键部署；
+6. 目标服务器 Agent 拉取同一个 `imageRepository@sha256:digest`。
+
+执行服务器 Agent 不拉 Git、不构建镜像。
+
+## 控制端公网回调地址
+
+GitHub Actions / GitLab CI 需要访问平台 API 注册 release。这个地址在平台内统一叫：
 
 ```text
-爬虫项目 push / tag
-  -> GitHub Actions / GitLab CI 构建镜像
-  -> 推送镜像仓库并取得 sha256 digest
-  -> CI 注册平台 release
-  -> 平台一键部署到一台或多台服务器
-  -> 多个 Agent 各自拉取同一个 digest 镜像
+控制端公网回调地址
 ```
 
-## 适配个人 GitHub 混放多家公司项目
+它通常就是你当前打开爬虫平台的公网 IP + 端口或域名，例如：
 
-如果不同公司的项目都放在同一个个人 GitHub 账号下，不要把公司 ID 配成个人账号全局变量。
+```text
+http://1.2.3.4:8080
+https://crawler.example.com
+```
 
-每个爬虫项目仓库根目录必须放非敏感归属文件：
+从 1.0.32 开始，Git 仓库不再配置 `CRAWLER_PLATFORM_URL`。平台会在“CI一键初始化”里生成带回调地址的一行命令，初始化脚本会把该地址固化到 workflow 的 `CRAWLER_CONTROL_BASE_URL`。
+
+如果平台处在 Nginx、SLB、CDN 或端口映射后面，建议在“系统设置 -> 控制端公网回调地址”里显式保存最终公网地址。
+
+## 新项目初始化
+
+在平台项目页点击“CI一键初始化”，复制生成的一行命令，例如：
+
+```bash
+curl -fsSL 'http://1.2.3.4:8080/api/v1/cicd/spider-project-init.sh?provider=github&companyCode=ulike' | sh
+```
+
+该命令会在爬虫项目仓库根目录生成：
+
+```text
+crawler_project.json
+.github/workflows/crawler-platform-spider-release.yml
+VERSION
+sch.py 示例
+```
+
+`crawler_project.json` 是非敏感文件，可以提交到 Git：
 
 ```json
 {
@@ -28,102 +60,35 @@
 }
 ```
 
-平台后端会按以下规则校验：
-
-```text
-crawler_project.json.companyCode -> 平台公司
-Discovery Token -> 该公司 token
-二者必须匹配
-```
-
-当前版本仍然使用公司级 Discovery Token；没有新增全局多公司 token，也不会允许 A 公司 token 注册 B 公司项目。
+不同公司的项目都放在个人 GitHub 仓库时，必须用 `companyCode` 区分归属公司。
 
 ## GitHub 仓库配置
 
-个人仓库推荐每个项目仓库设置：
-
-Variables：
+仓库只必须配置一个 Secret：
 
 ```text
-CRAWLER_PLATFORM_URL
-CRAWLER_PLATFORM_REGISTRY_HOST=ghcr.io
-CRAWLER_PLATFORM_REGISTRY_NAMESPACE=你的 GitHub 用户名
-CRAWLER_PLATFORM_RELEASE_CHANNEL=stable
+CRAWLER_PLATFORM_DISCOVERY_TOKEN
 ```
 
-Secrets：
+该 token 是公司级项目发现凭证。A 公司 token 不能注册 B 公司项目。
+
+可选 Variables：
 
 ```text
-CRAWLER_PLATFORM_DISCOVERY_TOKEN=该项目所属公司的 Discovery Token
+CRAWLER_REGISTRY_HOST        默认 ghcr.io
+CRAWLER_REGISTRY_NAMESPACE   默认 GitHub 用户名
+CRAWLER_RELEASE_CHANNEL      默认 stable
 ```
 
-GHCR 通常可以使用 GitHub Actions 自动提供的 `GITHUB_TOKEN` 推送包；私有或外部 registry 再补充：
+GHCR 默认使用 workflow 的 `github.token` 推送；私有 registry 再配置：
 
 ```text
 CRAWLER_REGISTRY_USERNAME
 CRAWLER_REGISTRY_PASSWORD
 ```
 
-## 单项目初始化
-
-在爬虫项目仓库根目录执行：
-
-```text
-curl -fsSL https://你的爬虫平台访问地址/api/v1/cicd/spider-project-init.sh | CRAWLER_PLATFORM_URL=https://你的爬虫平台访问地址 CRAWLER_COMPANY_CODE=ulike sh -s -- github
-```
-
-GitLab 把最后的 `github` 改成 `gitlab`。
-
-初始化脚本只生成：
-
-```text
-crawler_project.json
-.github/workflows/crawler-platform-spider-release.yml 或 .gitlab-ci.yml
-VERSION 示例
-sch.py 示例
-```
-
-它不会提交代码，不会访问远端 Git 仓库，也不会写入 GitHub / GitLab secrets。
-
-## 项目契约
-
-仓库根目录至少需要：
-
-```text
-Dockerfile
-VERSION
-crawler_project.json
-sch.py 或 crawler_manifest.json
-```
-
-`sch.py` 要使用静态 `TASKS = [...]`，CI helper 只做 AST 字面量解析，不 import 业务代码。
-
 ## 多服务器部署
 
-同一家公司的项目需要部署到多台服务器时，不需要改 Git 配置。
+CI 只构建和注册 release，不写服务器列表。
 
-```text
-CI 构建一次 release digest
-  -> 平台选择多台目标服务器
-  -> 多台服务器 Agent 拉取同一个 imageRepository@sha256:digest
-```
-
-不要让每台服务器分别 git pull 或 docker build。
-
-## 版本规则
-
-每次发布必须递增 patch，例如：
-
-```text
-1.0.14 -> 1.0.15
-```
-
-禁止使用 `latest/main/dev` 作为平台 release 版本。
-
-## Agent 职责
-
-Agent 不拉 Git，不构建镜像，只拉取平台登记的：
-
-```text
-imageRepository@sha256:digest
-```
+同一个 release 要部署到多台服务器时，在平台页面选择目标服务器并一键部署。多个 Agent 会拉取同一个 digest 镜像。

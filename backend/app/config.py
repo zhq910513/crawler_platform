@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     app_build_time: str = Field(default_factory=default_build_time)
     timezone: str = "Asia/Shanghai"
     api_prefix: str = "/api/v1"
+    control_plane_public_base_url: str = Field(default_factory=lambda: os.getenv("CRAWLER_CONTROL_PUBLIC_BASE_URL", os.getenv("CONTROL_PLANE_PUBLIC_BASE_URL", "")))
     platform_public_url: str = ""
 
     database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite+pysqlite:///./crawler_platform_dev.db" if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))

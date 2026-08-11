@@ -116,14 +116,14 @@ def default_image_repository(project_code: str) -> str:
     configured = env("IMAGE_REPOSITORY") or env("CRAWLER_IMAGE_REPOSITORY")
     if configured:
         return configured.rstrip(":")
-    registry_host = env("CRAWLER_PLATFORM_REGISTRY_HOST", env("REGISTRY_HOST", "ghcr.io")).rstrip("/")
-    namespace = env("CRAWLER_PLATFORM_REGISTRY_NAMESPACE", env("REGISTRY_NAMESPACE"))
+    registry_host = env("CRAWLER_REGISTRY_HOST", env("CRAWLER_PLATFORM_REGISTRY_HOST", env("REGISTRY_HOST", "ghcr.io"))).rstrip("/")
+    namespace = env("CRAWLER_REGISTRY_NAMESPACE", env("CRAWLER_PLATFORM_REGISTRY_NAMESPACE", env("REGISTRY_NAMESPACE")))
     if not namespace and env("GITHUB_REPOSITORY_OWNER"):
         namespace = env("GITHUB_REPOSITORY_OWNER")
     if not namespace and env("CI_PROJECT_NAMESPACE"):
         namespace = env("CI_PROJECT_NAMESPACE")
     if not namespace:
-        die("无法推导 IMAGE_REPOSITORY：请设置 CRAWLER_PLATFORM_REGISTRY_NAMESPACE 或 IMAGE_REPOSITORY")
+        die("无法推导 IMAGE_REPOSITORY：请设置 CRAWLER_REGISTRY_NAMESPACE 或 IMAGE_REPOSITORY")
     return f"{registry_host}/{namespace.strip('/')}/{project_code}".lower()
 
 
@@ -205,13 +205,13 @@ def load_task_definitions() -> list[dict[str, Any]]:
 
 
 def platform_api_url() -> str:
-    base = env("CRAWLER_PLATFORM_URL") or env("PLATFORM_URL")
+    base = env("CRAWLER_CONTROL_BASE_URL") or env("CONTROL_PLANE_URL") or env("CRAWLER_PLATFORM_URL") or env("PLATFORM_URL")
     if not base:
-        die("缺少环境变量：CRAWLER_PLATFORM_URL 或 PLATFORM_URL")
+        die("缺少控制端回调地址：请使用平台 CI一键初始化 生成的 workflow，或设置 CRAWLER_CONTROL_BASE_URL")
     base = base.rstrip("/")
     parsed = urlparse(base)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        die("CRAWLER_PLATFORM_URL / PLATFORM_URL 必须是 http(s) URL")
+        die("CRAWLER_CONTROL_BASE_URL 必须是 http(s) URL")
     if base.endswith("/api/v1"):
         return base
     if base.endswith("/api"):
@@ -251,7 +251,7 @@ def build_payload() -> dict[str, Any]:
         "gitBranch": git_branch(),
         "gitCommit": git_commit(),
         "releaseVersion": version,
-        "releaseChannel": env("RELEASE_CHANNEL", env("CRAWLER_PLATFORM_RELEASE_CHANNEL", pick(meta, "releaseChannel", "release_channel", default="stable"))),
+        "releaseChannel": env("RELEASE_CHANNEL", env("CRAWLER_RELEASE_CHANNEL", env("CRAWLER_PLATFORM_RELEASE_CHANNEL", pick(meta, "releaseChannel", "release_channel", default="stable")))),
         "runtimeType": env("RUNTIME_TYPE", pick(meta, "runtimeType", "runtime_type", default="python")),
         "supportedArch": env("SUPPORTED_ARCH", pick(meta, "supportedArch", "supported_arch", default="linux/amd64")),
         "requiredCapabilities": meta.get("requiredCapabilities") or meta.get("required_capabilities") or {},

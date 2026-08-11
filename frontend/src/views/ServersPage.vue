@@ -66,8 +66,8 @@
           <el-col :span="12"><el-form-item label="服务器名称"><el-input v-model="joinForm.serverName" placeholder="例如：测试服务器01" @blur="applyAutoCodes" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="最大并发"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
         </el-row>
-        <el-form-item label="平台访问地址">
-          <el-input v-model="joinForm.platformUrl" placeholder="请输入执行节点可以访问的平台地址，例如：http://10.1.0.13:8080" />
+        <el-form-item label="控制端公网回调地址">
+          <el-input v-model="joinForm.platformUrl" placeholder="请输入执行节点可以访问的控制端地址，例如：http://10.1.0.13:8080" />
           <div class="field-hint">远程服务器不能使用本机地址；请填写目标服务器能访问到的内网地址、外网地址或域名。</div>
         </el-form-item>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
@@ -144,12 +144,12 @@ function healthTag(status: string) { if (status === 'HEALTHY') return 'success';
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
 const platformPublicUrl = ref('')
-async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); platformPublicUrl.value = data?.platformPublicUrl || '' }
+async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); platformPublicUrl.value = data?.controlPlanePublicBaseUrl || data?.platformPublicUrl || '' }
 function currentOrigin() { return platformPublicUrl.value || window.location.origin }
 function slug(value: string) { return (value || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server' }
 const addressWarning = computed(() => {
-  if (!joinForm.platformUrl) return '请填写执行节点可以访问的平台地址。'
-  try { new URL(joinForm.platformUrl) } catch { return '平台访问地址格式不正确。' }
+  if (!joinForm.platformUrl) return '请填写执行节点可以访问的控制端公网回调地址。'
+  try { new URL(joinForm.platformUrl) } catch { return '控制端公网回调地址格式不正确。' }
   if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(joinForm.platformUrl)) return '远程服务器不能使用本机地址，请填写内网地址、外网地址或域名。'
   return ''
 })

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -14,8 +14,9 @@ router = APIRouter(prefix="/system-settings", tags=["系统设置"])
 
 
 @router.get("")
-def get_system_settings(user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    return ok(SystemConfigService(db).get_system_settings())
+def get_system_settings(request: Request, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    detected = SystemConfigService.detected_base_url_from_request(request)
+    return ok(SystemConfigService(db).get_system_settings(detected))
 
 
 @router.patch("")

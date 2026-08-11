@@ -11,10 +11,10 @@ permissions:
   packages: write
 
 env:
-  CRAWLER_PLATFORM_URL: ${{ vars.CRAWLER_PLATFORM_URL }}
-  CRAWLER_PLATFORM_REGISTRY_HOST: ${{ vars.CRAWLER_PLATFORM_REGISTRY_HOST || 'ghcr.io' }}
-  CRAWLER_PLATFORM_REGISTRY_NAMESPACE: ${{ vars.CRAWLER_PLATFORM_REGISTRY_NAMESPACE || github.repository_owner }}
-  CRAWLER_PLATFORM_RELEASE_CHANNEL: ${{ vars.CRAWLER_PLATFORM_RELEASE_CHANNEL || 'stable' }}
+  CRAWLER_CONTROL_BASE_URL: "__CRAWLER_CONTROL_BASE_URL__"
+  CRAWLER_REGISTRY_HOST: ${{ vars.CRAWLER_REGISTRY_HOST || 'ghcr.io' }}
+  CRAWLER_REGISTRY_NAMESPACE: ${{ vars.CRAWLER_REGISTRY_NAMESPACE || github.repository_owner }}
+  CRAWLER_RELEASE_CHANNEL: ${{ vars.CRAWLER_RELEASE_CHANNEL || 'stable' }}
 
 jobs:
   build-push-register:
@@ -51,11 +51,11 @@ jobs:
           print(f'company_code={company_code}')
           PY
 
-      - name: Validate project ownership
+      - name: Validate control callback and project ownership
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$CRAWLER_PLATFORM_URL"
+          case "$CRAWLER_CONTROL_BASE_URL" in http://*|https://*) ;; *) echo "workflow 未初始化控制端公网回调地址，请从平台 CI一键初始化 页面重新生成 workflow" >&2; exit 2 ;; esac
           if [ -z "${{ steps.meta.outputs.company_code }}" ]; then echo "missing crawler_project.json.companyCode or CRAWLER_COMPANY_CODE" >&2; exit 2; fi
 
       - name: Resolve image repository
@@ -63,8 +63,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          registry_host="${CRAWLER_PLATFORM_REGISTRY_HOST:-ghcr.io}"
-          namespace="${CRAWLER_PLATFORM_REGISTRY_NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
+          registry_host="${CRAWLER_REGISTRY_HOST:-ghcr.io}"
+          namespace="${CRAWLER_REGISTRY_NAMESPACE:-$GITHUB_REPOSITORY_OWNER}"
           image_repository="${CRAWLER_IMAGE_REPOSITORY:-$registry_host/$namespace/${{ steps.meta.outputs.project_code }}}"
           image_repository="$(printf '%s' "$image_repository" | tr '[:upper:]' '[:lower:]')"
           echo "image_repository=$image_repository" >> "$GITHUB_OUTPUT"
@@ -72,9 +72,9 @@ jobs:
       - name: Login registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ vars.CRAWLER_PLATFORM_REGISTRY_HOST || 'ghcr.io' }}
+          registry: ${{ vars.CRAWLER_REGISTRY_HOST || 'ghcr.io' }}
           username: ${{ secrets.CRAWLER_REGISTRY_USERNAME || github.actor }}
-          password: ${{ secrets.CRAWLER_REGISTRY_PASSWORD || secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.CRAWLER_REGISTRY_PASSWORD || github.token }}
 
       - name: Resolve release version
         id: version
@@ -109,7 +109,6 @@ jobs:
           CRAWLER_COMPANY_CODE: ${{ steps.meta.outputs.company_code }}
         run: |
           set -euo pipefail
-          test -n "$CRAWLER_PLATFORM_URL"
           test -n "$CRAWLER_PLATFORM_DISCOVERY_TOKEN"
-          curl -fsSL "$CRAWLER_PLATFORM_URL/api/v1/cicd/spider-release-register.py" -o /tmp/spider_release_register.py
+          curl -fsSL "$CRAWLER_CONTROL_BASE_URL/api/v1/cicd/spider-release-register.py" -o /tmp/spider_release_register.py
           python3 /tmp/spider_release_register.py

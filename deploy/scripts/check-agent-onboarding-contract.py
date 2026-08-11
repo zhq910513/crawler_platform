@@ -30,7 +30,7 @@ if legacy_loopback in service:
 if "install_target" not in schemas or "platform_url" not in schemas:
     errors.append("接入令牌创建参数缺少 install_target/platform_url")
 if "detected_base_url" not in (ROOT / "backend/app/api/servers.py").read_text(encoding="utf-8"):
-    errors.append("后端未根据请求识别平台访问地址")
+    errors.append("后端未根据请求识别控制端公网回调地址")
 if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
     errors.append("安装脚本接口不应依赖 API 镜像外的 deploy 目录")
 if "远程服务器不能使用本机地址" not in frontend or "connectivityCommand" not in frontend:

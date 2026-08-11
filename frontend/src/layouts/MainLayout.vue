@@ -98,7 +98,7 @@ const subtitles: Record<string, string> = {
   '/platforms': '被采集网站与系统的接入准备情况',
   '/accounts': '平台账号健康、对象绑定与占用情况',
   '/operations': '关键操作审计记录',
-  '/settings': '平台访问地址、通知渠道与系统配置',
+  '/settings': '控制端公网回调地址、通知渠道与系统配置',
 }
 const visibleMenus = computed(() => menus.filter((item) => !item.adminOnly || sessionState.user?.isSuperAdmin))
 const routeSubtitle = computed(() => subtitles[router.currentRoute.value.path] || '爬虫项目统一交付与运行管理')

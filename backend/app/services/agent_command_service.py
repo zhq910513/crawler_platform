@@ -16,7 +16,7 @@ RESULT_KEY = "agentCommandResults"
 class AgentCommandService:
     """Store small, idempotent Agent operations in crawler_server.metrics.
 
-    1.0.31 deliberately does not add a new command table.  Existing customers
+    This release deliberately keeps using the existing server metrics command queue. Existing customers
     already rely on crawler_server.metrics for server-side operational state;
     using it here keeps the deployment path lightweight and migration-free.
     """

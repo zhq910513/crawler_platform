@@ -70,6 +70,7 @@ class CompanyUpdate(ApiModel):
 
 
 class SystemSettingsUpdate(ApiModel):
+    control_plane_public_base_url: str | None = Field(default=None, max_length=500)
     platform_public_url: str | None = Field(default=None, max_length=500)
 
 

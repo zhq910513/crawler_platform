@@ -97,9 +97,12 @@
         </el-select>
         <el-button @click="loadCicdGuide">刷新配置</el-button>
       </div>
-      <el-alert v-if="cicdGuide && !cicdGuide.platformPublicUrlConfigured" type="warning" show-icon :closable="false" title="系统设置里还没有配置平台访问地址，下面命令里的地址需要先替换。" />
+      <el-alert v-if="cicdGuide && !cicdGuide.controlPlanePublicBaseUrlConfigured" type="warning" show-icon :closable="false" title="未配置控制端公网回调地址，已临时使用当前浏览器访问地址生成命令；请确认 GitHub Actions 能访问该地址。" />
+      <el-alert v-if="cicdGuide?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="cicdGuide.controlPlanePublicBaseUrlWarnings.join('；')" />
       <div v-if="cicdGuide" class="cicd-guide">
-        <h4>Git 仓库 Variables</h4>
+        <h4>控制端公网回调地址</h4>
+        <div class="soft-panel">{{ cicdGuide.controlPlanePublicBaseUrl || '未识别' }} <span class="muted">来源：{{ cicdGuide.controlPlanePublicBaseUrlSource || '-' }}</span></div>
+        <h4>Git 仓库 Variables（可选）</h4>
         <el-table :data="cicdGuide.globalVariables" border size="small">
           <el-table-column label="名称" prop="name" min-width="220" />
           <el-table-column label="建议值" prop="value" min-width="260" />
@@ -250,7 +253,7 @@ async function openCicdGuide() {
 }
 async function loadCicdGuide() {
   const companyId = sessionState.user?.isSuperAdmin ? selectedCompanyId.value : sessionState.user?.companyId || undefined
-  cicdGuide.value = await getSpiderProjectCicdOneClickGuide({ provider: cicdProvider.value, companyId })
+  cicdGuide.value = await getSpiderProjectCicdOneClickGuide({ provider: cicdProvider.value, companyId, detectedBaseUrl: window.location.origin })
 }
 async function copyText(value: string) {
   await navigator.clipboard.writeText(value)

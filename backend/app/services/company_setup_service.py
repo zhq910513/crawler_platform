@@ -39,8 +39,8 @@ class CompanySetupService:
             "totalCount": len(steps),
             "nextStepKey": next_step["key"],
             "nextStepLabel": next_step["label"],
-            "platformPublicUrl": system_settings.get("platformPublicUrl") or "",
-            "platformPublicUrlConfigured": bool(system_settings.get("platformPublicUrl")),
+            "platformPublicUrl": system_settings.get("controlPlanePublicBaseUrl") or system_settings.get("platformPublicUrl") or "",
+            "platformPublicUrlConfigured": bool(system_settings.get("controlPlanePublicBaseUrl") or system_settings.get("platformPublicUrl")),
             "steps": steps,
             "counts": counts,
         }
@@ -83,7 +83,7 @@ class CompanySetupService:
         }
 
     def _steps(self, company_id: int, c: dict[str, Any], system_settings: dict[str, Any], user: SysUser) -> list[dict[str, Any]]:
-        platform_ready = bool(system_settings.get("platformPublicUrl"))
+        platform_ready = bool(system_settings.get("controlPlanePublicBaseUrl") or system_settings.get("platformPublicUrl"))
         database_done = c["resourcePassed"] > 0
         agent_done = c["onlineAgentCount"] > 0
         project_done = c["projectCount"] > 0 and c["taskDefinitionCount"] > 0
@@ -94,7 +94,7 @@ class CompanySetupService:
         platform_step_status = "DONE" if platform_ready else ("ACTION" if is_super_admin(user) else "BLOCKED")
         platform_blocked = not platform_ready and not is_super_admin(user)
         return [
-            self._step("platform_url", "平台访问地址", "执行节点和外部流水线连接平台时使用。", platform_step_status, "/settings", "去设置", {"configured": platform_ready}, blocked=platform_blocked, block_reason="请联系超级管理员配置平台访问地址"),
+            self._step("control_plane_url", "控制端公网回调地址", "Git CI、Agent 和外部执行节点连接控制端 API 时使用。", platform_step_status, "/settings", "去设置", {"configured": platform_ready}, blocked=platform_blocked, block_reason="请联系超级管理员配置控制端公网回调地址"),
             self._step("database", "公司数据库", "配置任务入库、缓存和原始数据存储。", "DONE" if database_done else "MISSING", "/resources", "去配置", {"resourceTotal": c["resourceTotal"], "resourcePassed": c["resourcePassed"]}),
             self._step("agent", "执行节点", "接入服务器后才能部署项目和运行任务。", "DONE" if agent_done else "MISSING", "/servers", "去接入", {"onlineAgentCount": c["onlineAgentCount"], "serverTotal": c["serverTotal"]}),
             self._step("project", "爬虫项目", "部署项目只会准备版本和任务定义，不会自动启动任务。", "DONE" if project_done and deployed_done else ("BLOCKED" if not agent_done else "MISSING"), "/projects", "去部署", {"projectCount": c["projectCount"], "taskDefinitionCount": c["taskDefinitionCount"], "deployedProjectServerCount": c["deployedProjectServerCount"]}, blocked=not agent_done, block_reason="请先接入在线执行节点"),
