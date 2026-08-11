@@ -121,7 +121,9 @@ def test_permissions_release_and_dashboard_scope() -> None:
     normal_login = client.post('/api/v1/sessions', json={'userName': 'normal_perm', 'password': 'Normal@123456'}).json()['data']
     normal_headers = {'Authorization': 'Bearer ' + normal_login['accessToken']}
     assert client.get('/api/v1/dashboard-summaries', headers=normal_headers).status_code == 403
-    assert client.get('/api/v1/releases', headers=normal_headers).json()['data'] == []
+    releases = client.get('/api/v1/releases', headers=normal_headers).json()['data']
+    assert len(releases) == 1
+    assert releases[0]['companyId'] == company['companyId']
 
 
 def test_formal_project_release_sync_after_cicd_report() -> None:

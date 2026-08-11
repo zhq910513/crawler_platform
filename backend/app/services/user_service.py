@@ -10,7 +10,7 @@ from app.repositories.users import UserRepository
 from app.schemas import UserCreate, UserUpdate
 from app.security import hash_password
 from app.utils import utcnow
-from app.services.permissions import require_super_admin, scoped_company_id
+from app.services.permissions import require_super_admin
 from app.services.audit import write_operation_log
 
 

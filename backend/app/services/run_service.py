@@ -33,7 +33,7 @@ class RunService:
         if is_super_admin(user):
             return self.runs.list_runs(company_id=company_id, project_id=project_id, task_id=task_id)
         scoped = scoped_company_id(user, company_id)
-        return self.runs.list_runs(company_id=scoped, project_id=project_id, task_id=task_id, user_id=user.user_id)
+        return self.runs.list_runs(company_id=scoped, project_id=project_id, task_id=task_id)
 
     def create_manual_run(self, user: SysUser, payload: ManualRunCreate) -> CrawlerTaskRun:
         task = self.tasks.get(payload.task_id)

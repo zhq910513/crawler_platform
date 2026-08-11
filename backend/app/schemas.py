@@ -422,6 +422,26 @@ class AgentRunClaim(ApiModel):
     agent_instance_id: str = Field(default="", max_length=100)
 
 
+class AgentRunContainerSnapshotCreate(ApiModel):
+    run_id: int
+    lease_token: str = Field(min_length=1, max_length=64)
+    container_id: str = Field(default="", max_length=128)
+    container_name: str = Field(default="", max_length=200)
+    image_digest: str = Field(default="", max_length=100)
+    container_status: Literal["NOT_CREATED", "PULLING_IMAGE", "CREATING", "RUNNING", "EXITED", "FAILED", "TIMED_OUT", "OOM_KILLED", "CLEANED", "LOST", "UNKNOWN"] = "UNKNOWN"
+    exit_code: int | None = None
+    oom_killed: bool | None = None
+    restart_count: int = Field(default=0, ge=0)
+    cpu_usage: float | None = None
+    memory_usage_mb: float | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    last_log_line: str = Field(default="", max_length=1000)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    observed_at: datetime | None = None
+    agent_instance_id: str | None = Field(default=None, max_length=100)
+
+
 class AgentRunHeartbeat(ApiModel):
     run_id: int
     lease_token: str = Field(min_length=1, max_length=64)

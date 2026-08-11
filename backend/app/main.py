@@ -28,6 +28,7 @@ HIGH_FREQUENCY_AUDIT_PREFIXES = (
     "/agent-run-events",
     "/agent-run-log-chunks",
     "/agent-run-log-finalizations",
+    "/agent-container-snapshots",
     "/agent-account-status-events",
 )
 

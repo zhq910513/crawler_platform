@@ -555,6 +555,32 @@ class CrawlerTaskRun(Base, TimestampMixin):
     error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
 
+class CrawlerRunContainerSnapshot(Base):
+    __tablename__ = "crawler_run_container_snapshot"
+    snapshot_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    run_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_task_run.run_id", ondelete="CASCADE"), index=True, nullable=False)
+    task_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_task.task_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True, nullable=False)
+    server_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_server.server_id", ondelete="SET NULL"), index=True)
+    agent_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_agent.agent_id", ondelete="SET NULL"), index=True)
+    container_id: Mapped[str] = mapped_column(String(128), default="", index=True, nullable=False)
+    container_name: Mapped[str] = mapped_column(String(200), default="", nullable=False)
+    image_digest: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    container_status: Mapped[str] = mapped_column(String(40), default="UNKNOWN", index=True, nullable=False)
+    exit_code: Mapped[int | None] = mapped_column(Integer)
+    oom_killed: Mapped[bool | None] = mapped_column(Boolean)
+    restart_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cpu_usage: Mapped[float | None] = mapped_column(Float)
+    memory_usage_mb: Mapped[float | None] = mapped_column(Float)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_log_line: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
 class CrawlerOfflineRunSnapshot(Base, TimestampMixin):
     __tablename__ = "crawler_offline_run_snapshot"
     snapshot_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)

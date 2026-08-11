@@ -4,8 +4,9 @@ import { sessionState } from './stores/session'
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: () => import('./views/LoginPage.vue'), meta: { title: '登录' } },
   { path: '/', component: () => import('./layouts/MainLayout.vue'), children: [
-    { path: '', redirect: () => sessionState.user?.isSuperAdmin ? '/dashboard' : '/projects' },
+    { path: '', redirect: () => sessionState.user?.isSuperAdmin ? '/dashboard' : '/running-center' },
     { path: 'dashboard', component: () => import('./views/DashboardPage.vue'), meta: { title: '运行总览', adminOnly: true } },
+    { path: 'running-center', component: () => import('./views/RunningCenterPage.vue'), meta: { title: '运行中心' } },
     { path: 'companies', component: () => import('./views/CompaniesPage.vue'), meta: { title: '公司管理', adminOnly: true } },
     { path: 'users', component: () => import('./views/UsersPage.vue'), meta: { title: '用户管理', adminOnly: true } },
     { path: 'resources', component: () => import('./views/CompanyResourcesPage.vue'), meta: { title: '数据库配置' } },
@@ -25,7 +26,7 @@ const router = createRouter({ history: createWebHistory(), routes })
 router.beforeEach((to) => {
   document.title = `${String(to.meta.title || '首页')} - 爬虫管理平台`
   if (to.path !== '/login' && !sessionState.token) return '/login'
-  if (to.meta.adminOnly && !sessionState.user?.isSuperAdmin) return '/projects'
+  if (to.meta.adminOnly && !sessionState.user?.isSuperAdmin) return '/running-center'
   return true
 })
 

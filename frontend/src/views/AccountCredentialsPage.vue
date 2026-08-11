@@ -15,7 +15,7 @@
         </div>
       </template>
       <el-form :inline="true" class="filter-bar">
-        <el-form-item label="公司"><el-select v-model="query.companyId" clearable placeholder="全部公司" style="width: 220px"><el-option v-for="c in companies" :key="c.companyId" :label="c.companyName" :value="c.companyId" /></el-select></el-form-item>
+        <el-form-item label="公司" v-if="sessionState.user?.isSuperAdmin"><el-select v-model="query.companyId" clearable placeholder="全部公司" style="width: 220px"><el-option v-for="c in companies" :key="c.companyId" :label="c.companyName" :value="c.companyId" /></el-select></el-form-item><el-form-item v-else label="当前公司"><el-input :model-value="currentCompanyName" disabled style="width: 220px" /></el-form-item>
         <el-form-item label="平台"><el-input v-model="query.platformCode" placeholder="请输入平台名称" clearable /></el-form-item>
         <el-form-item label="账号"><el-input v-model="query.credentialKey" placeholder="请输入账号标识" clearable /></el-form-item>
         <el-form-item><el-button type="primary" @click="reloadAll">查询</el-button><el-button @click="resetQuery">重置</el-button></el-form-item>
@@ -78,7 +78,7 @@
 
     <el-dialog v-model="reportVisible" title="登记账号状态" width="560px">
       <el-form label-position="top">
-        <el-form-item label="公司"><el-select v-model="reportForm.companyId" placeholder="选择公司"><el-option v-for="c in companies" :key="c.companyId" :label="c.companyName" :value="c.companyId" /></el-select></el-form-item>
+        <el-form-item label="公司" v-if="sessionState.user?.isSuperAdmin"><el-select v-model="reportForm.companyId" placeholder="选择公司"><el-option v-for="c in companies" :key="c.companyId" :label="c.companyName" :value="c.companyId" /></el-select></el-form-item><el-form-item v-else label="当前公司"><el-input :model-value="currentCompanyName" disabled /></el-form-item>
         <el-form-item label="平台"><el-input v-model="reportForm.platformCode" placeholder="请输入平台名称" /></el-form-item>
         <el-form-item label="账号"><el-input v-model="reportForm.credentialKey" placeholder="请输入账号标识" /></el-form-item>
         <el-form-item label="账号名称"><el-input v-model="reportForm.credentialName" placeholder="可选" /></el-form-item>
@@ -96,6 +96,7 @@ import { ElMessage } from 'element-plus'
 import { createAccountStatusEvent, listAccountCredentials, listAccountStatusEvents, listCompanies, setAccountCredentialEnabled, listCredentialSubjectBindings, listCredentialLeases } from '../api/platform'
 import type { AccountCredential, AccountStatusEvent, Company, CredentialSubjectBinding, CredentialLease } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
+import { sessionState } from '../stores/session'
 
 const companies = ref<Company[]>([])
 const credentials = ref<AccountCredential[]>([])
@@ -115,13 +116,14 @@ const statusCodeOptions = [
 const statusCodeMap = Object.fromEntries(statusCodeOptions.map((item) => [item.value, item.label]))
 const healthyCount = computed(() => credentials.value.filter((item) => item.healthStatus === 'HEALTHY').length)
 const activeLeaseCount = computed(() => leases.value.filter((item) => item.leaseStatus === 'ACTIVE').length)
+const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
 
-onMounted(async () => { companies.value = await listCompanies(); await reloadAll() })
+onMounted(async () => { companies.value = await listCompanies(); if (!sessionState.user?.isSuperAdmin) { query.companyId = sessionState.user?.companyId || undefined; reportForm.companyId = sessionState.user?.companyId || undefined } await reloadAll() })
 async function reloadAll() { await Promise.all([loadCredentials(), loadBindings(), loadLeases()]) }
 async function loadCredentials() { credentials.value = await listAccountCredentials({ companyId: query.companyId, platformCode: query.platformCode || undefined, credentialKey: query.credentialKey || undefined }) }
 async function loadBindings() { bindings.value = await listCredentialSubjectBindings({ companyId: query.companyId, platformCode: query.platformCode || undefined, credentialKey: query.credentialKey || undefined }) }
 async function loadLeases() { leases.value = await listCredentialLeases({ companyId: query.companyId, platformCode: query.platformCode || undefined, credentialKey: query.credentialKey || undefined }) }
-function resetQuery() { query.companyId = undefined; query.platformCode = ''; query.credentialKey = ''; void reloadAll() }
+function resetQuery() { query.companyId = sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined; query.platformCode = ''; query.credentialKey = ''; void reloadAll() }
 function statusType(value: string) { if (value === 'HEALTHY') return 'success'; if (['EXPIRED','INVALID','NEED_VERIFY','DISABLED'].includes(value)) return 'danger'; if (value === 'WARNING') return 'warning'; return 'info' }
 function leaseTag(value: string) { if (value === 'ACTIVE') return 'warning'; if (value === 'RELEASED') return 'info'; if (value === 'EXPIRED') return 'danger'; return 'info' }
 function companyName(companyId: number, fallback: string) { return companies.value.find((item) => item.companyId === companyId)?.companyName || fallback || '-' }
@@ -133,7 +135,7 @@ function slotName(value?: string | null) { const map: Record<string, string> = {
 function subjectTypeText(value?: string | null) { const map: Record<string, string> = { company: '公司', shop: '店铺', product: '商品', order: '订单', keyword: '关键词' }; return value ? (map[value] || value) : '-' }
 async function toggleEnabled(row: AccountCredential, enabled: boolean) { const updated = await setAccountCredentialEnabled(row.credentialId, enabled, enabled ? '前端启用账号' : '前端禁用账号'); Object.assign(row, updated) }
 async function openEvents(row: AccountCredential) { events.value = await listAccountStatusEvents(row.credentialId); eventsVisible.value = true }
-function openReportDialog() { reportVisible.value = true }
+function openReportDialog() { if (!sessionState.user?.isSuperAdmin) reportForm.companyId = sessionState.user?.companyId || undefined; reportVisible.value = true }
 async function submitReport() { await createAccountStatusEvent({ ...reportForm, source: 'ADMIN', severity: reportForm.statusCode.endsWith('_OK') ? 'INFO' : 'WARNING' }); ElMessage.success('账号状态已登记'); reportVisible.value = false; await reloadAll() }
 </script>
 

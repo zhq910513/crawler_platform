@@ -7,10 +7,11 @@ from app.db import get_db
 from app.deps import get_agent, get_current_user
 from app.models import CrawlerAgent, SysUser
 from app.responses import ok
-from app.schemas import AgentHeartbeat, AgentImagePullResult, AgentRegistration, AgentRunClaim, AgentRunHeartbeat, AgentRunResult, AgentRunEventCreate, AgentRunLogChunkCreate, AgentRunLogFinalizeCreate
+from app.schemas import AgentHeartbeat, AgentImagePullResult, AgentRegistration, AgentRunClaim, AgentRunHeartbeat, AgentRunResult, AgentRunEventCreate, AgentRunLogChunkCreate, AgentRunLogFinalizeCreate, AgentRunContainerSnapshotCreate
 from app.services.agent_service import AgentService
 from app.services.server_service import ServerService
 from app.services.run_log_service import RunLogService
+from app.services.container_snapshot_service import ContainerSnapshotService
 
 router = APIRouter(tags=["Agent"])
 
@@ -53,6 +54,13 @@ def create_agent_run_event(payload: AgentRunEventCreate, agent: CrawlerAgent = D
 @router.post("/agent-run-log-chunks")
 def create_agent_run_log_chunk(payload: AgentRunLogChunkCreate, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)):
     return ok(RunLogService(db).append_chunk(agent, payload))
+
+
+
+
+@router.post("/agent-container-snapshots")
+def create_agent_container_snapshot(payload: AgentRunContainerSnapshotCreate, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)):
+    return ok(ContainerSnapshotService(db).report(agent, payload))
 
 
 @router.post("/agent-run-log-finalizations")

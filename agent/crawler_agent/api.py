@@ -106,6 +106,17 @@ class PlatformAPI:
         except PlatformUnavailable:
             self._spool("/agent-run-log-chunks", body)
 
+
+
+    def container_snapshot(self, run_id: int, lease_token: str, **kwargs: Any) -> None:
+        body = {"runId": run_id, "leaseToken": lease_token, "agentInstanceId": self.config.instance_id, **kwargs}
+        try:
+            self._request("POST", "/agent-container-snapshots", json=body)
+        except PlatformUnavailable:
+            self._spool("/agent-container-snapshots", body)
+        except LeaseLostError:
+            pass
+
     def finalize_logs(self, run_id: int, lease_token: str, status: str = "COMPLETE", **kwargs: Any) -> None:
         body = {"runId": run_id, "leaseToken": lease_token, "logStatus": status, "agentInstanceId": self.config.instance_id, **kwargs}
         try:

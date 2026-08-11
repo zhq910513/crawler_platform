@@ -35,7 +35,7 @@ class TaskService:
             rows = self.tasks.list_tasks(company_id=company_id)
         else:
             scoped = scoped_company_id(user, company_id)
-            rows = self.tasks.list_tasks(company_id=scoped, user_id=user.user_id)
+            rows = self.tasks.list_tasks(company_id=scoped)
         return [self._task_payload(row) for row in rows]
 
     def _binding_value_exists(self, value: Any) -> bool:

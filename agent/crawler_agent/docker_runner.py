@@ -187,6 +187,59 @@ class RunExecutor:
             "diagnosis": {"summary": summary, "suggestion": "查看错误附近日志，确认目标站点、账号、网络和数据库状态。"},
         }
 
+
+    def _container_snapshot_payload(self, container, image_digest: str, status: str, exit_code: int | None = None, last_log_line: str = "") -> dict[str, Any]:
+        cpu_usage = None
+        memory_usage_mb = None
+        oom_killed = None
+        restart_count = 0
+        started_at = None
+        finished_at = None
+        container_id = ""
+        container_name = ""
+        try:
+            container.reload()
+            attrs = container.attrs or {}
+            state = attrs.get("State") or {}
+            container_id = (container.id or "")[:64]
+            container_name = getattr(container, "name", "") or ""
+            oom_killed = state.get("OOMKilled")
+            restart_count = int(attrs.get("RestartCount") or 0)
+            started_at = state.get("StartedAt") or None
+            finished_at = state.get("FinishedAt") or None
+            try:
+                stats = container.stats(stream=False)
+                memory_usage_mb = round(float((stats.get("memory_stats") or {}).get("usage") or 0) / 1024 / 1024, 2)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        payload: dict[str, Any] = {
+            "containerId": container_id,
+            "containerName": container_name,
+            "imageDigest": image_digest,
+            "containerStatus": status,
+            "exitCode": exit_code,
+            "oomKilled": oom_killed,
+            "restartCount": restart_count,
+            "cpuUsage": cpu_usage,
+            "memoryUsageMb": memory_usage_mb,
+            "startedAt": started_at if started_at and not str(started_at).startswith("0001-") else None,
+            "finishedAt": finished_at if finished_at and not str(finished_at).startswith("0001-") else None,
+            "lastLogLine": last_log_line[-1000:],
+            "payload": {"dockerStatus": getattr(container, "status", "") or ""},
+        }
+        return payload
+
+    def _report_container_snapshot(self, run_id: int, lease_token: str, container, image_digest: str, status: str, exit_code: int | None = None, last_log_line: str = "") -> None:
+        if not container:
+            return
+        try:
+            self.api.container_snapshot(run_id, lease_token, **self._container_snapshot_payload(container, image_digest, status, exit_code, last_log_line))
+        except Exception as exc:
+            logger.warning("run_id=%s report container snapshot failed: %s", run_id, exc, exc_info=True)
+
+
     def execute(self, claim: dict[str, Any]) -> None:
         run_id = int(claim["runId"])
         lease_token = str(claim["leaseToken"])
@@ -299,6 +352,7 @@ class RunExecutor:
             container = self.client.containers.run(**run_kwargs)
             logger.info("run_id=%s container created id=%s", run_id, container.id[:12])
             self.api.run_event(run_id, lease_token, "CONTAINER_CREATED", "DOCKER", "任务容器已创建并启动", payload={"containerId": container.id[:12], "containerName": container_name})
+            self._report_container_snapshot(run_id, lease_token, container, str(claim.get("imageDigest") or ""), "RUNNING")
             self.api.run_heartbeat(run_id, lease_token, "任务容器已创建并启动")
             thread.start()
             started = time.monotonic()
@@ -316,6 +370,7 @@ class RunExecutor:
                     diagnosis = self._diagnosis_from_logs("TIMED_OUT", logs, "DOCKER")
                     self.api.finalize_logs(run_id, lease_token, "TRUNCATED" if len(logs.encode("utf-8", errors="replace")) > log_limit_mb * 1024 * 1024 else "COMPLETE", logPath=str(dirs.get("logs", "")), logTruncated=False, **diagnosis)
                     self.api.run_event(run_id, lease_token, "RUN_TIMED_OUT", "DOCKER", "任务运行超时", "ERROR", {"timeoutSeconds": timeout_seconds})
+                    self._report_container_snapshot(run_id, lease_token, container, str(claim.get("imageDigest") or ""), "TIMED_OUT", None, logs[-1000:])
                     self.api.finish(run_id, lease_token, "TIMED_OUT", {"tailLogs": logs[-4000:], "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "任务运行超时")
                     return
                 time.sleep(2)
@@ -326,6 +381,7 @@ class RunExecutor:
             status = "SUCCEEDED" if exit_code == 0 else "FAILED"
             self._upload_text_logs(run_id, lease_token, logs, "stdout", 1)
             diagnosis = self._diagnosis_from_logs(status, logs, "FINISH")
+            self._report_container_snapshot(run_id, lease_token, container, str(claim.get("imageDigest") or ""), "EXITED" if exit_code == 0 else "FAILED", exit_code, logs[-1000:])
             self.api.finalize_logs(run_id, lease_token, "COMPLETE", logPath=str(dirs.get("logs", "")), logTruncated=False, **diagnosis)
             self.api.run_event(run_id, lease_token, "RUN_SUCCEEDED" if exit_code == 0 else "RUN_FAILED", "FINISH", "任务执行成功" if exit_code == 0 else "任务执行失败", "INFO" if exit_code == 0 else "ERROR", {"exitCode": exit_code})
             self.api.finish(run_id, lease_token, status, {"exitCode": exit_code, "tailLogs": logs[-4000:], "workDir": str(dirs.get("work", "")), "logDir": str(dirs.get("logs", ""))}, "" if exit_code == 0 else logs[-4000:])
@@ -345,6 +401,10 @@ class RunExecutor:
         finally:
             stop_event.set()
             if container:
+                try:
+                    self._report_container_snapshot(run_id, lease_token, container, str(claim.get("imageDigest") or ""), "CLEANED")
+                except Exception:
+                    pass
                 try:
                     container.remove(force=True)
                 except Exception:

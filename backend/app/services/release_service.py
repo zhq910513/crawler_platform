@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import CrawlerProjectMember, CrawlerProjectRelease, SysUser
+from app.models import CrawlerProjectRelease, SysUser
 from app.repositories.platform import ReleaseRepository
 from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
 
@@ -20,10 +19,4 @@ class ReleaseService:
         if is_super_admin(user):
             return self.repo.list_releases(company_id)
         scoped = scoped_company_id(user, company_id)
-        stmt = (
-            select(CrawlerProjectRelease)
-            .join(CrawlerProjectMember, CrawlerProjectMember.project_id == CrawlerProjectRelease.project_id)
-            .where(CrawlerProjectRelease.company_id == scoped, CrawlerProjectMember.user_id == user.user_id)
-            .order_by(CrawlerProjectRelease.published_at.desc())
-        )
-        return list(self.db.scalars(stmt).all())
+        return self.repo.list_releases(scoped)

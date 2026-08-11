@@ -13,7 +13,7 @@ from app.models import CrawlerCompany, SysSecret, SysUser
 from app.schemas import CompanyResourceConfigCreate, CompanyResourceConfigTest
 from app.security import decrypt_secret, encrypt_secret
 from app.services.audit import write_operation_log
-from app.services.permissions import require_company_scope, require_super_admin, scoped_company_id
+from app.services.permissions import require_company_scope, scoped_company_id
 from app.utils import utcnow
 
 RESOURCE_LABELS = {

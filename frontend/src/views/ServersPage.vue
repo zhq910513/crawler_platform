@@ -6,7 +6,7 @@
         <p class="muted">接入服务器后，平台会在这些节点上运行爬虫任务。</p>
       </div>
       <div>
-        <el-button v-if="sessionState.user?.isSuperAdmin" type="primary" @click="openOnboarding">接入执行节点</el-button>
+        <el-button type="primary" @click="openOnboarding">接入执行节点</el-button>
         <el-button v-if="sessionState.user?.isSuperAdmin" @click="dialogVisible = true">手工新增</el-button>
         <el-button @click="load">刷新</el-button>
       </div>
@@ -59,7 +59,7 @@
 
       <el-form label-position="top" class="onboarding-form">
         <el-row :gutter="16">
-          <el-col :span="12"><el-form-item label="公司"><el-select v-model="joinForm.companyId" @change="applyAutoCodes"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="公司"><el-select v-if="sessionState.user?.isSuperAdmin" v-model="joinForm.companyId" @change="applyAutoCodes"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select><el-input v-else :model-value="currentCompanyName" disabled /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="接入场景"><el-radio-group v-model="joinForm.installTarget" @change="applyInstallTarget"><el-radio-button label="REMOTE">远程服务器</el-radio-button><el-radio-button label="LOCAL">本机测试</el-radio-button></el-radio-group></el-form-item></el-col>
         </el-row>
         <el-row :gutter="16">
@@ -109,7 +109,7 @@
 
     <el-dialog v-model="dialogVisible" title="新增执行节点" width="520px">
       <el-form label-position="top">
-        <el-form-item label="公司"><el-select v-model="form.companyId"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item>
+        <el-form-item label="公司"><el-select v-if="sessionState.user?.isSuperAdmin" v-model="form.companyId"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select><el-input v-else :model-value="currentCompanyName" disabled /></el-form-item>
         <el-form-item label="节点标识"><el-input v-model="form.serverCode" /></el-form-item>
         <el-form-item label="节点名称"><el-input v-model="form.serverName" /></el-form-item>
         <el-form-item label="服务器地址"><el-input v-model="form.serverIp" /></el-form-item>
@@ -136,6 +136,7 @@ const onboardingVisible = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
 const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', platformUrl: '' })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
+const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
 
 function percent(value?: number | null) { if (value === null || value === undefined || Number.isNaN(Number(value))) return 0; return Math.max(0, Math.min(100, Math.round(Number(value)))) }
 function boolText(value?: boolean | null) { if (value === null || value === undefined) return '-'; return value ? '可用' : '不可用' }

@@ -5,7 +5,7 @@
         <el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" />
       </el-select>
       <span v-else class="muted">当前公司：{{ currentCompanyName }}</span>
-      <el-button v-if="sessionState.user?.isSuperAdmin" type="primary" @click="openImport">接入项目</el-button>
+      <el-button type="primary" @click="openImport">接入项目</el-button>
       <el-button @click="loadAll">刷新</el-button>
     </div>
 
@@ -42,9 +42,10 @@
 
     <el-dialog v-model="importVisible" title="接入项目" width="900px">
       <div class="toolbar">
-        <el-select v-model="importCompanyId" placeholder="选择公司" style="width: 260px" @change="loadDiscovered">
+        <el-select v-if="sessionState.user?.isSuperAdmin" v-model="importCompanyId" placeholder="选择公司" style="width: 260px" @change="loadDiscovered">
           <el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" />
         </el-select>
+        <span v-else class="muted">当前公司：{{ currentCompanyName }}</span>
         <el-button @click="loadDiscovered">刷新待接入项目</el-button>
       </div>
       <el-table :data="discoveredProjects" border :row-class-name="discoveredRowClass" @row-click="setDiscovered">
@@ -108,7 +109,7 @@ const currentCompanyName = computed(() => companies.value.find((item) => item.co
 async function loadCompanies() { companies.value = await listCompanies(); const qCompany = Number(route.query.companyId || 0) || undefined; if (qCompany) { selectedCompanyId.value = qCompany; importCompanyId.value = qCompany } if (!selectedCompanyId.value && sessionState.user?.isSuperAdmin) selectedCompanyId.value = companies.value[0]?.companyId; if (!importCompanyId.value) importCompanyId.value = selectedCompanyId.value || sessionState.user?.companyId || undefined }
 async function loadProjects() { projects.value = await listProjects(sessionState.user?.isSuperAdmin ? selectedCompanyId.value : sessionState.user?.companyId || undefined) }
 async function loadAll() { await loadCompanies(); await loadProjects() }
-function openImport() { importVisible.value = true; selectedDiscovered.value = null; void loadDiscovered() }
+function openImport() { importVisible.value = true; selectedDiscovered.value = null; if (!sessionState.user?.isSuperAdmin) importCompanyId.value = sessionState.user?.companyId || undefined; void loadDiscovered() }
 async function loadDiscovered() { discoveredProjects.value = await listDiscoveredProjects(importCompanyId.value) }
 function setDiscovered(row: DiscoveredProject) { if (row.selectable) selectedDiscovered.value = row }
 function discoveredRowClass({ row }: { row: DiscoveredProject }) { return row.selectable ? '' : 'disabled-row' }

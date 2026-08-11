@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.errors import AppError
 from app.models import CrawlerAccountCredential, CrawlerAgent, CrawlerCompany, CrawlerProject, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerServer, CrawlerTask, CrawlerTaskSchedule, SysSecret, SysUser
 from app.security import decrypt_secret
-from app.services.permissions import require_company_scope
+from app.services.permissions import is_super_admin, require_company_scope
 from app.services.system_config_service import SystemConfigService
 
 
@@ -25,7 +25,7 @@ class CompanySetupService:
             raise AppError("公司不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         counts = self._counts(company_id)
         system_settings = SystemConfigService(self.db).get_system_settings()
-        steps = self._steps(company_id, counts, system_settings)
+        steps = self._steps(company_id, counts, system_settings, user)
         completed = sum(1 for item in steps if item["status"] == "DONE")
         mode = self._mode(counts, completed, len(steps))
         next_step = next((item for item in steps if item["status"] in {"MISSING", "ACTION", "RISK"} and not item.get("blocked")), steps[-1])
@@ -82,7 +82,7 @@ class CompanySetupService:
             "scheduleCount": int(schedules),
         }
 
-    def _steps(self, company_id: int, c: dict[str, Any], system_settings: dict[str, Any]) -> list[dict[str, Any]]:
+    def _steps(self, company_id: int, c: dict[str, Any], system_settings: dict[str, Any], user: SysUser) -> list[dict[str, Any]]:
         platform_ready = bool(system_settings.get("platformPublicUrl"))
         database_done = c["resourcePassed"] > 0
         agent_done = c["onlineAgentCount"] > 0
@@ -91,8 +91,10 @@ class CompanySetupService:
         platform_done = c["platformCodeCount"] > 0
         account_done = c["accountTotal"] > 0 and c["accountNeedAttention"] == 0
         task_done = c["taskCount"] > 0
+        platform_step_status = "DONE" if platform_ready else ("ACTION" if is_super_admin(user) else "BLOCKED")
+        platform_blocked = not platform_ready and not is_super_admin(user)
         return [
-            self._step("platform_url", "平台访问地址", "执行节点和外部流水线连接平台时使用。", "DONE" if platform_ready else "ACTION", "/settings", "去设置", {"configured": platform_ready}),
+            self._step("platform_url", "平台访问地址", "执行节点和外部流水线连接平台时使用。", platform_step_status, "/settings", "去设置", {"configured": platform_ready}, blocked=platform_blocked, block_reason="请联系超级管理员配置平台访问地址"),
             self._step("database", "公司数据库", "配置任务入库、缓存和原始数据存储。", "DONE" if database_done else "MISSING", "/resources", "去配置", {"resourceTotal": c["resourceTotal"], "resourcePassed": c["resourcePassed"]}),
             self._step("agent", "执行节点", "接入服务器后才能部署项目和运行任务。", "DONE" if agent_done else "MISSING", "/servers", "去接入", {"onlineAgentCount": c["onlineAgentCount"], "serverTotal": c["serverTotal"]}),
             self._step("project", "爬虫项目", "部署项目只会准备版本和任务定义，不会自动启动任务。", "DONE" if project_done and deployed_done else ("BLOCKED" if not agent_done else "MISSING"), "/projects", "去部署", {"projectCount": c["projectCount"], "taskDefinitionCount": c["taskDefinitionCount"], "deployedProjectServerCount": c["deployedProjectServerCount"]}, blocked=not agent_done, block_reason="请先接入在线执行节点"),

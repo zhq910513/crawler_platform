@@ -378,6 +378,101 @@ export interface DashboardSummary {
   waitingCount: number
 }
 
+
+
+export interface RunningCenterContainer {
+  snapshotId: number
+  containerId: string
+  containerName: string
+  imageDigest: string
+  containerStatus: string
+  exitCode?: number | null
+  oomKilled?: boolean | null
+  restartCount?: number
+  cpuUsage?: number | null
+  memoryUsageMb?: number | null
+  startedAt?: string | null
+  finishedAt?: string | null
+  lastLogLine?: string
+  observedAt?: string | null
+}
+
+export interface RunningCenterServer {
+  serverId: number
+  serverName: string
+  serverCode: string
+  serverIp: string
+  healthStatus: string
+  capacityStatus: string
+  dockerStatus: string
+  cpuUsage?: number | null
+  memoryUsage?: number | null
+  diskUsage?: number | null
+  availableSlots?: number | null
+  maxSlots?: number | null
+  lastHeartbeatAt?: string | null
+  lastError?: string
+}
+
+export interface RunningCenterRun {
+  runId: number
+  runStatus: string
+  routingStatus: string
+  routingReason: string
+  releaseId?: number | null
+  imageDigest?: string
+  startedAt?: string | null
+  finishedAt?: string | null
+  createdAt?: string
+  errorSummary?: string
+  failedStage?: string
+  errorType?: string
+  retryable?: boolean | null
+}
+
+export interface RunningCenterTask {
+  taskId: number
+  taskName: string
+  taskCode: string
+  taskState: string
+  taskStateText: string
+  stateLevel: string
+  advice: string
+  primaryAction: string
+  scheduleText: string
+  latestRun?: RunningCenterRun | null
+  container?: RunningCenterContainer | null
+  server?: RunningCenterServer | null
+  debug?: Record<string, unknown>
+}
+
+export interface RunningCenterProject {
+  projectId: number
+  projectName: string
+  projectCode: string
+  projectStatus: string
+  projectStatusText: string
+  projectAdvice: string
+  projectAction: string
+  singleTaskProject: boolean
+  taskCount: number
+  runningTaskCount: number
+  failedTaskCount: number
+  readyTaskCount: number
+  recentResultText: string
+  latestVersion: string
+  deploymentText: string
+  tasks: RunningCenterTask[]
+}
+
+export interface RunningCenterSummary {
+  company: { companyId: number | null; companyName: string }
+  overview: { projectCount: number; taskCount: number; runningCount: number; failedCount: number; readyCount: number; onlineServerCount: number; issueServerCount: number }
+  layers: string[]
+  projects: RunningCenterProject[]
+  updatedAt: string
+}
+
 export interface UserCreateRequest { companyId?: number | null; userName: string; nickName: string; password: string; roleType: string; status?: string }
 export interface ServerCreateRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; maxContainerSlots?: number; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; workDir?: string; description?: string }
 export interface AgentRegistrationRequest { companyId: number; serverCode: string; serverName: string; serverIp?: string; agentCode: string; agentName?: string; maxContainerSlots?: number }

@@ -66,6 +66,7 @@ import ConfigAssistantDrawer from '../components/ConfigAssistantDrawer.vue'
 const router = useRouter()
 const menus = [
   { path: '/dashboard', title: '运行总览', adminOnly: true, icon: Histogram },
+  { path: '/running-center', title: '运行中心', adminOnly: false, icon: DataAnalysis },
   { path: '/companies', title: '公司管理', adminOnly: true, icon: OfficeBuilding },
   { path: '/users', title: '用户管理', adminOnly: true, icon: User },
   { path: '/resources', title: '数据库配置', adminOnly: false, icon: Coin },
@@ -80,6 +81,7 @@ const menus = [
 ]
 const subtitles: Record<string, string> = {
   '/dashboard': '整体运行情况与待处理事项',
+  '/running-center': '按公司、项目、任务查看运行状态与处理建议',
   '/companies': '公司边界与基础信息管理',
   '/users': '用户、角色与登录安全',
   '/resources': '公司数据库、缓存与存储资源',

@@ -112,7 +112,7 @@ class ProjectService:
             rows = self.projects.list_projects(company_id)
         else:
             scoped = scoped_company_id(user, company_id)
-            rows = self.projects.list_projects(scoped, user.user_id)
+            rows = self.projects.list_projects(scoped)
         return [self._project_summary(row) for row in rows]
 
     def import_project(self, user: SysUser, payload: ProjectImport) -> CrawlerProject:
@@ -120,8 +120,6 @@ class ProjectService:
         if not discovered:
             raise AppError("待接入项目不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         require_company_scope(user, discovered.company_id)
-        if not is_super_admin(user):
-            raise AppError("普通用户不能接入项目", code=40341, http_status=status.HTTP_403_FORBIDDEN)
         if discovered.formal_project_id or discovered.discovery_status == "IMPORTED":
             raise AppError("该项目已经接入", code=40041)
         if self.projects.by_company_code(discovered.company_id, discovered.project_code):
