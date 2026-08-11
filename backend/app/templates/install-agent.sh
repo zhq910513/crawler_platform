@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 PLATFORM_URL="${PLATFORM_URL:-}"
 JOIN_TOKEN="${JOIN_TOKEN:-}"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.27}"
+AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.28}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
 FORCE="${FORCE:-0}"
 HEALTH_PORT="${AGENT_LOCAL_HEALTH_PORT:-18080}"

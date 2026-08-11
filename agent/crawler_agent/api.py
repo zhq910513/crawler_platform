@@ -133,3 +133,16 @@ class PlatformAPI:
             "pullStatus": pull_status,
             "message": message,
         }) or {}
+
+    def container_cleanup_result(self, cleanup: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", "/agent-container-cleanup-results", json={
+            "cleanupId": cleanup.get("cleanupId") or "",
+            "cleanupScope": cleanup.get("cleanupScope") or "PROJECT",
+            "projectId": int(cleanup.get("projectId") or 0),
+            "taskId": cleanup.get("taskId"),
+            "success": bool(result.get("success", True)),
+            "stoppedCount": int(result.get("stoppedCount") or 0),
+            "removedCount": int(result.get("removedCount") or 0),
+            "failedCount": int(result.get("failedCount") or 0),
+            "message": str(result.get("message") or "")[:4000],
+        }) or {}

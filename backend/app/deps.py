@@ -14,6 +14,23 @@ from app.services.permissions import require_super_admin
 from app.utils import sha256_text, utcnow
 
 
+def _relative_api_path(request: Request) -> str:
+    path = request.url.path
+    if path.startswith(settings.api_prefix):
+        return path.removeprefix(settings.api_prefix) or "/"
+    return path
+
+
+def _allows_forced_password_change_access(request: Request) -> bool:
+    path = _relative_api_path(request)
+    method = request.method.upper()
+    if method == "PATCH" and path in {"/users/me/password", "/users/current/passwords"}:
+        return True
+    if path.startswith("/sessions/") and method in {"GET", "PATCH", "DELETE"}:
+        return True
+    return False
+
+
 def get_current_user(request: Request, authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> SysUser:
     if not authorization or not authorization.startswith("Bearer "):
         raise AppError("未登录或登录已失效", code=40101, http_status=status.HTTP_401_UNAUTHORIZED)
@@ -36,6 +53,8 @@ def get_current_user(request: Request, authorization: str | None = Header(defaul
         reason = session.revoke_reason if session else "会话已失效"
         code = 40110 if session and session.session_status == "REPLACED" else 40104
         raise AppError(reason or "登录会话已失效", code=code, http_status=status.HTTP_401_UNAUTHORIZED)
+    if user.must_change_password and not _allows_forced_password_change_access(request):
+        raise AppError("当前账号必须先修改初始密码", code=40320, http_status=status.HTTP_403_FORBIDDEN, data={"passwordChangeRequired": True})
     if request.headers.get("x-user-active") == "1" and session.last_active_at < utcnow() - timedelta(seconds=60):
         session.last_active_at = utcnow()
         db.commit()

@@ -26,6 +26,7 @@
         <el-form-item label="用户名称"><el-input v-model="form.userName" /></el-form-item>
         <el-form-item label="昵称"><el-input v-model="form.nickName" /></el-form-item>
         <el-form-item label="密码"><el-input v-model="form.password" type="password" show-password /></el-form-item>
+        <div class="password-help">{{ passwordPolicyText }} 新用户首次登录后仍会被要求再次修改。</div>
         <el-form-item label="角色"><el-select v-model="form.roleType"><el-option label="超级管理员" value="SUPER_ADMIN" /><el-option label="普通用户" value="NORMAL_USER" /></el-select></el-form-item>
         <el-form-item label="归属公司"><el-select v-model="form.companyId" clearable><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item>
       </el-form>
@@ -36,6 +37,7 @@
       <el-form label-position="top">
         <el-form-item label="目标账号"><el-input :model-value="selectedUser?.userName || ''" disabled /></el-form-item>
         <el-form-item label="新密码"><el-input v-model="resetForm.newPassword" type="password" show-password autocomplete="new-password" /></el-form-item>
+        <div class="password-help">{{ passwordPolicyText }}</div>
         <el-form-item label="下次登录强制修改"><el-switch v-model="resetForm.mustChangePassword" :disabled="selectedUser?.userId === sessionState.user?.userId" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" @click="submitReset">确认重置</el-button></template>
@@ -46,6 +48,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createUser, listCompanies, listUsers, resetUserPassword, revokeUserSession } from '../api/platform'
+import { apiErrorData } from '../api/client'
 import { sessionState } from '../stores/session'
 import type { Company, UserAccount, UserCreateRequest } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
@@ -57,6 +60,7 @@ const resetVisible = ref(false)
 const selectedUser = ref<UserAccount | null>(null)
 const form = reactive<UserCreateRequest>({ userName: '', nickName: '', password: '', roleType: 'NORMAL_USER', companyId: null, status: 'ENABLED' })
 const resetForm = reactive({ newPassword: '', mustChangePassword: true })
+const passwordPolicyText = '密码至少 8 位，必须包含大小写字母、数字和特殊字符。'
 
 function companyName(companyId: number | null) {
   return companies.value.find((item) => item.companyId === companyId)?.companyName || '-'
@@ -65,11 +69,19 @@ async function load() {
   companies.value = await listCompanies()
   rows.value = await listUsers()
 }
+function showApiError(error: unknown, fallback: string) {
+  const payload = apiErrorData<unknown>(error)
+  ElMessage.error(payload?.message || (error instanceof Error ? error.message : fallback))
+}
 async function save() {
-  await createUser(form)
-  dialogVisible.value = false
-  ElMessage.success('用户已创建')
-  await load()
+  try {
+    await createUser(form)
+    dialogVisible.value = false
+    ElMessage.success('用户已创建')
+    await load()
+  } catch (error) {
+    showApiError(error, '用户创建失败')
+  }
 }
 function openReset(user: UserAccount) {
   selectedUser.value = user
@@ -79,17 +91,29 @@ function openReset(user: UserAccount) {
 }
 async function submitReset() {
   if (!selectedUser.value) return
-  await ElMessageBox.confirm(`确认重置账号“${selectedUser.value.userName}”的密码并下线其现有会话？`, '重置密码确认', { type: 'warning' })
-  const result = await resetUserPassword(selectedUser.value.userId, resetForm)
-  resetVisible.value = false
-  ElMessage.success(`密码已重置，已下线 ${result.revokedCount} 个会话`)
-  await load()
+  try {
+    await ElMessageBox.confirm(`确认重置账号“${selectedUser.value.userName}”的密码并下线其现有会话？`, '重置密码确认', { type: 'warning' })
+    const result = await resetUserPassword(selectedUser.value.userId, resetForm)
+    resetVisible.value = false
+    ElMessage.success(`密码已重置，已下线 ${result.revokedCount} 个会话`)
+    await load()
+  } catch (error) {
+    if (String(error) !== 'cancel' && String(error) !== 'close') showApiError(error, '密码重置失败')
+  }
 }
 async function revoke(userId: number) {
-  await ElMessageBox.confirm('确定要强制下线该账号吗？', '强制下线确认', { type: 'warning' })
-  const result = await revokeUserSession(userId, '您的账号已被管理员强制下线。')
-  ElMessage.success(`已强制下线 ${result.revokedCount} 个会话`)
+  try {
+    await ElMessageBox.confirm('确定要强制下线该账号吗？', '强制下线确认', { type: 'warning' })
+    const result = await revokeUserSession(userId, '您的账号已被管理员强制下线。')
+    ElMessage.success(`已强制下线 ${result.revokedCount} 个会话`)
+  } catch (error) {
+    if (String(error) !== 'cancel' && String(error) !== 'close') showApiError(error, '强制下线失败')
+  }
 }
 onMounted(load)
 </script>
 
+
+<style scoped>
+.password-help { margin: -6px 0 12px; color: #64748b; font-size: 12px; line-height: 1.6; }
+</style>

@@ -24,12 +24,15 @@ from app.models import (
     CrawlerServer,
     CrawlerTask,
     CrawlerTaskRun,
+    CrawlerTaskSchedule,
+    CrawlerTaskServerTarget,
     SysUser,
 )
 from app.repositories.platform import DiscoveredProjectRepository, ProjectRepository, ProjectServerRepository, ServerRepository
 from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
 from app.services.permissions import is_super_admin, require_company_scope, require_project_role, scoped_company_id
 from app.services.audit import write_operation_log
+from app.services.container_cleanup_service import ContainerCleanupService
 from app.utils import sha256_text, utcnow
 
 
@@ -113,7 +116,7 @@ class ProjectService:
         else:
             scoped = scoped_company_id(user, company_id)
             rows = self.projects.list_projects(scoped)
-        return [self._project_summary(row) for row in rows]
+        return [self._project_summary(row) for row in rows if row.status != "ARCHIVED"]
 
     def import_project(self, user: SysUser, payload: ProjectImport) -> CrawlerProject:
         discovered = self.discovered.get(payload.discovered_project_id)
@@ -191,6 +194,61 @@ class ProjectService:
         require_project_role(self.db, user, project_id, "VIEWER")
         items = self.project_servers.list_by_project(project_id)
         return [self._project_server_payload(item) for item in items]
+
+    def delete_project(self, user: SysUser, project_id: int) -> dict:
+        project = require_project_role(self.db, user, project_id, "OWNER")
+        active_statuses = {"QUEUED", "ROUTED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
+        active_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.project_id == project_id, CrawlerTaskRun.run_status.in_(active_statuses))) or 0)
+        if active_count:
+            raise AppError("项目存在运行中实例，不能删除，请等待结束后再操作", code=40058, http_status=status.HTTP_400_BAD_REQUEST)
+        run_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.project_id == project_id)) or 0)
+        task_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTask).where(CrawlerTask.project_id == project_id)) or 0)
+        before = self._project_summary(project)
+        cleanup_commands = ContainerCleanupService(self.db).enqueue_project_cleanup(
+            company_id=project.company_id,
+            project_id=project.project_id,
+            project_code=project.project_code,
+            server_ids=self._project_cleanup_server_ids(project_id),
+            user=user,
+            reason="删除项目后清理项目容器",
+        )
+
+        if run_count > 0:
+            project.status = "ARCHIVED"
+            project.online_status = "SUSPENDED"
+            for task in self.db.scalars(select(CrawlerTask).where(CrawlerTask.project_id == project_id)).all():
+                task.status = "ARCHIVED"
+            for schedule in self.db.scalars(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.project_id == project_id)).all():
+                schedule.schedule_status = "DISABLED"
+                schedule.next_run_at = None
+            for ps in self.db.scalars(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project_id)).all():
+                ps.scheduling_status = "DISABLED"
+                ps.disabled_reason = "项目已删除归档，等待 Agent 清理项目容器"
+            after = self._project_summary(project)
+            write_operation_log(self.db, user, None, operation_type="ARCHIVE_PROJECT", resource_type="project", resource_id=str(project.project_id), before_data=before, after_data={**after, "taskCount": task_count, "runCount": run_count, "containerCleanupCommands": cleanup_commands})
+            self.db.commit()
+            return {"project_id": project_id, "deleted": False, "archived": True, "task_count": task_count, "run_count": run_count, "container_cleanup_commands": cleanup_commands}
+
+        discovered_id = project.discovered_project_id
+        if discovered_id:
+            discovered = self.db.get(CrawlerDiscoveredProject, discovered_id)
+            if discovered and discovered.formal_project_id == project.project_id:
+                discovered.formal_project_id = None
+                discovered.discovery_status = "READY_TO_IMPORT"
+        self.db.query(CrawlerTaskServerTarget).filter(CrawlerTaskServerTarget.task_id.in_(select(CrawlerTask.task_id).where(CrawlerTask.project_id == project_id))).delete(synchronize_session=False)
+        self.db.query(CrawlerTaskSchedule).filter(CrawlerTaskSchedule.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerProjectServer).filter(CrawlerProjectServer.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerProjectMember).filter(CrawlerProjectMember.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerReleaseChannel).filter(CrawlerReleaseChannel.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerProjectDeploymentTarget).filter(CrawlerProjectDeploymentTarget.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerProjectDeployment).filter(CrawlerProjectDeployment.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerProjectTaskDefinition).filter(CrawlerProjectTaskDefinition.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerProjectRelease).filter(CrawlerProjectRelease.project_id == project_id).delete(synchronize_session=False)
+        self.db.query(CrawlerTask).filter(CrawlerTask.project_id == project_id).delete(synchronize_session=False)
+        write_operation_log(self.db, user, None, operation_type="DELETE_PROJECT", resource_type="project", resource_id=str(project.project_id), before_data=before, after_data={"deleted": True, "taskCount": task_count, "runCount": 0, "containerCleanupCommands": cleanup_commands})
+        self.db.delete(project)
+        self.db.commit()
+        return {"project_id": project_id, "deleted": True, "archived": False, "task_count": task_count, "run_count": 0, "container_cleanup_commands": cleanup_commands}
 
     def deploy_release_to_servers(self, user: SysUser, project_id: int, payload: ProjectReleaseDeploy) -> dict:
         project = require_project_role(self.db, user, project_id, "OWNER")
@@ -579,6 +637,20 @@ class ProjectService:
     def _discovered_payload(self, project: CrawlerDiscoveredProject) -> dict:
         deployment_count = self.db.scalar(select(func.count(CrawlerDiscoveredProjectServer.discovered_project_server_id)).where(CrawlerDiscoveredProjectServer.discovered_project_id == project.discovered_project_id)) or 0
         return {**{c.name: getattr(project, c.name) for c in project.__table__.columns}, "deploymentServerCount": deployment_count, "selectable": not project.formal_project_id and project.discovery_status == "READY_TO_IMPORT"}
+
+    def _project_cleanup_server_ids(self, project_id: int) -> list[int]:
+        values: set[int] = set()
+        project_servers = self.db.scalars(select(CrawlerProjectServer.server_id).where(CrawlerProjectServer.project_id == project_id)).all()
+        values.update(int(item) for item in project_servers if item)
+        task_targets = self.db.scalars(
+            select(CrawlerTaskServerTarget.server_id)
+            .join(CrawlerTask, CrawlerTask.task_id == CrawlerTaskServerTarget.task_id)
+            .where(CrawlerTask.project_id == project_id)
+        ).all()
+        values.update(int(item) for item in task_targets if item)
+        run_servers = self.db.scalars(select(CrawlerTaskRun.server_id).where(CrawlerTaskRun.project_id == project_id, CrawlerTaskRun.server_id.is_not(None))).all()
+        values.update(int(item) for item in run_servers if item)
+        return sorted(values)
 
     def _project_server_payload(self, item: CrawlerProjectServer) -> dict:
         server = self.db.get(CrawlerServer, item.server_id)

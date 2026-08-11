@@ -18,6 +18,7 @@
       <el-table-column label="启用节点数" prop="executionServerCount" />
       <el-table-column label="调度模式"><template #default="s">{{ zh(s.row.dispatchMode) }}</template></el-table-column>
       <el-table-column label="创建时间"><template #default="s">{{ formatTime(s.row.createdAt) }}</template></el-table-column>
+      <el-table-column label="操作" width="100" fixed="right"><template #default="s"><el-button size="small" type="danger" link @click.stop="deleteProjectRow(s.row)">删除</el-button></template></el-table-column>
     </el-table>
 
     <el-divider />
@@ -81,9 +82,9 @@
 </template>
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
-import { analyzeProjectServers, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectServers, listProjects, listServers, updateProjectServers } from '../api/platform'
+import { analyzeProjectServers, deleteProject, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectServers, listProjects, listServers, updateProjectServers } from '../api/platform'
 import { sessionState } from '../stores/session'
 import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
@@ -116,6 +117,21 @@ function discoveredRowClass({ row }: { row: DiscoveredProject }) { return row.se
 async function submitImport() { if (!selectedDiscovered.value) return; await importProject({ discoveredProjectId: selectedDiscovered.value.discoveredProjectId, remark: importForm.remark, dispatchMode: importForm.dispatchMode }); ElMessage.success('项目已接入'); importVisible.value = false; await loadAll() }
 async function selectProject(row: Project) { selectedProject.value = row; await loadProjectServers() }
 async function loadProjectServers() { if (selectedProject.value) projectServers.value = await listProjectServers(selectedProject.value.projectId) }
+async function deleteProjectRow(row: Project) {
+  try {
+    await ElMessageBox.confirm(`确认删除项目“${row.projectName}”？删除后会向项目执行服务器下发容器清理指令；存在历史运行记录的项目会归档隐藏。`, '删除项目确认', { type: 'warning' })
+    const result = await deleteProject(row.projectId)
+    const cleanupCount = result.containerCleanupCommands?.length || 0
+    ElMessage.success(result.deleted ? `项目已删除，已下发 ${cleanupCount} 条容器清理指令` : `项目已有历史运行记录，已归档隐藏，并下发 ${cleanupCount} 条容器清理指令`)
+    if (selectedProject.value?.projectId === row.projectId) {
+      selectedProject.value = null
+      projectServers.value = []
+    }
+    await loadProjects()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error instanceof Error ? error.message : '删除项目失败')
+  }
+}
 async function openServerPoolEditor() {
   if (!selectedProject.value) return
   allServers.value = await listServers(selectedProject.value.companyId)

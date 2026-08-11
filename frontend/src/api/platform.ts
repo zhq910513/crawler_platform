@@ -29,6 +29,7 @@ export function listDiscoveredProjects(companyId?: number) { return request<Disc
 export function listProjects(companyId?: number) { return request<Project[]>(http.get('/projects', { params: { companyId } })) }
 export function importProject(payload: ProjectImportRequest) { return request<Project>(http.post('/projects', payload)) }
 export function updateProject(projectId: number, payload: ProjectUpdateRequest) { return request<Project>(http.patch(`/projects/${projectId}`, payload)) }
+export function deleteProject(projectId: number) { return request<{ projectId: number; deleted: boolean; archived: boolean; taskCount: number; runCount: number; containerCleanupCommands?: Array<Record<string, unknown>> }>(http.delete(`/projects/${projectId}`)) }
 export function listProjectServers(projectId: number) { return request<ProjectServer[]>(http.get(`/projects/${projectId}/servers`)) }
 export function analyzeProjectServers(projectId: number, payload: ProjectServerPoolUpdateRequest) { return request<Record<string, unknown>>(http.post(`/projects/${projectId}/server-pool-analyses`, payload)) }
 export function updateProjectServers(projectId: number, payload: ProjectServerPoolUpdateRequest) { return request<ProjectServer[]>(http.put(`/projects/${projectId}/servers`, payload)) }
@@ -40,7 +41,7 @@ export function listTaskDefinitions(projectId: number) { return request<TaskDefi
 export function listTasks(params?: { companyId?: number; projectId?: number }) { return request<Task[]>(http.get('/tasks', { params })) }
 export function createTask(payload: TaskCreateRequest) { return request<Task>(http.post('/tasks', payload)) }
 export function updateTask(taskId: number, payload: TaskUpdateRequest) { return request<Task>(http.patch(`/tasks/${taskId}`, payload)) }
-export function deleteTask(taskId: number) { return request<{ taskId: number; deleted: boolean; archived: boolean; runCount: number }>(http.delete(`/tasks/${taskId}`)) }
+export function deleteTask(taskId: number) { return request<{ taskId: number; deleted: boolean; archived: boolean; runCount: number; containerCleanupCommands?: Array<Record<string, unknown>> }>(http.delete(`/tasks/${taskId}`)) }
 export function updateTaskSchedule(taskId: number, payload: ScheduleUpdateRequest) { return request<Record<string, unknown>>(http.patch(`/tasks/${taskId}/schedules`, payload)) }
 export function previewCronExpression(payload: CronPreviewRequest) { return request<CronPreviewResult>(http.post('/cron-previews', payload)) }
 export function createRun(taskId: number, parameters: Record<string, unknown> = {}) { return request<RunRecord>(http.post('/runs', { taskId, parameters })) }

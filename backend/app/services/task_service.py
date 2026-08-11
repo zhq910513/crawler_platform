@@ -13,6 +13,7 @@ from app.repositories.platform import ProjectRepository, TaskDefinitionRepositor
 from app.schemas import ScheduleUpdate, TaskFromDefinitionCreate, TaskUpdate
 from app.services.audit import write_operation_log
 from app.services.cron_service import CronService
+from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
 
 
@@ -300,6 +301,17 @@ class TaskService:
         run_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.task_id == task_id)) or 0)
         before = {c.name: getattr(task, c.name) for c in task.__table__.columns}
         schedule = self.db.scalar(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.task_id == task_id))
+        project = self.projects.get(task.project_id)
+        cleanup_commands = ContainerCleanupService(self.db).enqueue_task_cleanup(
+            company_id=task.company_id,
+            project_id=task.project_id,
+            project_code=project.project_code if project else "",
+            task_id=task.task_id,
+            task_code=task.task_code,
+            server_ids=self._cleanup_server_ids(task),
+            user=user,
+            reason="删除任务后清理对应任务容器",
+        )
 
         if run_count > 0:
             task.status = "ARCHIVED"
@@ -307,9 +319,9 @@ class TaskService:
                 schedule.schedule_status = "DISABLED"
                 schedule.next_run_at = None
             after = {c.name: getattr(task, c.name) for c in task.__table__.columns}
-            write_operation_log(self.db, user, None, operation_type="ARCHIVE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data=after)
+            write_operation_log(self.db, user, None, operation_type="ARCHIVE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data={**after, "containerCleanupCommands": cleanup_commands})
             self.db.commit()
-            return {"task_id": task_id, "deleted": False, "archived": True, "run_count": run_count}
+            return {"task_id": task_id, "deleted": False, "archived": True, "run_count": run_count, "container_cleanup_commands": cleanup_commands}
 
         definition_id = task.definition_id
         self.db.query(CrawlerTaskServerTarget).filter(CrawlerTaskServerTarget.task_id == task_id).delete(synchronize_session=False)
@@ -320,10 +332,20 @@ class TaskService:
             definition = self.db.get(CrawlerProjectTaskDefinition, definition_id)
             if definition and definition.definition_status == "CREATED":
                 definition.definition_status = "AVAILABLE"
-        write_operation_log(self.db, user, None, operation_type="DELETE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data={"deleted": True})
+        write_operation_log(self.db, user, None, operation_type="DELETE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data={"deleted": True, "containerCleanupCommands": cleanup_commands})
         self.db.delete(task)
         self.db.commit()
-        return {"task_id": task_id, "deleted": True, "archived": False, "run_count": 0}
+        return {"task_id": task_id, "deleted": True, "archived": False, "run_count": 0, "container_cleanup_commands": cleanup_commands}
+
+    def _cleanup_server_ids(self, task: CrawlerTask) -> list[int]:
+        values: set[int] = set()
+        targets = self.db.scalars(select(CrawlerTaskServerTarget.server_id).where(CrawlerTaskServerTarget.task_id == task.task_id)).all()
+        values.update(int(item) for item in targets if item)
+        project_servers = self.db.scalars(select(CrawlerProjectServer.server_id).where(CrawlerProjectServer.project_id == task.project_id)).all()
+        values.update(int(item) for item in project_servers if item)
+        run_servers = self.db.scalars(select(CrawlerTaskRun.server_id).where(CrawlerTaskRun.task_id == task.task_id, CrawlerTaskRun.server_id.is_not(None))).all()
+        values.update(int(item) for item in run_servers if item)
+        return sorted(values)
 
     def update_schedule(self, user: SysUser, task_id: int, payload: ScheduleUpdate) -> CrawlerTaskSchedule:
         task = self.tasks.get(task_id)

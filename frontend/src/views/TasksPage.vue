@@ -448,7 +448,8 @@ async function disableRow(row: TaskSchedulePanelItem) {
   try {
     await ElMessageBox.confirm(`确认删除任务“${row.taskName}”？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用调度。`, '删除确认', { type: 'warning' })
     const result = await deleteTask(row.taskId)
-    ElMessage.success(result.deleted ? '任务已删除' : '任务已有历史执行记录，已归档隐藏')
+    const cleanupCount = result.containerCleanupCommands?.length || 0
+    ElMessage.success(result.deleted ? `任务已删除，已下发 ${cleanupCount} 条容器清理指令` : `任务已有历史执行记录，已归档隐藏，并下发 ${cleanupCount} 条容器清理指令`)
     await loadPanel()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(error instanceof Error ? error.message : '删除任务失败')
@@ -465,7 +466,7 @@ async function disableSelected() {
       if (result.deleted) deleted += 1
       else if (result.archived) archived += 1
     }
-    ElMessage.success(`删除完成：物理删除 ${deleted} 个，归档隐藏 ${archived} 个`)
+    ElMessage.success(`删除完成：物理删除 ${deleted} 个，归档隐藏 ${archived} 个；容器清理指令由对应执行端心跳处理`)
     selectedRows.value = []
     await loadPanel()
   } catch (error) {

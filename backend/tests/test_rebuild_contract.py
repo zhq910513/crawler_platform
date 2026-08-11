@@ -120,6 +120,9 @@ def test_permissions_release_and_dashboard_scope() -> None:
     user = client.post('/api/v1/users', headers=admin_headers, json={'companyId': company['companyId'], 'userName': 'normal_perm', 'nickName': '普通用户', 'password': 'Normal@123456', 'roleType': 'NORMAL_USER'}).json()['data']
     normal_login = client.post('/api/v1/sessions', json={'userName': 'normal_perm', 'password': 'Normal@123456'}).json()['data']
     normal_headers = {'Authorization': 'Bearer ' + normal_login['accessToken']}
+    client.patch('/api/v1/users/me/password', headers=normal_headers, json={'oldPassword': 'Normal@123456', 'newPassword': 'Normal@234567', 'confirmPassword': 'Normal@234567'})
+    normal_login = client.post('/api/v1/sessions', json={'userName': 'normal_perm', 'password': 'Normal@234567'}).json()['data']
+    normal_headers = {'Authorization': 'Bearer ' + normal_login['accessToken']}
     assert client.get('/api/v1/dashboard-summaries', headers=normal_headers).status_code == 403
     releases = client.get('/api/v1/releases', headers=normal_headers).json()['data']
     assert len(releases) == 1
@@ -425,6 +428,11 @@ def test_102_password_change_reset_and_camel_contract() -> None:
     normal_login = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_102', 'password': 'Normal@123456'}).json()['data']
     assert normal_login['passwordChangeRequired'] is True
     normal_headers = {'Authorization': 'Bearer ' + normal_login['accessToken']}
+    blocked = client.get('/api/v1/projects', headers=normal_headers).json()
+    assert blocked['code'] == 40320
+    assert blocked['data']['passwordChangeRequired'] is True
+    profile = client.get(f"/api/v1/sessions/{normal_login['sessionId']}", headers=normal_headers).json()
+    assert profile['code'] == 200
     changed = client.patch('/api/v1/users/current/passwords', headers=normal_headers, json={'oldPassword': 'Normal@123456', 'newPassword': 'Normal@654321', 'confirmPassword': 'Normal@654321'}).json()['data']
     assert changed['reloginRequired'] is True
     reset = client.post(f"/api/v1/users/{user['userId']}/password-resets", headers=admin_headers, json={'newPassword': 'Reset@123456', 'mustChangePassword': True}).json()['data']
@@ -444,6 +452,10 @@ def test_108_admin_self_password_reset_does_not_require_password_change_loop() -
     company = client.post("/api/v1/companies", headers=admin_headers, json={"companyCode": "selfpwd108", "companyName": "自重置密码公司"}).json()["data"]
     self_admin = client.post("/api/v1/users", headers=admin_headers, json={"companyId": company["companyId"], "userName": "self_admin_108", "nickName": "自重置管理员", "password": "SelfAdmin@123456", "roleType": "SUPER_ADMIN"}).json()["data"]
     self_login = client.post("/api/v1/sessions", json={"userName": "self_admin_108", "password": "SelfAdmin@123456"}).json()["data"]
+    self_headers = {"Authorization": "Bearer " + self_login["accessToken"]}
+    first_change = client.patch("/api/v1/users/me/password", headers=self_headers, json={"oldPassword": "SelfAdmin@123456", "newPassword": "SelfAdmin@234567", "confirmPassword": "SelfAdmin@234567"}).json()
+    assert first_change["code"] == 200
+    self_login = client.post("/api/v1/sessions", json={"userName": "self_admin_108", "password": "SelfAdmin@234567"}).json()["data"]
     self_headers = {"Authorization": "Bearer " + self_login["accessToken"]}
     reset = client.post("/api/v1/users/{}/password-resets".format(self_admin["userId"]), headers=self_headers, json={"newPassword": "SelfAdmin@765432", "mustChangePassword": True}).json()
     assert reset["code"] == 200
@@ -531,6 +543,18 @@ def test_102_business_multi_time_cron_supports_distinct_minutes_and_weekly_month
     assert monthly['cronExpression'] == '0 6 1,15 * * ; 30 18 1,15 * *'
 
 
+def test_128_account_session_path_and_create_password_policy_contract() -> None:
+    migrate()
+    client = TestClient(app)
+    _, admin_headers = login(client)
+    wrong_session = client.get('/api/v1/sessions/not-current-session', headers=admin_headers)
+    assert wrong_session.status_code == 403
+    assert wrong_session.json()['code'] == 40321
+    company = client.post('/api/v1/companies', headers=admin_headers, json={'companyCode': 'pwdpolicy128', 'companyName': '密码策略公司'}).json()['data']
+    weak = client.post('/api/v1/users', headers=admin_headers, json={'companyId': company['companyId'], 'userName': 'weak_pwd_128', 'nickName': '弱密码用户', 'password': 'password1', 'roleType': 'NORMAL_USER'}).json()
+    assert weak['code'] == 40024
+
+
 def test_102_password_change_canonical_me_route_and_old_token_revoked() -> None:
     migrate()
     client = TestClient(app)
@@ -544,8 +568,32 @@ def test_102_password_change_canonical_me_route_and_old_token_revoked() -> None:
     assert changed['data']['reloginRequired'] is True
     # 修改密码会撤销当前 token，旧 token 不应再能访问业务接口。
     assert client.get('/api/v1/projects', headers=normal_headers).status_code == 401
+    relogin_body = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_me_102', 'password': 'Normal@987654'}).json()['data']
+    assert relogin_body['passwordChangeRequired'] is False
+    assert relogin_body['user']['passwordChangeRequired'] is False
     reset = client.post(f"/api/v1/users/{user['userId']}/password-resets", headers=admin_headers, json={'newPassword': 'Reset@987654', 'mustChangePassword': True}).json()['data']
     assert reset['mustChangePassword'] is True
+
+
+def test_128_frontend_forced_password_change_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (root / 'frontend' / 'src' / 'layouts' / 'MainLayout.vue').read_text(encoding='utf-8')
+    assert 'apiErrorData' in source
+    assert 'payload?.message' in source
+    assert 'passwordError' in source
+    assert 'passwordFormProblem' in source
+    assert '<router-view v-else />' in source
+    assert ':close-on-press-escape="!passwordRequired"' in source
+    assert '新密码至少 8 位' in source
+
+
+def test_128_frontend_user_admin_password_error_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    source = (root / 'frontend' / 'src' / 'views' / 'UsersPage.vue').read_text(encoding='utf-8')
+    assert 'apiErrorData' in source
+    assert 'showApiError' in source
+    assert '密码至少 8 位' in source
+    assert '首次登录后仍会被要求再次修改' in source
 
 
 def test_102_frontend_run_log_routes_match_backend_contract() -> None:
@@ -1005,3 +1053,102 @@ def test_project_release_deployment_to_multiple_agents() -> None:
             assert item['imageReadinessStatus'] in {'OUTDATED', 'READY', 'WARMING'}
     history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data']
     assert history and history[0]['deploymentStatus'] == 'READY_TO_PREWARM'
+
+
+
+def test_delete_task_enqueues_agent_container_cleanup_and_ack_clears_queue() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, _ = create_flow(client, headers, 'clean_task', ['srv-clean-task'])
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': defs[0]['definitionId'],
+        'taskCode': 'clean_task_one',
+        'taskName': '待清理容器任务',
+        'status': 'ENABLED',
+    }).json()['data']
+
+    deleted = client.delete(f"/api/v1/tasks/{task['taskId']}", headers=headers).json()['data']
+    assert deleted['deleted'] is True
+    assert deleted['containerCleanupCommands']
+
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
+        'agentInstanceId': 'inst-clean-task',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+    }).json()['data']
+    pending = [item for item in heartbeat['pendingContainerCleanups'] if item['taskId'] == task['taskId']]
+    assert len(pending) == 1
+    assert pending[0]['cleanupScope'] == 'TASK'
+    assert pending[0]['projectId'] == project['projectId']
+
+    ack = client.post('/api/v1/agent-container-cleanup-results', headers=agents[0]['headers'], json={
+        'cleanupId': pending[0]['cleanupId'],
+        'cleanupScope': 'TASK',
+        'projectId': project['projectId'],
+        'taskId': task['taskId'],
+        'success': True,
+        'stoppedCount': 0,
+        'removedCount': 0,
+        'failedCount': 0,
+        'message': 'ok',
+    }).json()['data']
+    assert ack['accepted'] is True
+
+    heartbeat_after_ack = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
+        'agentInstanceId': 'inst-clean-task',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+    }).json()['data']
+    assert not [item for item in heartbeat_after_ack['pendingContainerCleanups'] if item.get('cleanupId') == pending[0]['cleanupId']]
+
+
+def test_delete_project_cleans_project_servers_and_archives_when_runs_exist() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, _ = create_flow(client, headers, 'clean_project', ['srv-clean-project'])
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': defs[0]['definitionId'],
+        'taskCode': 'clean_project_task',
+        'taskName': '项目清理任务',
+        'status': 'ENABLED',
+    }).json()['data']
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']}).json()['data']
+
+    from app.db import SessionLocal
+    from app.models import CrawlerTaskRun
+    from app.utils import utcnow
+    with SessionLocal() as db:
+        run_row = db.get(CrawlerTaskRun, run['runId'])
+        run_row.run_status = 'SUCCEEDED'
+        run_row.routing_status = 'ROUTED'
+        run_row.finished_at = utcnow()
+        db.commit()
+
+    archived = client.delete(f"/api/v1/projects/{project['projectId']}", headers=headers).json()['data']
+    assert archived['deleted'] is False
+    assert archived['archived'] is True
+    assert archived['runCount'] == 1
+    assert archived['containerCleanupCommands']
+
+    projects_after_delete = client.get('/api/v1/projects', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    assert project['projectId'] not in {item['projectId'] for item in projects_after_delete}
+
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
+        'agentInstanceId': 'inst-clean-project',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+    }).json()['data']
+    pending = [item for item in heartbeat['pendingContainerCleanups'] if item['projectId'] == project['projectId']]
+    assert len(pending) == 1
+    assert pending[0]['cleanupScope'] == 'PROJECT'
+    assert pending[0]['taskId'] is None

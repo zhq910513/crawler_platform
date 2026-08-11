@@ -129,6 +129,21 @@ class AgentApp:
             self.image_prewarm_next_at[key] = now + (60 if ok else 300)
 
 
+    def handle_container_cleanups(self, heartbeat_response: dict[str, Any]) -> None:
+        cleanups = heartbeat_response.get("pendingContainerCleanups") or []
+        if not isinstance(cleanups, list) or not cleanups:
+            return
+        for cleanup in cleanups[:20]:
+            if not isinstance(cleanup, dict):
+                continue
+            result = self.executor.cleanup_platform_containers(cleanup)
+            try:
+                self.api.container_cleanup_result(cleanup, result)
+            except Exception as exc:
+                self.last_error = f"容器清理结果回报失败：{exc}"[:4000]
+                logger.warning("container cleanup result report failed cleanup_id=%s error=%s", cleanup.get("cleanupId"), exc, exc_info=True)
+
+
     def loop(self) -> None:
         last_heartbeat = 0.0
         logger.info("agent loop started instance_id=%s server_code=%s agent_code=%s version=%s", config.instance_id, config.server_code, config.agent_code, config.agent_version)
@@ -137,6 +152,7 @@ class AgentApp:
                 now = time.monotonic()
                 if now - last_heartbeat >= config.heartbeat_interval_seconds:
                     heartbeat_response = self.api.heartbeat(self.heartbeat_payload())
+                    self.handle_container_cleanups(heartbeat_response or {})
                     self.handle_image_updates(heartbeat_response or {})
                     last_heartbeat = now
                 if self.active_count() < config.max_slots:

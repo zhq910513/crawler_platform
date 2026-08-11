@@ -418,6 +418,18 @@ class AgentImagePullResult(ApiModel):
     message: str = Field(default="", max_length=4000)
 
 
+class AgentContainerCleanupResult(ApiModel):
+    cleanup_id: str = Field(min_length=1, max_length=100)
+    cleanup_scope: Literal["PROJECT", "TASK"]
+    project_id: int
+    task_id: int | None = None
+    success: bool = True
+    stopped_count: int = Field(default=0, ge=0)
+    removed_count: int = Field(default=0, ge=0)
+    failed_count: int = Field(default=0, ge=0)
+    message: str = Field(default="", max_length=4000)
+
+
 class AgentRunClaim(ApiModel):
     agent_instance_id: str = Field(default="", max_length=100)
 

@@ -11,6 +11,7 @@ from app.schemas import UserCreate, UserUpdate
 from app.security import hash_password
 from app.utils import utcnow
 from app.services.permissions import require_super_admin
+from app.services.password_service import validate_password_strength
 from app.services.audit import write_operation_log
 
 
@@ -32,6 +33,7 @@ class UserService:
             raise AppError("普通用户必须绑定归属公司", code=40022)
         if payload.company_id and not self.companies.get(payload.company_id):
             raise AppError("公司不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        validate_password_strength(payload.password)
         user = SysUser(
             company_id=payload.company_id,
             user_name=payload.user_name,

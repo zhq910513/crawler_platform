@@ -32,16 +32,21 @@
           <el-button size="small" plain @click="logout">退出</el-button>
         </div>
       </el-header>
-      <el-main class="content-wrap"><router-view /></el-main>
+      <el-main class="content-wrap">
+        <div v-if="passwordRequired" class="forced-password-panel">请先完成密码修改。完成后系统会要求重新登录，再进入业务页面。</div>
+        <router-view v-else />
+      </el-main>
     </el-container>
   </el-container>
   <ConfigAssistantDrawer />
 
-  <el-dialog v-model="passwordDialogVisible" title="修改密码" width="460px" :close-on-click-modal="!passwordRequired" :show-close="!passwordRequired">
+  <el-dialog v-model="passwordDialogVisible" title="修改密码" width="460px" :close-on-click-modal="!passwordRequired" :close-on-press-escape="!passwordRequired" :show-close="!passwordRequired">
     <el-form label-position="top">
+      <el-alert v-if="passwordError" class="password-alert" type="error" :title="passwordError" show-icon :closable="false" />
       <el-form-item label="当前密码"><el-input v-model="passwordForm.oldPassword" type="password" autocomplete="current-password" show-password /></el-form-item>
       <el-form-item label="新密码"><el-input v-model="passwordForm.newPassword" type="password" autocomplete="new-password" show-password /></el-form-item>
       <el-form-item label="确认新密码"><el-input v-model="passwordForm.confirmPassword" type="password" autocomplete="new-password" show-password /></el-form-item>
+      <div class="password-help">新密码至少 8 位，必须包含大小写字母、数字和特殊字符，且不能与当前密码相同。</div>
     </el-form>
     <template #footer>
       <el-button v-if="!passwordRequired" @click="passwordDialogVisible = false">取消</el-button>
@@ -55,6 +60,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { changeOwnPassword } from '../api/platform'
+import { apiErrorData } from '../api/client'
 import { getBackendHealth, getFrontendVersion } from '../api/health'
 import { frontendBuildVersion } from '../config/version'
 import type { BackendHealthData, SystemVersionInfo } from '../types/api'
@@ -100,6 +106,8 @@ const passwordDialogVisible = ref(false)
 const passwordSaving = ref(false)
 const passwordRequired = computed(() => Boolean(sessionState.user?.passwordChangeRequired))
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const passwordError = ref('')
+const passwordPolicyText = '新密码至少 8 位，必须包含大小写字母、数字和特殊字符，且不能与当前密码相同。'
 const frontendVersion = ref<SystemVersionInfo>(frontendBuildVersion)
 const backendVersion = ref<BackendHealthData | null>(null)
 
@@ -117,16 +125,35 @@ function openPasswordDialog() {
   passwordForm.oldPassword = ''
   passwordForm.newPassword = ''
   passwordForm.confirmPassword = ''
+  passwordError.value = ''
   passwordDialogVisible.value = true
 }
 
+function passwordFormProblem() {
+  if (!passwordForm.oldPassword) return '请输入当前密码'
+  if (passwordForm.newPassword !== passwordForm.confirmPassword) return '两次输入的新密码不一致'
+  if (passwordForm.newPassword === passwordForm.oldPassword) return '新密码不能与当前密码相同'
+  if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,200}$/.test(passwordForm.newPassword)) return passwordPolicyText
+  return ''
+}
+
 async function submitPasswordChange() {
+  passwordError.value = passwordFormProblem()
+  if (passwordError.value) {
+    ElMessage.error(passwordError.value)
+    return
+  }
   passwordSaving.value = true
   try {
     await changeOwnPassword(passwordForm)
     ElMessage.success('密码已修改，请重新登录')
     clearSession()
     await router.push('/login')
+  } catch (error) {
+    const payload = apiErrorData<unknown>(error)
+    const fallback = error instanceof Error ? error.message : '密码修改失败'
+    passwordError.value = payload?.message || fallback
+    ElMessage.error(passwordError.value)
   } finally {
     passwordSaving.value = false
   }
@@ -161,6 +188,9 @@ async function logout() {
 .page-subtitle { margin-top: 4px; color: #7b8798; font-size: 12px; font-weight: 400; }
 .user-box { display: flex; gap: 12px; align-items: center; color: #334155; }
 .user-name { font-weight: 600; }
+.password-alert { margin-bottom: 14px; }
+.password-help { margin-top: -4px; color: #64748b; font-size: 12px; line-height: 1.6; }
 .content-wrap { padding: 22px 24px 28px; }
+.forced-password-panel { display: flex; align-items: center; justify-content: center; min-height: 360px; border: 1px dashed #f59e0b; border-radius: 16px; background: #fffbeb; color: #92400e; font-weight: 700; }
 @media (max-width: 980px) { .layout-aside { width: 216px !important; } .topbar { padding: 0 18px; } .content-wrap { padding: 16px; } }
 </style>

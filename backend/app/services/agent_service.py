@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.errors import AppError
 from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectDeploymentTarget, CrawlerProjectRelease, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
-from app.schemas import AgentHeartbeat, AgentImagePullResult, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
+from app.schemas import AgentContainerCleanupResult, AgentHeartbeat, AgentImagePullResult, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
 from app.services.routing_service import RoutingService
+from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status
 from app.services.audit import write_operation_log
 from app.utils import utcnow
@@ -42,6 +43,7 @@ class AgentService:
         self.db.flush()
         RoutingService(self.db).reroute_or_wait_unclaimed(commit=False)
         pending_image_pulls = self._pending_image_pulls(server, payload)
+        pending_cleanups = ContainerCleanupService(self.db).pending_for_server(server)
         self.db.commit()
         return {
             "serverId": server.server_id,
@@ -50,6 +52,8 @@ class AgentService:
             "replacedPreviousInstance": replaced,
             "pendingImagePulls": pending_image_pulls,
             "imageUpdateCount": len(pending_image_pulls),
+            "pendingContainerCleanups": pending_cleanups,
+            "containerCleanupCount": len(pending_cleanups),
         }
 
     def claim_run(self, agent: CrawlerAgent, payload: AgentRunClaim) -> dict | None:
@@ -166,6 +170,23 @@ class AgentService:
             target.last_deployed_at = ps.last_deployed_at
         self.db.commit()
         return {"ignored": False, "projectId": ps.project_id, "serverId": ps.server_id, "imageReadinessStatus": ps.image_readiness_status, "latestImageDigest": ps.latest_image_digest}
+
+    def report_container_cleanup_result(self, agent: CrawlerAgent, payload: AgentContainerCleanupResult) -> dict:
+        server = self.db.get(CrawlerServer, agent.server_id)
+        if not server:
+            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        accepted = ContainerCleanupService(self.db).acknowledge(server, payload.cleanup_id, {
+            "cleanupScope": payload.cleanup_scope,
+            "projectId": payload.project_id,
+            "taskId": payload.task_id,
+            "success": payload.success,
+            "stoppedCount": payload.stopped_count,
+            "removedCount": payload.removed_count,
+            "failedCount": payload.failed_count,
+            "message": payload.message,
+        })
+        self.db.commit()
+        return {"accepted": accepted, "cleanupId": payload.cleanup_id}
 
     def _pending_image_pulls(self, server: CrawlerServer, payload: AgentHeartbeat) -> list[dict]:
         running_count = int(payload.running_containers or 0)

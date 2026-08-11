@@ -117,6 +117,39 @@ class RunExecutor:
             logger.warning("prewarm image failed project=%s error=%s", project_code, exc, exc_info=True)
             return False
 
+    def cleanup_platform_containers(self, cleanup: dict[str, Any]) -> dict[str, Any]:
+        scope = str(cleanup.get("cleanupScope") or "PROJECT").upper()
+        project_id = str(cleanup.get("projectId") or "").strip()
+        task_id = str(cleanup.get("taskId") or "").strip()
+        filters = {"label": [f"crawler.platform.project_id={project_id}"]}
+        if scope == "TASK" and task_id:
+            filters["label"].append(f"crawler.platform.task_id={task_id}")
+        stopped = 0
+        removed = 0
+        failed = 0
+        messages: list[str] = []
+        try:
+            containers = self.client.containers.list(all=True, filters=filters)
+        except Exception as exc:
+            return {"success": False, "stoppedCount": 0, "removedCount": 0, "failedCount": 1, "message": f"查询容器失败：{exc}"}
+        for container in containers:
+            name = getattr(container, "name", "") or ""
+            try:
+                container.reload()
+                if container.status not in {"exited", "dead", "created"}:
+                    container.stop(timeout=10)
+                    stopped += 1
+                container.remove(force=True)
+                removed += 1
+            except Exception as exc:
+                failed += 1
+                messages.append(f"{name or container.id[:12]}: {exc}")
+        message = f"清理完成：scope={scope} projectId={project_id} taskId={task_id or '-'} stopped={stopped} removed={removed} failed={failed}"
+        if messages:
+            message += "；" + "；".join(messages)
+        logger.info("container cleanup result cleanup_id=%s %s", cleanup.get("cleanupId"), message)
+        return {"success": failed == 0, "stoppedCount": stopped, "removedCount": removed, "failedCount": failed, "message": message[:4000]}
+
     def _prepare_project_dirs(self, claim: dict[str, Any]) -> dict[str, Path]:
         project_code = _safe(claim.get("projectCode"), f"project_{claim.get('projectId')}")
         task_code = _safe(claim.get("taskCode"), f"task_{claim.get('taskId')}")

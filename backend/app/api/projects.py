@@ -45,6 +45,11 @@ def update_project(project_id: int, payload: ProjectUpdate, user: SysUser = Depe
     return ok(ProjectService(db).update_project(user, project_id, payload))
 
 
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ProjectService(db).delete_project(user, project_id))
+
+
 @router.get("/projects/{project_id}/servers")
 def list_project_servers(project_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ProjectService(db).list_project_servers(user, project_id))
