@@ -642,7 +642,7 @@ def test_138_frontend_commercial_navigation_contract() -> None:
 def test_138_frontend_project_publish_flow_contract() -> None:
     root = Path(__file__).resolve().parents[2]
     page = (root / 'frontend' / 'src' / 'views' / 'ProjectPublishPage.vue').read_text(encoding='utf-8')
-    assert '选择公司、选择一台或多台服务器、填写代码仓库地址后发布' in page
+    assert '填写发布所需的公司、服务器、代码仓库和分支。' in page
     assert '所属公司' in page
     assert '部署服务器' in page
     assert 'Git 仓库地址' in page
@@ -655,10 +655,13 @@ def test_138_frontend_project_publish_flow_contract() -> None:
     assert 'runProjectPublishPipeline' in page
     assert '发布助手' in page
     assert 'publish-assistant-panel' in page
-    assert 'publish-float' in page
+    assert 'assistant-dock' in page
+    assert 'publish-float' not in page
     assert 'assistantMode' in page
     assert 'startFloatDrag' in page
-    assert '缺失内容会停在当前步骤' in page
+    assert 'dockProgressStyle' in page
+    assert 'floatSide' in page
+    assert 'is-collapsing' in page
     assert 'pendingJoinServerCode' in page
     assert '服务器已上线并自动选中' in page
     assert 'label="控制端公网回调地址"' not in page

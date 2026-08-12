@@ -1,36 +1,27 @@
 <template>
-  <div class="publish-page" :class="{ 'assistant-open': assistantMode === 'panel' }">
-    <div class="page-card publish-hero">
-      <div>
-        <div class="eyebrow">项目交付</div>
-        <h2>发布已开发好的爬虫项目</h2>
-        <p>选择公司、选择一台或多台服务器、填写代码仓库地址后发布。每个环节都会按流水线检查，缺失内容会停在当前步骤。</p>
-      </div>
-      <el-tag effect="light" type="primary">流水线发布</el-tag>
-    </div>
-
-    <el-row :gutter="16" class="publish-grid">
-      <el-col :xs="24" :lg="15">
-        <div class="page-card form-card">
-          <div class="card-header compact-header">
-            <div>
-              <div class="card-title">发布信息</div>
-              <div class="muted">默认只需要公司、服务器、代码仓库和分支。</div>
-            </div>
-            <el-button size="small" @click="resetForm">重置</el-button>
+  <div class="publish-page" :class="{ 'assistant-open': assistantPanelVisible }">
+    <main class="publish-main">
+      <div class="page-card form-card">
+        <div class="card-header compact-header">
+          <div>
+            <div class="card-title">发布信息</div>
+            <div class="muted">填写发布所需的公司、服务器、代码仓库和分支。</div>
           </div>
-          <el-form label-position="top" class="publish-form">
-            <el-form-item label="所属公司">
-              <div class="inline-control">
-                <el-select v-if="sessionState.user?.isSuperAdmin" v-model="form.companyId" placeholder="选择项目所属公司" filterable class="full-width" @change="onCompanyChanged">
-                  <el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" />
-                </el-select>
-                <el-input v-else :model-value="currentCompanyName" disabled />
-                <el-button v-if="sessionState.user?.isSuperAdmin" @click="companyDialogVisible = true">新增公司</el-button>
-              </div>
-            </el-form-item>
+        </div>
 
-            <el-form-item label="部署服务器">
+        <el-form label-position="left" label-width="112px" class="publish-form">
+          <el-form-item label="所属公司">
+            <div class="inline-control">
+              <el-select v-if="sessionState.user?.isSuperAdmin" v-model="form.companyId" placeholder="选择项目所属公司" filterable class="full-width" @change="onCompanyChanged">
+                <el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" />
+              </el-select>
+              <el-input v-else :model-value="currentCompanyName" disabled class="full-width" />
+              <el-button v-if="sessionState.user?.isSuperAdmin" class="append-action" @click="companyDialogVisible = true">新增公司</el-button>
+            </div>
+          </el-form-item>
+
+          <el-form-item label="部署服务器">
+            <div class="field-stack">
               <div class="inline-control">
                 <el-select v-model="form.serverIds" placeholder="选择当前公司下可部署服务器，可多选" multiple collapse-tags collapse-tags-tooltip filterable class="full-width" :disabled="!form.companyId" @change="syncSelectedServerCards">
                   <el-option v-for="server in companyServers" :key="server.serverId" :label="server.serverName" :value="server.serverId" :disabled="!serverDeployable(server)">
@@ -40,56 +31,41 @@
                     </div>
                   </el-option>
                 </el-select>
-                <el-button :disabled="!form.companyId" @click="openServerOnboarding">新增服务器</el-button>
+                <el-button class="append-action" :disabled="!form.companyId" @click="openServerOnboarding">新增服务器</el-button>
               </div>
               <div v-if="!form.companyId" class="field-hint">请先选择公司。</div>
               <div v-else-if="companyServers.length === 0" class="field-hint">当前公司暂无服务器，可在本页新增。</div>
-            </el-form-item>
-
-            <el-form-item label="Git 仓库地址">
-              <el-input v-model="form.repositoryUrl" placeholder="例如：https://github.com/zhq910513/baidu_aicaigou.git" @blur="validateRepository" />
-              <div class="field-hint">当前版本会优先查找该仓库已登记的项目版本；平台构建能力启用后，将由系统直接读取代码并构建。</div>
-            </el-form-item>
-            <el-form-item label="分支或标签">
-              <el-input v-model="form.refName" placeholder="main" />
-            </el-form-item>
-          </el-form>
-          <div class="publish-actions">
-            <el-button :loading="publishing" @click="inspectPipeline">检查流水线</el-button>
-            <el-button type="primary" :loading="publishing" @click="publishProject">发布项目</el-button>
-          </div>
-        </div>
-      </el-col>
-
-      <el-col :xs="24" :lg="9">
-        <div class="page-card readiness-card">
-          <div class="card-title">当前准备度</div>
-          <div class="check-list">
-            <div v-for="item in checkItems" :key="item.key" class="check-item">
-              <span :class="['check-dot', item.ok ? 'ok' : 'todo']" />
-              <div>
-                <div class="check-title">{{ item.title }}</div>
-                <div class="muted">{{ item.message }}</div>
+              <div v-if="selectedServerCards.length" class="selected-servers-inline">
+                <div v-for="server in selectedServerCards" :key="server.serverId" class="selected-server-pill">
+                  <span class="server-name">{{ server.serverName }}</span>
+                  <span class="muted">{{ server.serverIp || '未上报地址' }}</span>
+                  <el-tag size="small" :type="serverDeployable(server) ? 'success' : 'danger'" effect="light">{{ serverDeployable(server) ? '可部署' : '不可用' }}</el-tag>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          </el-form-item>
 
-        <div class="page-card selected-servers-card">
-          <div class="card-title">已选服务器</div>
-          <el-empty v-if="selectedServerCards.length === 0" description="暂未选择服务器" />
-          <div v-for="server in selectedServerCards" :key="server.serverId" class="server-card">
-            <div>
-              <div class="server-name">{{ server.serverName }}</div>
-              <div class="muted">{{ server.serverIp || '未上报地址' }}</div>
+          <el-form-item label="Git 仓库地址">
+            <div class="field-stack">
+              <el-input v-model="form.repositoryUrl" placeholder="例如：https://github.com/zhq910513/baidu_aicaigou.git" @blur="validateRepository" />
+              <div class="field-hint">优先匹配已登记项目版本；平台构建能力启用后，将由系统读取代码并构建。</div>
             </div>
-            <el-tag :type="serverDeployable(server) ? 'success' : 'danger'" effect="light">{{ serverDeployable(server) ? '可部署' : '不可用' }}</el-tag>
-          </div>
-        </div>
-      </el-col>
-    </el-row>
+          </el-form-item>
 
-    <aside v-if="assistantMode === 'panel'" class="publish-assistant-panel">
+          <el-form-item label="分支或标签">
+            <el-input v-model="form.refName" placeholder="main" />
+          </el-form-item>
+        </el-form>
+
+        <div class="publish-actions">
+          <el-button :disabled="publishing" @click="resetForm">重置</el-button>
+          <el-button :loading="publishing" @click="inspectPipeline">检查流水线</el-button>
+          <el-button type="primary" :loading="publishing" @click="publishProject">发布项目</el-button>
+        </div>
+      </div>
+    </main>
+
+    <aside v-if="assistantPanelVisible" class="publish-assistant-panel" :class="{ 'is-collapsing': assistantMode === 'collapsing' }">
       <div class="assistant-header">
         <div>
           <div class="assistant-title">发布助手</div>
@@ -100,6 +76,17 @@
           <el-button v-if="publishSucceeded" size="small" text @click="assistantMode = 'closed'">关闭</el-button>
         </div>
       </div>
+
+      <div class="assistant-summary">
+        <div v-for="item in checkItems" :key="item.key" class="summary-row">
+          <span :class="['check-dot', item.ok ? 'ok' : 'todo']" />
+          <div>
+            <div class="summary-title">{{ item.title }}</div>
+            <div class="summary-message">{{ item.message }}</div>
+          </div>
+        </div>
+      </div>
+
       <div class="assistant-progress">
         <div v-for="(step, index) in publishSteps" :key="step.key" class="assistant-step" :class="step.status">
           <span class="step-index">{{ index + 1 }}</span>
@@ -135,7 +122,23 @@
       </div>
     </aside>
 
-    <button v-if="assistantMode === 'float'" class="publish-float" :style="floatStyle" @mousedown="startFloatDrag" @click="restoreAssistant">助</button>
+    <button
+      v-if="assistantMode === 'dock'"
+      class="assistant-dock"
+      :class="[`is-${assistantState}`, { 'is-dragging': floatDrag.active, 'is-left': floatSide === 'left', 'is-right': floatSide === 'right' }]"
+      :style="floatStyle"
+      type="button"
+      aria-label="展开发布助手"
+      @mousedown.prevent="startFloatDrag"
+      @click="restoreAssistant"
+    >
+      <span class="dock-orb" :style="dockProgressStyle"><span class="dock-orb-core">助</span></span>
+      <span class="dock-copy">
+        <span class="dock-title">发布助手</span>
+        <span class="dock-subtitle">{{ assistantStatusText }} · {{ assistantProgressPercent }}%</span>
+      </span>
+      <span class="dock-pulse" />
+    </button>
 
     <el-dialog v-model="companyDialogVisible" title="新增公司" width="460px">
       <el-form label-position="top">
@@ -185,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
@@ -208,9 +211,13 @@ const publishSucceeded = ref(false)
 const publishTargets = ref<Array<Record<string, unknown>>>([])
 const publishBlockers = ref<Array<Record<string, unknown>>>([])
 const pendingJoinServerCode = ref('')
-const assistantMode = ref<'panel' | 'float' | 'closed'>('panel')
-const floatPosition = reactive({ x: 24, y: 220 })
+const assistantMode = ref<'panel' | 'collapsing' | 'dock' | 'closed'>('panel')
+const floatPosition = reactive({ x: 0, y: 220 })
 const floatDrag = reactive({ active: false, moved: false, dx: 0, dy: 0 })
+const floatSide = ref<'left' | 'right'>('right')
+let collapseTimer: number | undefined
+let floatMoveHandler: ((event: MouseEvent) => void) | undefined
+let floatUpHandler: (() => void) | undefined
 
 const defaultPublishSteps: ProjectPublishPipelineStep[] = [
   { key: 'company', title: '选择公司', message: '等待检查', status: 'wait' },
@@ -231,13 +238,23 @@ const selectedCompanyName = computed(() => companies.value.find((item) => item.c
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
 const repositoryOk = computed(() => isRepositoryUrl(form.repositoryUrl))
 const deployableServers = computed(() => companyServers.value.filter(serverDeployable))
+const assistantPanelVisible = computed(() => assistantMode.value === 'panel' || assistantMode.value === 'collapsing')
+const assistantDoneCount = computed(() => publishSteps.value.filter((item) => item.status === 'success').length)
+const assistantProgressPercent = computed(() => Math.round((assistantDoneCount.value / Math.max(1, publishSteps.value.length)) * 100))
+const assistantState = computed(() => {
+  if (publishSucceeded.value) return 'success'
+  if (publishBlockers.value.length || publishSteps.value.some((item) => item.status === 'error')) return 'blocked'
+  if (assistantDoneCount.value || publishSteps.value.some((item) => item.status === 'process')) return 'active'
+  return 'idle'
+})
 const assistantStatusText = computed(() => {
   if (publishSucceeded.value) return '流程完成'
-  if (publishBlockers.value.length) return '存在阻断'
-  const done = publishSteps.value.filter((item) => item.status === 'success').length
-  return done ? `${done}/${publishSteps.value.length}` : '待检查'
+  if (assistantState.value === 'blocked') return '存在阻断'
+  if (assistantState.value === 'active') return `${assistantDoneCount.value}/${publishSteps.value.length} 已就绪`
+  return '待检查'
 })
 const floatStyle = computed(() => ({ left: `${floatPosition.x}px`, top: `${floatPosition.y}px` }))
+const dockProgressStyle = computed(() => ({ '--dock-progress': `${assistantProgressPercent.value * 3.6}deg` }))
 const checkItems = computed(() => [
   { key: 'company', title: '公司', ok: Boolean(form.companyId), message: form.companyId ? `已选择：${selectedCompanyName.value}` : '请选择项目所属公司。' },
   { key: 'servers', title: '服务器', ok: form.serverIds.length > 0, message: form.serverIds.length ? `已选择 ${form.serverIds.length} 台服务器。` : '请选择至少一台可部署服务器。' },
@@ -436,68 +453,107 @@ function resetForm() {
   syncSelectedServerCards()
   resetSteps()
 }
-function collapseAssistant() { assistantMode.value = publishSucceeded.value ? 'closed' : 'float' }
+function dockBounds() {
+  return { minX: 12, maxX: Math.max(12, window.innerWidth - 206), minY: 86, maxY: Math.max(86, window.innerHeight - 92) }
+}
+function clampDockPosition() {
+  const bounds = dockBounds()
+  floatPosition.y = Math.min(bounds.maxY, Math.max(bounds.minY, floatPosition.y))
+  floatPosition.x = floatSide.value === 'left' ? bounds.minX : bounds.maxX
+}
+function cleanupFloatDragListeners() {
+  if (floatMoveHandler) window.removeEventListener('mousemove', floatMoveHandler)
+  if (floatUpHandler) window.removeEventListener('mouseup', floatUpHandler)
+  floatMoveHandler = undefined
+  floatUpHandler = undefined
+}
+function collapseAssistant() {
+  if (publishSucceeded.value) { assistantMode.value = 'closed'; return }
+  if (collapseTimer) window.clearTimeout(collapseTimer)
+  floatSide.value = 'right'
+  clampDockPosition()
+  assistantMode.value = 'collapsing'
+  collapseTimer = window.setTimeout(() => {
+    clampDockPosition()
+    assistantMode.value = 'dock'
+  }, 180)
+}
 function restoreAssistant() {
   if (floatDrag.moved) { floatDrag.moved = false; return }
   assistantMode.value = 'panel'
 }
 function startFloatDrag(event: MouseEvent) {
+  cleanupFloatDragListeners()
   floatDrag.active = true
   floatDrag.moved = false
   floatDrag.dx = event.clientX - floatPosition.x
   floatDrag.dy = event.clientY - floatPosition.y
-  const move = (moveEvent: MouseEvent) => {
+  floatMoveHandler = (moveEvent: MouseEvent) => {
     if (!floatDrag.active) return
-    floatDrag.moved = true
-    const maxX = Math.max(12, window.innerWidth - 68)
-    const maxY = Math.max(12, window.innerHeight - 68)
-    floatPosition.x = Math.min(maxX, Math.max(12, moveEvent.clientX - floatDrag.dx))
-    floatPosition.y = Math.min(maxY, Math.max(12, moveEvent.clientY - floatDrag.dy))
+    const bounds = dockBounds()
+    const nextX = Math.min(bounds.maxX, Math.max(bounds.minX, moveEvent.clientX - floatDrag.dx))
+    const nextY = Math.min(bounds.maxY, Math.max(bounds.minY, moveEvent.clientY - floatDrag.dy))
+    if (Math.abs(nextX - floatPosition.x) > 2 || Math.abs(nextY - floatPosition.y) > 2) floatDrag.moved = true
+    floatPosition.x = nextX
+    floatPosition.y = nextY
   }
-  const up = () => {
+  floatUpHandler = () => {
     floatDrag.active = false
-    window.removeEventListener('mousemove', move)
-    window.removeEventListener('mouseup', up)
+    floatSide.value = floatPosition.x < window.innerWidth / 2 ? 'left' : 'right'
+    clampDockPosition()
+    cleanupFloatDragListeners()
   }
-  window.addEventListener('mousemove', move)
-  window.addEventListener('mouseup', up)
+  window.addEventListener('mousemove', floatMoveHandler)
+  window.addEventListener('mouseup', floatUpHandler)
 }
 
-onMounted(loadBase)
+onMounted(() => {
+  clampDockPosition()
+  loadBase()
+})
+onUnmounted(() => {
+  if (collapseTimer) window.clearTimeout(collapseTimer)
+  cleanupFloatDragListeners()
+})
 </script>
 
 <style scoped>
-.publish-page { position: relative; display: grid; gap: 14px; transition: padding-right 0.18s ease; }
-.publish-page.assistant-open { padding-right: 338px; }
-.publish-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; background: linear-gradient(135deg, #f8fbff, #ffffff); }
-.publish-hero h2 { margin: 4px 0; font-size: 22px; line-height: 1.2; }
-.publish-hero p { margin: 0; color: #64748b; line-height: 1.55; font-size: 13px; }
-.eyebrow { color: #2563eb; font-weight: 800; font-size: 12px; letter-spacing: 0.08em; }
-.publish-grid { align-items: stretch; }
-.form-card, .readiness-card, .selected-servers-card { min-height: 100%; }
-.compact-header { padding-bottom: 12px; border-bottom: 1px solid #eef2f7; }
-.publish-form { margin-top: 16px; }
+.publish-page { position: relative; min-height: calc(100vh - 116px); transition: padding-right 0.18s ease; }
+.publish-page.assistant-open { padding-right: 360px; }
+.publish-main { width: min(100%, 1180px); }
+.form-card { min-height: 100%; }
+.compact-header { padding-bottom: 14px; border-bottom: 1px solid #eef2f7; }
+.publish-form { margin-top: 18px; }
+.publish-form :deep(.el-form-item) { margin-bottom: 20px; align-items: flex-start; }
+.publish-form :deep(.el-form-item__label) { height: 38px; line-height: 38px; justify-content: flex-start; color: #334155; font-weight: 800; }
+.publish-form :deep(.el-input__wrapper), .publish-form :deep(.el-select__wrapper) { min-height: 38px; }
+.field-stack { display: grid; gap: 8px; width: 100%; }
 .inline-control { display: flex; gap: 10px; align-items: center; width: 100%; }
-.inline-control .full-width { flex: 1; }
-.field-hint { margin-top: 6px; color: #64748b; font-size: 12px; line-height: 1.5; }
+.inline-control .full-width { flex: 1; min-width: 0; }
+.append-action { width: 104px; flex: 0 0 104px; }
+.field-hint { color: #64748b; font-size: 12px; line-height: 1.5; }
 .server-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }
-.publish-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; margin-top: 8px; border-top: 1px solid #eef2f7; }
-.check-list { display: grid; gap: 10px; margin-top: 14px; }
-.check-item { display: grid; grid-template-columns: 12px 1fr; gap: 10px; align-items: flex-start; padding: 11px 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #f8fafc; }
+.selected-servers-inline { display: grid; gap: 8px; }
+.selected-server-pill { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid #e7edf5; border-radius: 12px; background: #f8fafc; }
+.publish-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 16px; margin-top: 2px; border-top: 1px solid #eef2f7; }
 .check-dot { width: 9px; height: 9px; margin-top: 5px; border-radius: 999px; background: #f59e0b; }
 .check-dot.ok { background: #22c55e; }
 .check-dot.todo { background: #f59e0b; }
 .check-title { font-weight: 800; color: #111827; }
-.selected-servers-card { margin-top: 14px; }
-.server-card, .target-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #fff; margin-top: 10px; }
 .server-name { font-weight: 800; color: #111827; }
-.publish-assistant-panel { position: fixed; top: 82px; right: 18px; z-index: 20; width: 320px; max-height: calc(100vh - 104px); overflow-y: auto; padding: 14px; border: 1px solid rgba(203, 213, 225, 0.72); border-radius: 18px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(14px); box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14); }
-.assistant-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #eef2f7; }
+.publish-assistant-panel { position: fixed; top: 82px; right: 18px; z-index: 20; width: 328px; max-height: calc(100vh - 104px); overflow-y: auto; padding: 14px; border: 1px solid rgba(203, 213, 225, 0.72); border-radius: 20px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92)); backdrop-filter: blur(16px); box-shadow: 0 22px 54px rgba(15, 23, 42, 0.16); transform-origin: right center; transition: opacity 0.18s ease, transform 0.18s ease, filter 0.18s ease; }
+.publish-assistant-panel::before { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; background: radial-gradient(circle at 20% 0%, rgba(59, 130, 246, 0.18), transparent 32%), radial-gradient(circle at 92% 18%, rgba(14, 165, 233, 0.13), transparent 36%); }
+.publish-assistant-panel.is-collapsing { opacity: 0; transform: translateX(42px) scale(0.9); filter: blur(1px); }
+.assistant-header { position: relative; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #eef2f7; }
 .assistant-title { font-size: 16px; font-weight: 900; color: #111827; }
 .assistant-subtitle { margin-top: 3px; color: #64748b; font-size: 12px; }
 .assistant-actions { display: flex; gap: 2px; }
+.assistant-summary { display: grid; gap: 8px; margin-top: 12px; padding: 10px; border: 1px solid #e7edf5; border-radius: 14px; background: #f8fafc; }
+.summary-row { display: grid; grid-template-columns: 13px 1fr; gap: 8px; align-items: flex-start; }
+.summary-title { color: #111827; font-size: 12px; font-weight: 800; }
+.summary-message { margin-top: 1px; color: #64748b; font-size: 12px; line-height: 1.4; }
 .assistant-progress { display: grid; gap: 9px; margin-top: 13px; }
-.assistant-step { display: grid; grid-template-columns: 25px 1fr; gap: 10px; padding: 10px; border: 1px solid #e5eaf2; border-radius: 12px; background: #f8fafc; }
+.assistant-step { display: grid; grid-template-columns: 25px 1fr; gap: 10px; padding: 10px; border: 1px solid #e5eaf2; border-radius: 12px; background: #fff; }
 .step-index { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: #e2e8f0; color: #475569; font-size: 12px; font-weight: 800; }
 .assistant-step.success { border-color: #bbf7d0; background: #f0fdf4; }
 .assistant-step.success .step-index { background: #22c55e; color: #fff; }
@@ -511,9 +567,28 @@ onMounted(loadBase)
 .blocker-list { display: grid; gap: 9px; margin-top: 12px; }
 .blocker-item { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid #fecaca; border-radius: 12px; background: #fff7f7; }
 .target-list { margin-top: 10px; }
+.target-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #fff; margin-top: 10px; }
 .next-actions { display: grid; gap: 8px; margin-top: 14px; }
-.publish-float { position: fixed; z-index: 30; width: 52px; height: 52px; border: none; border-radius: 999px; background: linear-gradient(135deg, #2563eb, #0ea5e9); color: #fff; font-size: 16px; font-weight: 900; box-shadow: 0 16px 30px rgba(37, 99, 235, 0.3); cursor: grab; user-select: none; }
-.publish-float:active { cursor: grabbing; }
+.assistant-dock { position: fixed; z-index: 30; display: grid; grid-template-columns: 46px 1fr 8px; align-items: center; gap: 10px; width: 194px; height: 66px; padding: 9px 12px 9px 10px; border: 1px solid rgba(255, 255, 255, 0.78); border-radius: 999px; color: #0f172a; background: linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(239, 246, 255, 0.9)); backdrop-filter: blur(14px); box-shadow: 0 18px 46px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.72); cursor: grab; user-select: none; transition: left 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease; }
+.assistant-dock::before { content: ''; position: absolute; inset: -10px; z-index: -1; border-radius: inherit; opacity: 0.36; background: radial-gradient(circle, rgba(37, 99, 235, 0.32), transparent 62%); animation: dock-breathe 2.4s ease-in-out infinite; }
+.assistant-dock.is-left { border-top-left-radius: 16px; border-bottom-left-radius: 16px; }
+.assistant-dock.is-right { border-top-right-radius: 16px; border-bottom-right-radius: 16px; }
+.assistant-dock:hover { transform: translateY(-1px); box-shadow: 0 22px 54px rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.76); }
+.assistant-dock:active, .assistant-dock.is-dragging { cursor: grabbing; transform: scale(0.985); }
+.assistant-dock.is-success .dock-orb { color: #16a34a; }
+.assistant-dock.is-blocked .dock-orb { color: #ef4444; }
+.assistant-dock.is-active .dock-orb { color: #2563eb; }
+.assistant-dock.is-idle .dock-orb { color: #64748b; }
+.dock-orb { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 999px; background: conic-gradient(currentColor var(--dock-progress), rgba(226, 232, 240, 0.96) 0); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.76); }
+.dock-orb-core { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 999px; background: linear-gradient(135deg, #ffffff, #eff6ff); color: #0f172a; font-weight: 900; font-size: 14px; }
+.dock-copy { min-width: 0; display: grid; gap: 3px; text-align: left; }
+.dock-title { color: #0f172a; font-size: 13px; font-weight: 900; line-height: 1.1; }
+.dock-subtitle { overflow: hidden; color: #64748b; font-size: 12px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+.dock-pulse { width: 8px; height: 8px; border-radius: 999px; background: #94a3b8; box-shadow: 0 0 0 5px rgba(148, 163, 184, 0.14); }
+.assistant-dock.is-active .dock-pulse { background: #2563eb; box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.16); }
+.assistant-dock.is-success .dock-pulse { background: #16a34a; box-shadow: 0 0 0 5px rgba(22, 163, 74, 0.15); }
+.assistant-dock.is-blocked .dock-pulse { background: #ef4444; box-shadow: 0 0 0 5px rgba(239, 68, 68, 0.15); }
+@keyframes dock-breathe { 0%, 100% { opacity: 0.25; transform: scale(0.98); } 50% { opacity: 0.46; transform: scale(1.03); } }
 .drawer-steps { margin-bottom: 14px; }
 .drawer-form { margin-top: 12px; }
 .guide-alert { margin-bottom: 12px; }
@@ -522,6 +597,6 @@ onMounted(loadBase)
 .command-block { margin-top: 12px; }
 .command-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-weight: 700; color: #1f2937; }
 .command-block pre { white-space: pre-wrap; word-break: break-all; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 10px; margin: 0; }
-@media (max-width: 1280px) { .publish-page.assistant-open { padding-right: 0; } .publish-assistant-panel { position: static; width: auto; max-height: none; order: 9; } }
-@media (max-width: 900px) { .publish-hero, .inline-control { flex-direction: column; align-items: stretch; } }
+@media (max-width: 1280px) { .publish-page.assistant-open { padding-right: 0; } .publish-assistant-panel { position: static; width: auto; max-height: none; margin-top: 14px; } .publish-main { width: 100%; } }
+@media (max-width: 900px) { .assistant-dock { width: 174px; } .publish-form :deep(.el-form-item) { display: block; } .publish-form :deep(.el-form-item__label) { width: auto !important; height: auto; line-height: 1.4; margin-bottom: 6px; } .inline-control { flex-direction: column; align-items: stretch; } .append-action { width: 100%; flex-basis: auto; } .selected-server-pill { align-items: flex-start; flex-direction: column; } }
 </style>
