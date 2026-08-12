@@ -1,26 +1,23 @@
 <template>
-  <div class="publish-page">
+  <div class="publish-page" :class="{ 'assistant-open': assistantMode === 'panel' }">
     <div class="page-card publish-hero">
       <div>
-        <div class="eyebrow">项目交付主入口</div>
+        <div class="eyebrow">项目交付</div>
         <h2>发布已开发好的爬虫项目</h2>
-        <p>选择公司、选择一台或多台服务器、填写代码仓库地址后发布。构建、版本、镜像和部署细节由系统流程承接。</p>
+        <p>选择公司、选择一台或多台服务器、填写代码仓库地址后发布。每个环节都会按流水线检查，缺失内容会停在当前步骤。</p>
       </div>
-      <div class="hero-actions">
-        <el-button @click="router.push('/projects')">查看项目版本</el-button>
-        <el-button @click="router.push('/tasks')">进入任务编排</el-button>
-      </div>
+      <el-tag effect="light" type="primary">流水线发布</el-tag>
     </div>
 
     <el-row :gutter="16" class="publish-grid">
-      <el-col :xs="24" :lg="14">
-        <div class="page-card">
-          <div class="card-header">
+      <el-col :xs="24" :lg="15">
+        <div class="page-card form-card">
+          <div class="card-header compact-header">
             <div>
               <div class="card-title">发布信息</div>
-              <div class="muted">普通发布只需要填写下面四项，高级构建细节不在这里展开。</div>
+              <div class="muted">默认只需要公司、服务器、代码仓库和分支。</div>
             </div>
-            <el-tag effect="light">默认发布流程</el-tag>
+            <el-button size="small" @click="resetForm">重置</el-button>
           </div>
           <el-form label-position="top" class="publish-form">
             <el-form-item label="所属公司">
@@ -51,26 +48,25 @@
 
             <el-form-item label="Git 仓库地址">
               <el-input v-model="form.repositoryUrl" placeholder="例如：https://github.com/zhq910513/baidu_aicaigou.git" @blur="validateRepository" />
-              <div class="field-hint">当前版本会优先查找该仓库已登记的项目版本；平台内置构建中心启用后，将由系统直接读取代码并构建。</div>
+              <div class="field-hint">当前版本会优先查找该仓库已登记的项目版本；平台构建能力启用后，将由系统直接读取代码并构建。</div>
             </el-form-item>
             <el-form-item label="分支或标签">
               <el-input v-model="form.refName" placeholder="main" />
             </el-form-item>
           </el-form>
           <div class="publish-actions">
-            <el-button @click="resetForm">重置</el-button>
             <el-button :loading="publishing" @click="inspectPipeline">检查流水线</el-button>
             <el-button type="primary" :loading="publishing" @click="publishProject">发布项目</el-button>
           </div>
         </div>
       </el-col>
 
-      <el-col :xs="24" :lg="10">
-        <div class="page-card">
-          <div class="card-title">发布前检查</div>
+      <el-col :xs="24" :lg="9">
+        <div class="page-card readiness-card">
+          <div class="card-title">当前准备度</div>
           <div class="check-list">
             <div v-for="item in checkItems" :key="item.key" class="check-item">
-              <el-tag :type="item.ok ? 'success' : 'warning'" effect="light">{{ item.ok ? '已满足' : '待处理' }}</el-tag>
+              <span :class="['check-dot', item.ok ? 'ok' : 'todo']" />
               <div>
                 <div class="check-title">{{ item.title }}</div>
                 <div class="muted">{{ item.message }}</div>
@@ -93,14 +89,26 @@
       </el-col>
     </el-row>
 
-    <div class="page-card result-card">
-      <div class="card-header">
-        <div><div class="card-title">发布助手流水线</div><div class="muted">每一步按顺序检查，缺失配置或状态异常会立即卡住，不能跳过继续。</div></div>
-        <el-button size="small" @click="clearResult">清空</el-button>
+    <aside v-if="assistantMode === 'panel'" class="publish-assistant-panel">
+      <div class="assistant-header">
+        <div>
+          <div class="assistant-title">发布助手</div>
+          <div class="assistant-subtitle">{{ assistantStatusText }}</div>
+        </div>
+        <div class="assistant-actions">
+          <el-button size="small" text @click="collapseAssistant">收起</el-button>
+          <el-button v-if="publishSucceeded" size="small" text @click="assistantMode = 'closed'">关闭</el-button>
+        </div>
       </div>
-      <el-steps :active="activeStep" finish-status="success" process-status="process" align-center>
-        <el-step v-for="step in publishSteps" :key="step.key" :title="step.title" :description="step.message" :status="step.status" />
-      </el-steps>
+      <div class="assistant-progress">
+        <div v-for="(step, index) in publishSteps" :key="step.key" class="assistant-step" :class="step.status">
+          <span class="step-index">{{ index + 1 }}</span>
+          <div>
+            <div class="step-title">{{ step.title }}</div>
+            <div class="step-message">{{ step.message }}</div>
+          </div>
+        </div>
+      </div>
       <el-alert v-if="publishSummary" class="result-alert" :type="publishSucceeded ? 'success' : 'warning'" :title="publishSummary" show-icon :closable="false" />
       <div v-if="publishBlockers.length" class="blocker-list">
         <div v-for="blocker in publishBlockers" :key="String(blocker.step || blocker.title)" class="blocker-item">
@@ -125,7 +133,9 @@
         <el-button @click="router.push('/runs')">查看执行记录</el-button>
         <el-button @click="router.push('/projects')">查看项目版本</el-button>
       </div>
-    </div>
+    </aside>
+
+    <button v-if="assistantMode === 'float'" class="publish-float" :style="floatStyle" @mousedown="startFloatDrag" @click="restoreAssistant">助</button>
 
     <el-dialog v-model="companyDialogVisible" title="新增公司" width="460px">
       <el-form label-position="top">
@@ -139,17 +149,17 @@
       </template>
     </el-dialog>
 
-    <el-drawer v-model="serverDrawerVisible" title="新增服务器" size="560px">
+    <el-drawer v-model="serverDrawerVisible" title="新增服务器" size="540px">
       <el-steps :active="joinResult ? 2 : 1" simple class="drawer-steps">
         <el-step title="填写信息" />
         <el-step title="复制命令" />
         <el-step title="等待上线" />
       </el-steps>
+      <el-alert class="guide-alert" type="info" show-icon :closable="false" title="连接地址由系统设置统一管理，这里只需要填写服务器基础信息。" />
       <el-form label-position="top" class="drawer-form">
         <el-form-item label="所属公司"><el-input :model-value="selectedCompanyName" disabled /></el-form-item>
         <el-form-item label="服务器名称"><el-input v-model="joinForm.serverName" placeholder="例如：上海服务器01" @blur="applyJoinCodes" /></el-form-item>
         <el-form-item label="最大并发"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item>
-        <el-form-item label="控制端公网回调地址"><el-input v-model="joinForm.controlPlaneUrl" /></el-form-item>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
       </el-form>
       <el-alert v-if="joinWarning" type="warning" show-icon :closable="false" :title="joinWarning" />
@@ -198,6 +208,9 @@ const publishSucceeded = ref(false)
 const publishTargets = ref<Array<Record<string, unknown>>>([])
 const publishBlockers = ref<Array<Record<string, unknown>>>([])
 const pendingJoinServerCode = ref('')
+const assistantMode = ref<'panel' | 'float' | 'closed'>('panel')
+const floatPosition = reactive({ x: 24, y: 220 })
+const floatDrag = reactive({ active: false, moved: false, dx: 0, dy: 0 })
 
 const defaultPublishSteps: ProjectPublishPipelineStep[] = [
   { key: 'company', title: '选择公司', message: '等待检查', status: 'wait' },
@@ -209,7 +222,6 @@ const defaultPublishSteps: ProjectPublishPipelineStep[] = [
   { key: 'ready', title: '运行前自检', message: '等待检查', status: 'wait' },
 ]
 const publishSteps = ref<ProjectPublishPipelineStep[]>(defaultPublishSteps.map((item) => ({ ...item })))
-const activeStep = computed(() => Math.max(0, publishSteps.value.findIndex((item) => item.status === 'process')))
 
 const form = reactive({ companyId: 0, serverIds: [] as number[], repositoryUrl: '', refName: 'main' })
 const companyForm = reactive({ companyCode: '', companyName: '', description: '' })
@@ -219,6 +231,13 @@ const selectedCompanyName = computed(() => companies.value.find((item) => item.c
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
 const repositoryOk = computed(() => isRepositoryUrl(form.repositoryUrl))
 const deployableServers = computed(() => companyServers.value.filter(serverDeployable))
+const assistantStatusText = computed(() => {
+  if (publishSucceeded.value) return '流程完成'
+  if (publishBlockers.value.length) return '存在阻断'
+  const done = publishSteps.value.filter((item) => item.status === 'success').length
+  return done ? `${done}/${publishSteps.value.length}` : '待检查'
+})
+const floatStyle = computed(() => ({ left: `${floatPosition.x}px`, top: `${floatPosition.y}px` }))
 const checkItems = computed(() => [
   { key: 'company', title: '公司', ok: Boolean(form.companyId), message: form.companyId ? `已选择：${selectedCompanyName.value}` : '请选择项目所属公司。' },
   { key: 'servers', title: '服务器', ok: form.serverIds.length > 0, message: form.serverIds.length ? `已选择 ${form.serverIds.length} 台服务器。` : '请选择至少一台可部署服务器。' },
@@ -228,8 +247,8 @@ const checkItems = computed(() => [
 const joinWarning = computed(() => {
   if (!form.companyId) return '请先选择公司。'
   if (!joinForm.serverName.trim()) return '请填写服务器名称。'
-  if (!joinForm.controlPlaneUrl) return '请填写控制端公网回调地址。'
-  try { new URL(joinForm.controlPlaneUrl) } catch { return '控制端公网回调地址格式不正确。' }
+  if (!controlBaseUrl.value) return '服务器连接地址未配置，请超级管理员先到系统设置保存。'
+  try { new URL(controlBaseUrl.value) } catch { return '服务器连接地址格式不正确，请到系统设置修正。' }
   return ''
 })
 
@@ -252,6 +271,7 @@ function resetSteps() {
   publishSucceeded.value = false
   publishTargets.value = []
   publishBlockers.value = []
+  assistantMode.value = 'panel'
 }
 async function loadBase() {
   try {
@@ -293,12 +313,12 @@ function applyJoinCodes() {
   joinForm.serverCode = joinForm.serverCode || base
   joinForm.agentCode = joinForm.agentCode || `${base}-executor`
   joinForm.agentName = joinForm.serverName
+  joinForm.controlPlaneUrl = controlBaseUrl.value
 }
 function openServerOnboarding() {
   joinResult.value = null
   joinForm.companyId = form.companyId
   joinForm.serverName = joinForm.serverName || '新服务器'
-  joinForm.controlPlaneUrl = controlBaseUrl.value || window.location.origin
   applyJoinCodes()
   serverDrawerVisible.value = true
 }
@@ -306,7 +326,7 @@ async function createJoinCommand() {
   if (joinWarning.value) { ElMessage.warning(joinWarning.value); return }
   applyJoinCodes()
   try {
-    joinResult.value = await createAgentJoinToken({ ...joinForm, labels: {}, capabilities: {} })
+    joinResult.value = await createAgentJoinToken({ ...joinForm, controlPlaneUrl: controlBaseUrl.value, labels: {}, capabilities: {} })
     pendingJoinServerCode.value = joinForm.serverCode
     ElMessage.success('接入命令已生成')
   } catch (error) {
@@ -357,6 +377,7 @@ function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blo
   publishTargets.value = result.targets || result.deployment?.targets || []
   publishSummary.value = result.message || ''
   publishSucceeded.value = Boolean(result.canContinue && (result.deployment || publishTargets.value.length))
+  assistantMode.value = 'panel'
 }
 async function inspectPipeline() {
   const problem = validatePublishForm()
@@ -372,6 +393,7 @@ async function inspectPipeline() {
     const payload = apiErrorData<unknown>(error)
     const message = payload?.message || (error instanceof Error ? error.message : '流水线检查失败')
     publishSummary.value = message
+    assistantMode.value = 'panel'
     ElMessage.error(message)
   } finally {
     publishing.value = false
@@ -401,12 +423,12 @@ async function publishProject() {
     const running = publishSteps.value.find((item) => item.status === 'process')
     if (running) running.status = 'error'
     publishSummary.value = message
+    assistantMode.value = 'panel'
     ElMessage.error(message)
   } finally {
     publishing.value = false
   }
 }
-function clearResult() { resetSteps() }
 function resetForm() {
   form.serverIds = []
   form.repositoryUrl = ''
@@ -414,42 +436,92 @@ function resetForm() {
   syncSelectedServerCards()
   resetSteps()
 }
+function collapseAssistant() { assistantMode.value = publishSucceeded.value ? 'closed' : 'float' }
+function restoreAssistant() {
+  if (floatDrag.moved) { floatDrag.moved = false; return }
+  assistantMode.value = 'panel'
+}
+function startFloatDrag(event: MouseEvent) {
+  floatDrag.active = true
+  floatDrag.moved = false
+  floatDrag.dx = event.clientX - floatPosition.x
+  floatDrag.dy = event.clientY - floatPosition.y
+  const move = (moveEvent: MouseEvent) => {
+    if (!floatDrag.active) return
+    floatDrag.moved = true
+    const maxX = Math.max(12, window.innerWidth - 68)
+    const maxY = Math.max(12, window.innerHeight - 68)
+    floatPosition.x = Math.min(maxX, Math.max(12, moveEvent.clientX - floatDrag.dx))
+    floatPosition.y = Math.min(maxY, Math.max(12, moveEvent.clientY - floatDrag.dy))
+  }
+  const up = () => {
+    floatDrag.active = false
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
 
 onMounted(loadBase)
 </script>
 
 <style scoped>
-.publish-page { display: grid; gap: 16px; }
-.publish-hero { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: linear-gradient(135deg, #eef6ff, #ffffff); }
-.publish-hero h2 { margin: 6px 0; font-size: 24px; }
-.publish-hero p { margin: 0; color: #64748b; line-height: 1.6; }
+.publish-page { position: relative; display: grid; gap: 14px; transition: padding-right 0.18s ease; }
+.publish-page.assistant-open { padding-right: 338px; }
+.publish-hero { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 16px 18px; background: linear-gradient(135deg, #f8fbff, #ffffff); }
+.publish-hero h2 { margin: 4px 0; font-size: 22px; line-height: 1.2; }
+.publish-hero p { margin: 0; color: #64748b; line-height: 1.55; font-size: 13px; }
 .eyebrow { color: #2563eb; font-weight: 800; font-size: 12px; letter-spacing: 0.08em; }
-.hero-actions { display: flex; gap: 8px; }
 .publish-grid { align-items: stretch; }
-.publish-form { margin-top: 18px; }
+.form-card, .readiness-card, .selected-servers-card { min-height: 100%; }
+.compact-header { padding-bottom: 12px; border-bottom: 1px solid #eef2f7; }
+.publish-form { margin-top: 16px; }
 .inline-control { display: flex; gap: 10px; align-items: center; width: 100%; }
 .inline-control .full-width { flex: 1; }
 .field-hint { margin-top: 6px; color: #64748b; font-size: 12px; line-height: 1.5; }
 .server-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }
-.publish-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
-.check-list { display: grid; gap: 12px; margin-top: 16px; }
-.check-item { display: grid; grid-template-columns: 70px 1fr; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #f8fafc; }
+.publish-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 14px; margin-top: 8px; border-top: 1px solid #eef2f7; }
+.check-list { display: grid; gap: 10px; margin-top: 14px; }
+.check-item { display: grid; grid-template-columns: 12px 1fr; gap: 10px; align-items: flex-start; padding: 11px 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #f8fafc; }
+.check-dot { width: 9px; height: 9px; margin-top: 5px; border-radius: 999px; background: #f59e0b; }
+.check-dot.ok { background: #22c55e; }
+.check-dot.todo { background: #f59e0b; }
 .check-title { font-weight: 800; color: #111827; }
-.selected-servers-card { margin-top: 16px; }
-.server-card, .target-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #fff; margin-top: 10px; }
+.selected-servers-card { margin-top: 14px; }
+.server-card, .target-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #fff; margin-top: 10px; }
 .server-name { font-weight: 800; color: #111827; }
-.result-card { overflow: hidden; }
-.result-alert { margin-top: 18px; }
-.blocker-list { display: grid; gap: 10px; margin-top: 16px; }
-.blocker-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid #fecaca; border-radius: 10px; background: #fff7f7; }
-.target-list { margin-top: 12px; }
-.next-actions { display: flex; gap: 8px; margin-top: 16px; }
-.drawer-steps { margin-bottom: 16px; }
-.drawer-form { margin-top: 8px; }
-.install-panel { margin-top: 16px; border: 1px solid #dbeafe; background: #eff6ff; border-radius: 14px; padding: 14px; }
+.publish-assistant-panel { position: fixed; top: 82px; right: 18px; z-index: 20; width: 320px; max-height: calc(100vh - 104px); overflow-y: auto; padding: 14px; border: 1px solid rgba(203, 213, 225, 0.72); border-radius: 18px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(14px); box-shadow: 0 18px 42px rgba(15, 23, 42, 0.14); }
+.assistant-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #eef2f7; }
+.assistant-title { font-size: 16px; font-weight: 900; color: #111827; }
+.assistant-subtitle { margin-top: 3px; color: #64748b; font-size: 12px; }
+.assistant-actions { display: flex; gap: 2px; }
+.assistant-progress { display: grid; gap: 9px; margin-top: 13px; }
+.assistant-step { display: grid; grid-template-columns: 25px 1fr; gap: 10px; padding: 10px; border: 1px solid #e5eaf2; border-radius: 12px; background: #f8fafc; }
+.step-index { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: #e2e8f0; color: #475569; font-size: 12px; font-weight: 800; }
+.assistant-step.success { border-color: #bbf7d0; background: #f0fdf4; }
+.assistant-step.success .step-index { background: #22c55e; color: #fff; }
+.assistant-step.process { border-color: #bfdbfe; background: #eff6ff; }
+.assistant-step.process .step-index { background: #2563eb; color: #fff; }
+.assistant-step.error { border-color: #fecaca; background: #fff7f7; }
+.assistant-step.error .step-index { background: #ef4444; color: #fff; }
+.step-title { font-size: 13px; font-weight: 800; color: #111827; }
+.step-message { margin-top: 3px; color: #64748b; font-size: 12px; line-height: 1.45; }
+.result-alert { margin-top: 12px; }
+.blocker-list { display: grid; gap: 9px; margin-top: 12px; }
+.blocker-item { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid #fecaca; border-radius: 12px; background: #fff7f7; }
+.target-list { margin-top: 10px; }
+.next-actions { display: grid; gap: 8px; margin-top: 14px; }
+.publish-float { position: fixed; z-index: 30; width: 52px; height: 52px; border: none; border-radius: 999px; background: linear-gradient(135deg, #2563eb, #0ea5e9); color: #fff; font-size: 16px; font-weight: 900; box-shadow: 0 16px 30px rgba(37, 99, 235, 0.3); cursor: grab; user-select: none; }
+.publish-float:active { cursor: grabbing; }
+.drawer-steps { margin-bottom: 14px; }
+.drawer-form { margin-top: 12px; }
+.guide-alert { margin-bottom: 12px; }
+.install-panel { margin-top: 14px; border: 1px solid #dbeafe; background: #eff6ff; border-radius: 14px; padding: 14px; }
 .install-title { font-weight: 800; margin-bottom: 4px; }
 .command-block { margin-top: 12px; }
 .command-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-weight: 700; color: #1f2937; }
 .command-block pre { white-space: pre-wrap; word-break: break-all; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 10px; margin: 0; }
-@media (max-width: 900px) { .publish-hero, .inline-control { flex-direction: column; align-items: stretch; } .hero-actions { flex-direction: column; } }
+@media (max-width: 1280px) { .publish-page.assistant-open { padding-right: 0; } .publish-assistant-panel { position: static; width: auto; max-height: none; order: 9; } }
+@media (max-width: 900px) { .publish-hero, .inline-control { flex-direction: column; align-items: stretch; } }
 </style>

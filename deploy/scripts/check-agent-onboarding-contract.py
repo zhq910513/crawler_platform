@@ -33,8 +33,10 @@ if "detected_base_url" not in (ROOT / "backend/app/api/servers.py").read_text(en
     errors.append("后端未根据请求识别控制端公网回调地址")
 if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
     errors.append("安装脚本接口不应依赖 API 镜像外的 deploy 目录")
-if "远程服务器不能使用本机地址" not in frontend or "connectivityCommand" not in frontend:
-    errors.append("执行节点接入前端缺少远程地址拦截或连通性验证命令")
+if "currentOrigin" not in frontend or "connectivityCommand" not in frontend:
+    errors.append("执行节点接入前端缺少系统地址读取或连通性验证命令")
+if 'label="控制端公网回调地址"' in frontend:
+    errors.append("执行节点接入前端不应在新增服务器表单展示控制端公网回调地址输入项")
 legacy_token_text = "生成" + "接入" + "凭证"
 if legacy_token_text in companies:
     errors.append("公司页面仍使用含糊的“" + legacy_token_text + "”文案")

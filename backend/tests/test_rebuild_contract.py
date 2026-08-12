@@ -629,11 +629,12 @@ def test_138_frontend_commercial_navigation_contract() -> None:
     assert '资源准备' in nav_source
     assert '系统治理' in nav_source
     assert '/project-publish' in nav_source
-    assert '当前流程' in layout_source
-    assert 'flowItems' in layout_source
-    assert '发布项目' in layout_source
-    assert '新增服务器' in layout_source
-    assert 'el-sub-menu' in layout_source
+    assert 'navigationItems.filter' in layout_source
+    assert 'el-menu-item v-for="item in visibleItems"' in layout_source
+    assert 'el-sub-menu' not in layout_source
+    assert '当前流程' not in layout_source
+    assert 'flowItems' not in layout_source
+    assert 'quick-actions' not in layout_source
     assert "path: 'project-publish'" in router_source
     assert '项目发布' in router_source
 
@@ -652,14 +653,30 @@ def test_138_frontend_project_publish_flow_contract() -> None:
     assert 'createAgentJoinToken' in page
     assert 'analyzeProjectPublishPipeline' in page
     assert 'runProjectPublishPipeline' in page
-    assert '发布助手流水线' in page
-    assert '不能跳过继续' in page
+    assert '发布助手' in page
+    assert 'publish-assistant-panel' in page
+    assert 'publish-float' in page
+    assert 'assistantMode' in page
+    assert 'startFloatDrag' in page
+    assert '缺失内容会停在当前步骤' in page
     assert 'pendingJoinServerCode' in page
     assert '服务器已上线并自动选中' in page
+    assert 'label="控制端公网回调地址"' not in page
+    assert 'controlBaseUrl.value' in page
     assert 'apiErrorData' in page
     assert 'GitHub Secret' not in page
     assert 'CRAWLER_DISCOVERY_TOKEN' not in page
 
+
+
+def test_141_server_onboarding_hides_control_plane_address_input() -> None:
+    root = Path(__file__).resolve().parents[2]
+    page = (root / 'frontend' / 'src' / 'views' / 'ServersPage.vue').read_text(encoding='utf-8')
+    assert 'label="控制端公网回调地址"' not in page
+    assert 'currentOrigin' in page
+    assert 'createAgentJoinToken' in page
+    assert 'connectivityCommand' in page
+    assert '服务器连接地址未配置' in page
 def test_102_frontend_run_log_routes_match_backend_contract() -> None:
     root = Path(__file__).resolve().parents[2]
     api_source = (root / 'frontend' / 'src' / 'api' / 'platform.ts').read_text(encoding='utf-8')

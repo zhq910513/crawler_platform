@@ -68,7 +68,3 @@ export function findNavigationItem(path: string) {
   return navigationItems.find((item) => item.path === path)
 }
 
-export function flowItems(flow: string | undefined, isSuperAdmin: boolean) {
-  if (!flow) return []
-  return navigationItems.filter((item) => item.flow === flow && (!item.adminOnly || isSuperAdmin))
-}

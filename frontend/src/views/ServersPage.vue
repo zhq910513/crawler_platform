@@ -66,10 +66,6 @@
           <el-col :span="12"><el-form-item label="服务器名称"><el-input v-model="joinForm.serverName" placeholder="例如：测试服务器01" @blur="applyAutoCodes" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="最大并发"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
         </el-row>
-        <el-form-item label="控制端公网回调地址">
-          <el-input v-model="joinForm.controlPlaneUrl" placeholder="请输入服务器可以访问的控制端地址，例如：http://10.1.0.13:8080" />
-          <div class="field-hint">远程服务器不能使用本机地址；请填写目标服务器能访问到的内网地址、外网地址或域名。</div>
-        </el-form-item>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
         <el-collapse class="advanced-box">
           <el-collapse-item title="高级设置" name="advanced">
@@ -148,9 +144,10 @@ async function loadSystemSettings() { const data = await getSystemSettings().cat
 function currentOrigin() { return configuredControlPlaneUrl.value || window.location.origin }
 function slug(value: string) { return (value || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server' }
 const addressWarning = computed(() => {
-  if (!joinForm.controlPlaneUrl) return '请填写服务器可以访问的控制端公网回调地址。'
-  try { new URL(joinForm.controlPlaneUrl) } catch { return '控制端公网回调地址格式不正确。' }
-  if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(joinForm.controlPlaneUrl)) return '远程服务器不能使用本机地址，请填写内网地址、外网地址或域名。'
+  const baseUrl = currentOrigin()
+  if (!baseUrl) return '服务器连接地址未配置，请超级管理员先到系统设置保存。'
+  try { new URL(baseUrl) } catch { return '服务器连接地址格式不正确，请到系统设置修正。' }
+  if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(baseUrl)) return '远程服务器不能使用本机地址，请到系统设置改成服务器可访问的地址。'
   return ''
 })
 function applyAutoCodes() {
@@ -159,14 +156,8 @@ function applyAutoCodes() {
   if (!joinForm.agentCode) joinForm.agentCode = `${base}-executor`
 }
 function applyInstallTarget() {
-  if (joinForm.installTarget === 'LOCAL') {
-    joinForm.controlPlaneUrl = joinForm.controlPlaneUrl || currentOrigin()
-    joinForm.workDir = '/var/lib/crawler-agent'
-  } else {
-    joinForm.controlPlaneUrl = currentOrigin()
-    if (isLoopbackUrl(joinForm.controlPlaneUrl)) joinForm.controlPlaneUrl = ''
-    joinForm.workDir = '/var/lib/crawler-agent'
-  }
+  joinForm.controlPlaneUrl = currentOrigin()
+  joinForm.workDir = '/var/lib/crawler-agent'
 }
 function openOnboarding() {
   joinResult.value = null
@@ -186,12 +177,20 @@ async function load() {
 async function createJoin() {
   if (addressWarning.value) { ElMessage.warning(addressWarning.value); return }
   applyAutoCodes()
-  joinResult.value = await createAgentJoinToken({ ...joinForm, agentName: joinForm.agentName || joinForm.serverName, labels: {}, capabilities: {} })
+  joinResult.value = await createAgentJoinToken({ ...joinForm, controlPlaneUrl: currentOrigin(), agentName: joinForm.agentName || joinForm.serverName, labels: {}, capabilities: {} })
   ElMessage.success('接入命令已生成')
 }
 async function copyText(text: string) {
   if (!text) return
-  await navigator.clipboard.writeText(text)
+  if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text)
+  else {
+    const el = document.createElement('textarea')
+    el.value = text
+    document.body.appendChild(el)
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
+  }
   ElMessage.success('已复制')
 }
 async function save() { await createServer(form); dialogVisible.value = false; await load() }

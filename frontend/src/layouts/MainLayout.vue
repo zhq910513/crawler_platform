@@ -1,34 +1,26 @@
 <template>
   <el-container class="layout-shell">
-    <el-aside width="268px" class="layout-aside">
+    <el-aside width="232px" class="layout-aside">
       <div class="brand-panel">
         <div class="brand-mark">爬</div>
-        <div>
+        <div class="brand-copy">
           <div class="brand-title">爬虫管理平台</div>
-          <div class="brand-subtitle">项目交付 · 运行治理</div>
+          <div class="brand-subtitle">项目交付与运行管理</div>
         </div>
       </div>
-      <div class="quick-actions">
-        <el-button type="primary" plain @click="router.push('/project-publish')">发布项目</el-button>
-        <el-button plain @click="router.push('/servers?openOnboarding=1')">新增服务器</el-button>
-      </div>
       <el-menu router :default-active="activePath" class="side-menu">
-        <el-sub-menu v-for="group in visibleGroups" :key="group.key" :index="group.key">
-          <template #title><span class="group-title">{{ group.title }}</span></template>
-          <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
-            <el-icon><component :is="item.icon" /></el-icon>
-            <span>{{ item.title }}</span>
-          </el-menu-item>
-        </el-sub-menu>
+        <el-menu-item v-for="item in visibleItems" :key="item.path" :index="item.path">
+          <el-icon><component :is="item.icon" /></el-icon>
+          <span>{{ item.title }}</span>
+        </el-menu-item>
       </el-menu>
       <div class="version-card">
-        <div class="version-label">当前版本</div>
-        <div class="version-value">v{{ frontendVersion.version }}</div>
+        <span>v{{ frontendVersion.version }}</span>
       </div>
     </el-aside>
     <el-container class="layout-main">
       <el-header class="topbar">
-        <div>
+        <div class="page-heading">
           <div class="page-title">{{ currentNav?.title || $route.meta.title }}</div>
           <div class="page-subtitle">{{ currentNav?.subtitle || routeSubtitle }}</div>
         </div>
@@ -39,10 +31,6 @@
           <el-button size="small" plain @click="logout">退出</el-button>
         </div>
       </el-header>
-      <div v-if="currentFlowItems.length > 1 && !passwordRequired" class="flow-strip">
-        <span class="flow-label">当前流程</span>
-        <el-button v-for="item in currentFlowItems" :key="item.path" size="small" :type="item.path === activePath ? 'primary' : 'default'" plain @click="router.push(item.path)">{{ item.title }}</el-button>
-      </div>
       <el-main class="content-wrap">
         <div v-if="passwordRequired" class="forced-password-panel">请先完成密码修改。完成后系统会要求重新登录，再进入业务页面。</div>
         <router-view v-else v-slot="{ Component, route }">
@@ -80,17 +68,16 @@ import { changeOwnPassword } from '../api/platform'
 import { apiErrorData } from '../api/client'
 import { getBackendHealth, getFrontendVersion } from '../api/health'
 import { frontendBuildVersion } from '../config/version'
-import { findNavigationItem, flowItems, visibleNavigationGroups } from '../config/navigation'
+import { findNavigationItem, navigationItems } from '../config/navigation'
 import type { BackendHealthData, SystemVersionInfo } from '../types/api'
 import { deleteSession } from '../api/sessions'
 import { clearSession, markPasswordChangeReloginInProgress, sessionState } from '../stores/session'
 import ConfigAssistantDrawer from '../components/ConfigAssistantDrawer.vue'
 
 const router = useRouter()
-const visibleGroups = computed(() => visibleNavigationGroups(Boolean(sessionState.user?.isSuperAdmin)))
+const visibleItems = computed(() => navigationItems.filter((item) => !item.adminOnly || sessionState.user?.isSuperAdmin))
 const activePath = computed(() => router.currentRoute.value.path)
 const currentNav = computed(() => findNavigationItem(activePath.value))
-const currentFlowItems = computed(() => flowItems(currentNav.value?.flow, Boolean(sessionState.user?.isSuperAdmin)))
 const routeSubtitle = computed(() => '爬虫项目统一交付与运行管理')
 const passwordDialogVisible = ref(false)
 const passwordSaving = ref(false)
@@ -160,37 +147,29 @@ async function logout() {
 </script>
 
 <style scoped>
-.layout-shell { min-height: 100vh; background: #f4f7fb; }
-.layout-aside { position: relative; display: flex; flex-direction: column; border-right: 1px solid rgba(148, 163, 184, 0.18); background: linear-gradient(180deg, #0f172a 0%, #111827 45%, #101827 100%); box-shadow: 12px 0 32px rgba(15, 23, 42, 0.08); }
-.brand-panel { display: flex; align-items: center; gap: 12px; height: 74px; padding: 0 20px; color: #fff; }
-.brand-mark { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #3b82f6, #06b6d4); font-size: 20px; font-weight: 800; box-shadow: 0 12px 28px rgba(37, 99, 235, 0.3); }
-.brand-title { font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }
-.brand-subtitle { margin-top: 3px; color: #94a3b8; font-size: 12px; }
-.quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 14px 10px; }
-.quick-actions .el-button { width: 100%; margin: 0; }
-.side-menu { flex: 1; padding: 8px 10px; border-right: none; background: transparent; overflow-y: auto; }
-.side-menu :deep(.el-sub-menu__title) { height: 38px; padding: 0 12px !important; color: #94a3b8; border-radius: 10px; }
-.side-menu :deep(.el-sub-menu__title:hover) { background: rgba(59, 130, 246, 0.1); color: #e2e8f0; }
-.group-title { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
-.side-menu :deep(.el-menu) { background: transparent; }
-.side-menu :deep(.el-menu-item) { height: 42px; margin: 4px 0; border-radius: 12px; color: #cbd5e1; font-size: 14px; }
-.side-menu :deep(.el-menu-item .el-icon) { margin-right: 12px; font-size: 17px; }
-.side-menu :deep(.el-menu-item:hover) { background: rgba(59, 130, 246, 0.13); color: #fff; }
-.side-menu :deep(.el-menu-item.is-active) { background: linear-gradient(135deg, #2563eb, #0ea5e9); color: #fff; box-shadow: 0 12px 28px rgba(37, 99, 235, 0.28); }
-.version-card { margin: 12px 16px 18px; padding: 12px 14px; border: 1px solid rgba(148, 163, 184, 0.16); border-radius: 14px; background: rgba(15, 23, 42, 0.62); color: #dbeafe; }
-.version-label { color: #94a3b8; font-size: 12px; }
-.version-value { margin-top: 3px; font-size: 15px; font-weight: 700; }
+.layout-shell { min-height: 100vh; background: #f5f7fb; }
+.layout-aside { position: relative; display: flex; flex-direction: column; border-right: 1px solid #e5eaf2; background: #111827; box-shadow: 8px 0 24px rgba(15, 23, 42, 0.06); }
+.brand-panel { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 16px; color: #fff; border-bottom: 1px solid rgba(148, 163, 184, 0.14); }
+.brand-mark { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #2563eb, #0ea5e9); font-size: 18px; font-weight: 800; box-shadow: 0 10px 24px rgba(37, 99, 235, 0.28); }
+.brand-copy { min-width: 0; }
+.brand-title { font-size: 16px; font-weight: 800; letter-spacing: 0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-subtitle { margin-top: 2px; color: #9ca3af; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-menu { flex: 1; padding: 10px 9px; border-right: none; background: transparent; overflow-y: auto; }
+.side-menu :deep(.el-menu-item) { height: 40px; margin: 3px 0; border-radius: 10px; color: #cbd5e1; font-size: 14px; }
+.side-menu :deep(.el-menu-item .el-icon) { margin-right: 10px; font-size: 16px; }
+.side-menu :deep(.el-menu-item:hover) { background: rgba(59, 130, 246, 0.12); color: #fff; }
+.side-menu :deep(.el-menu-item.is-active) { background: #2563eb; color: #fff; box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24); }
+.version-card { margin: 10px 14px 14px; padding: 9px 12px; border: 1px solid rgba(148, 163, 184, 0.14); border-radius: 12px; background: rgba(15, 23, 42, 0.58); color: #bfdbfe; font-size: 12px; font-weight: 700; }
 .layout-main { min-width: 0; }
-.topbar { display: flex; align-items: center; justify-content: space-between; height: 72px; padding: 0 28px; border-bottom: 1px solid #e6ebf2; background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(10px); }
-.page-title { color: #111827; font-size: 20px; font-weight: 800; }
-.page-subtitle { margin-top: 4px; color: #7b8798; font-size: 12px; font-weight: 400; }
-.flow-strip { display: flex; align-items: center; gap: 8px; padding: 10px 28px; border-bottom: 1px solid #e6ebf2; background: #fff; }
-.flow-label { margin-right: 4px; color: #64748b; font-size: 12px; font-weight: 700; }
-.user-box { display: flex; gap: 12px; align-items: center; color: #334155; }
-.user-name { font-weight: 600; }
+.topbar { display: flex; align-items: center; justify-content: space-between; height: 66px; padding: 0 24px; border-bottom: 1px solid #e6ebf2; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(8px); }
+.page-heading { min-width: 0; }
+.page-title { color: #111827; font-size: 19px; font-weight: 800; }
+.page-subtitle { margin-top: 3px; color: #7b8798; font-size: 12px; font-weight: 400; }
+.user-box { display: flex; gap: 10px; align-items: center; color: #334155; }
+.user-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .password-alert { margin-bottom: 14px; }
 .password-help { margin-top: -4px; color: #64748b; font-size: 12px; line-height: 1.6; }
-.content-wrap { padding: 22px 24px 28px; }
-.forced-password-panel { display: flex; align-items: center; justify-content: center; min-height: 360px; border: 1px dashed #f59e0b; border-radius: 16px; background: #fffbeb; color: #92400e; font-weight: 700; }
-@media (max-width: 980px) { .layout-aside { width: 226px !important; } .topbar { padding: 0 18px; } .content-wrap { padding: 16px; } .quick-actions { grid-template-columns: 1fr; } }
+.content-wrap { padding: 18px 20px 24px; }
+.forced-password-panel { display: flex; align-items: center; justify-content: center; min-height: 360px; border: 1px dashed #f59e0b; border-radius: 14px; background: #fffbeb; color: #92400e; font-weight: 700; }
+@media (max-width: 980px) { .layout-aside { width: 218px !important; } .topbar { padding: 0 16px; } .content-wrap { padding: 14px; } .user-box { gap: 6px; } }
 </style>
