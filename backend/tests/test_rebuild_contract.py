@@ -656,6 +656,11 @@ def test_138_frontend_project_publish_flow_contract() -> None:
     assert '发布助手' in page
     assert 'publish-assistant-panel' in page
     assert 'assistant-dock' in page
+    assert 'assistantSteps' in page
+    assert 'mergePipelineStepsWithBlockers' in page
+    assert 'assistant-summary' not in page
+    assert 'checkItems' not in page
+    assert 'blocker-list' not in page
     assert 'publish-float' not in page
     assert 'assistantMode' in page
     assert 'startFloatDrag' in page

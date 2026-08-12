@@ -69,7 +69,7 @@
       <div class="assistant-header">
         <div>
           <div class="assistant-title">发布助手</div>
-          <div class="assistant-subtitle">{{ assistantStatusText }}</div>
+          <div class="assistant-subtitle">{{ assistantStatusText }} · {{ assistantProgressPercent }}%</div>
         </div>
         <div class="assistant-actions">
           <el-button size="small" text @click="collapseAssistant">收起</el-button>
@@ -77,18 +77,8 @@
         </div>
       </div>
 
-      <div class="assistant-summary">
-        <div v-for="item in checkItems" :key="item.key" class="summary-row">
-          <span :class="['check-dot', item.ok ? 'ok' : 'todo']" />
-          <div>
-            <div class="summary-title">{{ item.title }}</div>
-            <div class="summary-message">{{ item.message }}</div>
-          </div>
-        </div>
-      </div>
-
       <div class="assistant-progress">
-        <div v-for="(step, index) in publishSteps" :key="step.key" class="assistant-step" :class="step.status">
+        <div v-for="(step, index) in assistantSteps" :key="step.key" class="assistant-step" :class="step.status">
           <span class="step-index">{{ index + 1 }}</span>
           <div>
             <div class="step-title">{{ step.title }}</div>
@@ -97,15 +87,6 @@
         </div>
       </div>
       <el-alert v-if="publishSummary" class="result-alert" :type="publishSucceeded ? 'success' : 'warning'" :title="publishSummary" show-icon :closable="false" />
-      <div v-if="publishBlockers.length" class="blocker-list">
-        <div v-for="blocker in publishBlockers" :key="String(blocker.step || blocker.title)" class="blocker-item">
-          <el-tag type="danger" effect="light">阻断</el-tag>
-          <div>
-            <div class="check-title">{{ blocker.title || blocker.step }}</div>
-            <div class="muted">{{ blocker.message }}</div>
-          </div>
-        </div>
-      </div>
       <div v-if="publishTargets.length" class="target-list">
         <div v-for="target in publishTargets" :key="String(target.targetId || target.serverId)" class="target-card">
           <div>
@@ -210,6 +191,7 @@ const publishSummary = ref('')
 const publishSucceeded = ref(false)
 const publishTargets = ref<Array<Record<string, unknown>>>([])
 const publishBlockers = ref<Array<Record<string, unknown>>>([])
+const pipelineChecked = ref(false)
 const pendingJoinServerCode = ref('')
 const assistantMode = ref<'panel' | 'collapsing' | 'dock' | 'closed'>('panel')
 const floatPosition = reactive({ x: 0, y: 220 })
@@ -239,28 +221,37 @@ const currentCompanyName = computed(() => companies.value.find((item) => item.co
 const repositoryOk = computed(() => isRepositoryUrl(form.repositoryUrl))
 const deployableServers = computed(() => companyServers.value.filter(serverDeployable))
 const assistantPanelVisible = computed(() => assistantMode.value === 'panel' || assistantMode.value === 'collapsing')
-const assistantDoneCount = computed(() => publishSteps.value.filter((item) => item.status === 'success').length)
-const assistantProgressPercent = computed(() => Math.round((assistantDoneCount.value / Math.max(1, publishSteps.value.length)) * 100))
+const assistantSteps = computed<ProjectPublishPipelineStep[]>(() => {
+  if (pipelineChecked.value) return mergePipelineStepsWithBlockers(publishSteps.value)
+  const next = defaultPublishSteps.map((item) => ({ ...item }))
+  const selectedServersReady = form.serverIds.length > 0
+  const localReady = Boolean(form.companyId && selectedServersReady && repositoryOk.value && deployableServers.value.length)
+  setAssistantStep(next, 'company', form.companyId ? 'success' : 'wait', form.companyId ? `已选择：${selectedCompanyName.value}` : '请选择项目所属公司。')
+  setAssistantStep(next, 'servers', serverLocalStatus(), serverLocalMessage())
+  setAssistantStep(next, 'source', repositoryOk.value ? 'success' : 'wait', repositoryOk.value ? '仓库地址格式已通过本地检查。' : '请输入以 http(s) 或 git@ 开头的仓库地址。')
+  const pendingMessage = localReady ? '等待检查流水线。' : '等待前置信息完成。'
+  setAssistantStep(next, 'build', 'wait', pendingMessage)
+  setAssistantStep(next, 'release', 'wait', pendingMessage)
+  setAssistantStep(next, 'deploy', 'wait', pendingMessage)
+  setAssistantStep(next, 'ready', localReady ? 'success' : readyLocalStatus(), localReady ? '本地发布信息已完整，可检查流水线。' : readyLocalMessage())
+  return next
+})
+const assistantDoneCount = computed(() => assistantSteps.value.filter((item) => item.status === 'success').length)
+const assistantProgressPercent = computed(() => Math.round((assistantDoneCount.value / Math.max(1, assistantSteps.value.length)) * 100))
 const assistantState = computed(() => {
   if (publishSucceeded.value) return 'success'
-  if (publishBlockers.value.length || publishSteps.value.some((item) => item.status === 'error')) return 'blocked'
-  if (assistantDoneCount.value || publishSteps.value.some((item) => item.status === 'process')) return 'active'
+  if (publishBlockers.value.length || assistantSteps.value.some((item) => item.status === 'error')) return 'blocked'
+  if (assistantDoneCount.value || assistantSteps.value.some((item) => item.status === 'process')) return 'active'
   return 'idle'
 })
 const assistantStatusText = computed(() => {
   if (publishSucceeded.value) return '流程完成'
   if (assistantState.value === 'blocked') return '存在阻断'
-  if (assistantState.value === 'active') return `${assistantDoneCount.value}/${publishSteps.value.length} 已就绪`
+  if (assistantState.value === 'active') return `${assistantDoneCount.value}/${assistantSteps.value.length} 已就绪`
   return '待检查'
 })
 const floatStyle = computed(() => ({ left: `${floatPosition.x}px`, top: `${floatPosition.y}px` }))
 const dockProgressStyle = computed(() => ({ '--dock-progress': `${assistantProgressPercent.value * 3.6}deg` }))
-const checkItems = computed(() => [
-  { key: 'company', title: '公司', ok: Boolean(form.companyId), message: form.companyId ? `已选择：${selectedCompanyName.value}` : '请选择项目所属公司。' },
-  { key: 'servers', title: '服务器', ok: form.serverIds.length > 0, message: form.serverIds.length ? `已选择 ${form.serverIds.length} 台服务器。` : '请选择至少一台可部署服务器。' },
-  { key: 'repo', title: '代码仓库', ok: repositoryOk.value, message: repositoryOk.value ? '仓库地址格式已通过本地检查。' : '请输入以 http(s) 或 git@ 开头的仓库地址。' },
-  { key: 'ready', title: '发布准备', ok: deployableServers.value.length > 0, message: deployableServers.value.length ? `当前公司有 ${deployableServers.value.length} 台可部署服务器。` : '当前公司暂无可部署服务器。' },
-])
 const joinWarning = computed(() => {
   if (!form.companyId) return '请先选择公司。'
   if (!joinForm.serverName.trim()) return '请填写服务器名称。'
@@ -282,12 +273,72 @@ function serverBlockReason(server: ServerNode) {
   if (server.metrics?.projectDataRootWritable === false) return '工作目录不可写'
   return ''
 }
+function setAssistantStep(steps: ProjectPublishPipelineStep[], key: string, status: string, message: string) {
+  const target = steps.find((step) => step.key === key)
+  if (!target) return
+  target.status = status
+  target.message = message
+}
+function serverLocalStatus() {
+  if (!form.companyId) return 'wait'
+  if (!companyServers.value.length || !deployableServers.value.length) return 'error'
+  return form.serverIds.length ? 'success' : 'wait'
+}
+function serverLocalMessage() {
+  if (!form.companyId) return '等待选择公司。'
+  if (!companyServers.value.length) return '当前公司暂无服务器，可在本页新增。'
+  if (!deployableServers.value.length) return '当前公司暂无可部署服务器。'
+  return form.serverIds.length ? `已选择 ${form.serverIds.length} 台服务器。` : `当前公司有 ${deployableServers.value.length} 台可部署服务器，请选择。`
+}
+function readyLocalStatus() {
+  if (form.companyId && deployableServers.value.length === 0) return 'error'
+  return 'wait'
+}
+function readyLocalMessage() {
+  if (!form.companyId) return '等待选择公司。'
+  if (!form.serverIds.length) return '等待选择部署服务器。'
+  if (!repositoryOk.value) return '等待确认代码仓库。'
+  if (!deployableServers.value.length) return '当前公司暂无可部署服务器。'
+  return '等待检查流水线。'
+}
+function blockerText(blocker: Record<string, unknown>) {
+  return String(blocker.message || blocker.title || blocker.step || '存在阻断')
+}
+function blockerMatchesStep(blocker: Record<string, unknown>, step: ProjectPublishPipelineStep) {
+  const key = String(blocker.step || blocker.key || '').toLowerCase()
+  const title = String(blocker.title || '')
+  return Boolean((key && (key === step.key.toLowerCase() || key.includes(step.key.toLowerCase()))) || (title && (title === step.title || title.includes(step.title))))
+}
+function mergePipelineStepsWithBlockers(steps: ProjectPublishPipelineStep[]) {
+  const next = defaultPublishSteps.map((step) => ({ ...step }))
+  steps.forEach((step) => {
+    const target = next.find((item) => item.key === step.key)
+    if (target) Object.assign(target, step)
+    else next.push({ ...step })
+  })
+  const unmatched: string[] = []
+  publishBlockers.value.forEach((blocker) => {
+    const target = next.find((step) => blockerMatchesStep(blocker, step))
+    if (!target) { unmatched.push(blockerText(blocker)); return }
+    target.status = 'error'
+    target.message = blockerText(blocker)
+  })
+  if (unmatched.length) {
+    const target = next.find((step) => step.key === 'ready') || next[next.length - 1]
+    if (target) {
+      target.status = 'error'
+      target.message = unmatched.join('；')
+    }
+  }
+  return next
+}
 function resetSteps() {
-  publishSteps.value.forEach((step) => { step.status = 'wait'; step.message = '等待发布' })
+  publishSteps.value = defaultPublishSteps.map((item) => ({ ...item }))
   publishSummary.value = ''
   publishSucceeded.value = false
   publishTargets.value = []
   publishBlockers.value = []
+  pipelineChecked.value = false
   assistantMode.value = 'panel'
 }
 async function loadBase() {
@@ -394,6 +445,7 @@ function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blo
   publishTargets.value = result.targets || result.deployment?.targets || []
   publishSummary.value = result.message || ''
   publishSucceeded.value = Boolean(result.canContinue && (result.deployment || publishTargets.value.length))
+  pipelineChecked.value = true
   assistantMode.value = 'panel'
 }
 async function inspectPipeline() {
@@ -410,6 +462,7 @@ async function inspectPipeline() {
     const payload = apiErrorData<unknown>(error)
     const message = payload?.message || (error instanceof Error ? error.message : '流水线检查失败')
     publishSummary.value = message
+    pipelineChecked.value = true
     assistantMode.value = 'panel'
     ElMessage.error(message)
   } finally {
@@ -440,6 +493,7 @@ async function publishProject() {
     const running = publishSteps.value.find((item) => item.status === 'process')
     if (running) running.status = 'error'
     publishSummary.value = message
+    pipelineChecked.value = true
     assistantMode.value = 'panel'
     ElMessage.error(message)
   } finally {
@@ -536,10 +590,6 @@ onUnmounted(() => {
 .selected-servers-inline { display: grid; gap: 8px; }
 .selected-server-pill { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid #e7edf5; border-radius: 12px; background: #f8fafc; }
 .publish-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 16px; margin-top: 2px; border-top: 1px solid #eef2f7; }
-.check-dot { width: 9px; height: 9px; margin-top: 5px; border-radius: 999px; background: #f59e0b; }
-.check-dot.ok { background: #22c55e; }
-.check-dot.todo { background: #f59e0b; }
-.check-title { font-weight: 800; color: #111827; }
 .server-name { font-weight: 800; color: #111827; }
 .publish-assistant-panel { position: fixed; top: 82px; right: 18px; z-index: 20; width: 328px; max-height: calc(100vh - 104px); overflow-y: auto; padding: 14px; border: 1px solid rgba(203, 213, 225, 0.72); border-radius: 20px; background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92)); backdrop-filter: blur(16px); box-shadow: 0 22px 54px rgba(15, 23, 42, 0.16); transform-origin: right center; transition: opacity 0.18s ease, transform 0.18s ease, filter 0.18s ease; }
 .publish-assistant-panel::before { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; background: radial-gradient(circle at 20% 0%, rgba(59, 130, 246, 0.18), transparent 32%), radial-gradient(circle at 92% 18%, rgba(14, 165, 233, 0.13), transparent 36%); }
@@ -548,10 +598,6 @@ onUnmounted(() => {
 .assistant-title { font-size: 16px; font-weight: 900; color: #111827; }
 .assistant-subtitle { margin-top: 3px; color: #64748b; font-size: 12px; }
 .assistant-actions { display: flex; gap: 2px; }
-.assistant-summary { display: grid; gap: 8px; margin-top: 12px; padding: 10px; border: 1px solid #e7edf5; border-radius: 14px; background: #f8fafc; }
-.summary-row { display: grid; grid-template-columns: 13px 1fr; gap: 8px; align-items: flex-start; }
-.summary-title { color: #111827; font-size: 12px; font-weight: 800; }
-.summary-message { margin-top: 1px; color: #64748b; font-size: 12px; line-height: 1.4; }
 .assistant-progress { display: grid; gap: 9px; margin-top: 13px; }
 .assistant-step { display: grid; grid-template-columns: 25px 1fr; gap: 10px; padding: 10px; border: 1px solid #e5eaf2; border-radius: 12px; background: #fff; }
 .step-index { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: #e2e8f0; color: #475569; font-size: 12px; font-weight: 800; }
@@ -564,8 +610,6 @@ onUnmounted(() => {
 .step-title { font-size: 13px; font-weight: 800; color: #111827; }
 .step-message { margin-top: 3px; color: #64748b; font-size: 12px; line-height: 1.45; }
 .result-alert { margin-top: 12px; }
-.blocker-list { display: grid; gap: 9px; margin-top: 12px; }
-.blocker-item { display: flex; align-items: flex-start; gap: 9px; padding: 10px; border: 1px solid #fecaca; border-radius: 12px; background: #fff7f7; }
 .target-list { margin-top: 10px; }
 .target-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; border: 1px solid #e7edf5; border-radius: 12px; background: #fff; margin-top: 10px; }
 .next-actions { display: grid; gap: 8px; margin-top: 14px; }
