@@ -7,7 +7,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import SysUser
 from app.responses import ok
-from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
+from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectPublishPipelineRequest, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
 from app.services.project_service import ProjectService
 
 router = APIRouter(tags=["项目"])
@@ -28,6 +28,16 @@ def create_discovered_project(payload: ProjectDiscoveryCreate, authorization: st
 @router.get("/projects")
 def list_projects(company_id: int | None = Query(default=None), user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ProjectService(db).list_projects(user, company_id))
+
+
+@router.post("/project-publish/pipeline-analyses")
+def analyze_project_publish_pipeline(payload: ProjectPublishPipelineRequest, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ProjectService(db).analyze_publish_pipeline(user, payload))
+
+
+@router.post("/project-publish/pipelines")
+def run_project_publish_pipeline(payload: ProjectPublishPipelineRequest, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ProjectService(db).run_publish_pipeline(user, payload))
 
 
 @router.post("/projects")

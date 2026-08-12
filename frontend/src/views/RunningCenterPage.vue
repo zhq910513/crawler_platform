@@ -8,7 +8,7 @@
       </div>
       <div class="hero-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
-        <el-button type="primary" plain @click="router.push('/tasks')">查看任务调度</el-button>
+        <el-button type="primary" plain @click="router.push('/tasks')">查看任务编排</el-button>
       </div>
     </div>
 
@@ -24,9 +24,9 @@
 
     <el-empty v-if="!loading && !projects.length" class="friendly-empty" description="还没有可查看的项目">
       <template #description>
-        <div>当前公司还没有已接入项目。请先在项目管理中部署项目版本，部署完成后不会自动启动任务。</div>
+        <div>当前公司还没有已接入项目。请先在项目版本中部署项目版本，部署完成后不会自动启动任务。</div>
       </template>
-      <el-button type="primary" @click="router.push('/projects')">去项目管理</el-button>
+      <el-button type="primary" @click="router.push('/project-publish')">去项目发布</el-button>
     </el-empty>
 
     <el-skeleton v-if="loading" :rows="8" animated />
@@ -73,9 +73,9 @@
         </div>
         <div class="action-row">
           <el-button type="primary" :loading="runningTaskId === selectedTask.taskId" @click="manualRun(selectedTask)">手动执行</el-button>
-          <el-button @click="goTasks(selectedTask)">返回任务调度</el-button>
+          <el-button @click="goTasks(selectedTask)">返回任务编排</el-button>
           <el-button v-if="selectedTask.latestRun" @click="goRunLogs(selectedTask)">查看完整日志</el-button>
-          <el-button v-if="selectedTask.server" @click="router.push('/servers')">查看执行节点</el-button>
+          <el-button v-if="selectedTask.server" @click="router.push('/servers')">查看服务器</el-button>
         </div>
         <el-tabs v-model="activeTab" class="detail-tabs" @tab-change="handleTabChange">
           <el-tab-pane label="概览" name="overview">
@@ -117,8 +117,8 @@
               <el-descriptions-item label="最近日志">{{ selectedTask.container.lastLogLine || '-' }}</el-descriptions-item>
             </el-descriptions>
           </el-tab-pane>
-          <el-tab-pane label="执行节点" name="server">
-            <el-empty v-if="!selectedTask.server" description="本任务最近一次执行还没有绑定执行节点" />
+          <el-tab-pane label="服务器" name="server">
+            <el-empty v-if="!selectedTask.server" description="本任务最近一次执行还没有绑定服务器" />
             <el-descriptions v-else :column="1" border>
               <el-descriptions-item label="节点名称">{{ selectedTask.server.serverName }}</el-descriptions-item>
               <el-descriptions-item label="节点状态">{{ zh(selectedTask.server.healthStatus) }} / {{ zh(selectedTask.server.capacityStatus) }}</el-descriptions-item>

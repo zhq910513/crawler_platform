@@ -21,11 +21,11 @@ class UserService:
         self.users = UserRepository(db)
         self.companies = CompanyRepository(db)
 
-    def list_users(self, current_user: SysUser) -> list[SysUser]:
+    def list_users(self, current_user: SysUser) -> list[dict]:
         require_super_admin(current_user)
-        return self.users.list_users()
+        return [self._user_payload(user) for user in self.users.list_users()]
 
-    def create_user(self, current_user: SysUser, payload: UserCreate) -> SysUser:
+    def create_user(self, current_user: SysUser, payload: UserCreate) -> dict:
         require_super_admin(current_user)
         if self.users.by_user_name(payload.user_name):
             raise AppError("用户名已存在", code=40021)
@@ -48,9 +48,9 @@ class UserService:
         self.db.flush()
         write_operation_log(self.db, current_user, None, operation_type="CREATE_USER", resource_type="user", resource_id=str(user.user_id), after_data={"userId": user.user_id, "userName": user.user_name, "companyId": user.company_id, "roleType": user.role_type, "status": user.status})
         self.db.commit()
-        return user
+        return self._user_payload(user)
 
-    def update_user(self, current_user: SysUser, user_id: int, payload: UserUpdate) -> SysUser:
+    def update_user(self, current_user: SysUser, user_id: int, payload: UserUpdate) -> dict:
         require_super_admin(current_user)
         user = self.users.get(user_id)
         if not user:
@@ -64,4 +64,22 @@ class UserService:
         after = {"userId": user.user_id, "userName": user.user_name, "companyId": user.company_id, "nickName": user.nick_name, "roleType": user.role_type, "status": user.status}
         write_operation_log(self.db, current_user, None, operation_type="UPDATE_USER", resource_type="user", resource_id=str(user.user_id), before_data=before, after_data=after)
         self.db.commit()
-        return user
+        return self._user_payload(user)
+
+    @staticmethod
+    def _user_payload(user: SysUser) -> dict:
+        return {
+            "userId": user.user_id,
+            "companyId": user.company_id,
+            "userName": user.user_name,
+            "nickName": user.nick_name,
+            "roleType": user.role_type,
+            "status": user.status,
+            "lastLoginIp": user.last_login_ip,
+            "lastLoginAt": user.last_login_at,
+            "currentSessionId": user.current_session_id,
+            "passwordUpdatedAt": user.password_updated_at,
+            "mustChangePassword": bool(user.must_change_password),
+            "createdAt": user.created_at,
+            "updatedAt": user.updated_at,
+        }

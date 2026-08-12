@@ -9,7 +9,7 @@
             <span>配置进度：{{ state.status.completedCount }} / {{ state.status.totalCount }}</span>
             <el-progress :percentage="progressPercent" :show-text="false" />
           </div>
-          <el-alert v-if="!state.status.controlPlanePublicBaseUrlConfigured" type="warning" show-icon :closable="false" title="请先配置控制端公网回调地址，远程执行节点才能正常接入。" />
+          <el-alert v-if="!state.status.controlPlanePublicBaseUrlConfigured" type="warning" show-icon :closable="false" title="请先配置控制端公网回调地址，远程服务器才能正常接入。" />
         </div>
 
         <div class="step-list">

@@ -31,7 +31,7 @@ from app.models import (
     SysUser,
 )
 from app.repositories.platform import DiscoveredProjectRepository, ProjectRepository, ProjectServerRepository, ServerRepository
-from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
+from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectPublishPipelineRequest, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
 from app.services.permissions import is_super_admin, require_company_scope, require_project_role, scoped_company_id
 from app.services.audit import write_operation_log
 from app.services.container_cleanup_service import ContainerCleanupService
@@ -138,6 +138,220 @@ class ProjectService:
             scoped = scoped_company_id(user, company_id)
             rows = self.projects.list_projects(scoped)
         return [self._project_summary(row) for row in rows if row.status != "ARCHIVED"]
+
+    def analyze_publish_pipeline(self, user: SysUser, payload: ProjectPublishPipelineRequest) -> dict:
+        return self._build_publish_pipeline(user, payload, execute=False)
+
+    def run_publish_pipeline(self, user: SysUser, payload: ProjectPublishPipelineRequest) -> dict:
+        analysis = self._build_publish_pipeline(user, payload, execute=False)
+        if not analysis["canContinue"]:
+            raise AppError("发布流水线前置检查未通过", code=40080, data=analysis)
+        target = analysis.get("target") or {}
+        project_id = target.get("projectId")
+        if not project_id and target.get("discoveredProjectId"):
+            project = self.import_project(user, ProjectImport(discovered_project_id=int(target["discoveredProjectId"]), remark="通过项目发布助手接入", dispatch_mode="LOAD_BALANCE"))
+            project_id = project.project_id
+        if not project_id:
+            raise AppError("发布流水线未找到可部署项目版本", code=40081, data=analysis)
+        deploy = self.deploy_release_to_servers(
+            user,
+            int(project_id),
+            ProjectReleaseDeploy(server_ids=payload.server_ids, reason="项目发布助手流水线发布"),
+        )
+        result = self._build_publish_pipeline(user, payload, execute=True)
+        result["deployment"] = deploy
+        result["pipelineStatus"] = "DEPLOYING"
+        for step in result["steps"]:
+            if step["key"] == "deploy":
+                step["status"] = "success"
+                step["message"] = f"已向 {len(deploy.get('targets') or [])} 台服务器下发部署指令"
+            if step["key"] == "ready":
+                step["status"] = "process"
+                step["message"] = "等待服务器拉取镜像并完成运行前自检"
+        result["targets"] = deploy.get("targets") or []
+        result["message"] = deploy.get("message") or "发布流水线已进入服务器自检阶段"
+        return result
+
+    def _build_publish_pipeline(self, user: SysUser, payload: ProjectPublishPipelineRequest, execute: bool = False) -> dict:
+        steps: list[dict] = []
+        blockers: list[dict] = []
+
+        def add_step(key: str, title: str, status_value: str, message: str, blocking: bool = False, data: dict | None = None) -> None:
+            item = {"key": key, "title": title, "status": status_value, "message": message, "blocking": blocking, "data": data or {}}
+            steps.append(item)
+            if blocking:
+                blockers.append({"step": key, "title": title, "message": message, "data": data or {}})
+
+        company = self.db.get(CrawlerCompany, payload.company_id) if payload.company_id else None
+        if not company:
+            add_step("company", "选择公司", "error", "请选择有效的项目所属公司", True)
+            return self._publish_pipeline_payload(payload, steps, blockers)
+        try:
+            require_company_scope(user, company.company_id)
+            if company.status != "ENABLED":
+                add_step("company", "选择公司", "error", "公司已停用，不能发布项目", True, {"companyId": company.company_id})
+                return self._publish_pipeline_payload(payload, steps, blockers)
+            add_step("company", "选择公司", "success", f"已选择：{company.company_name}", data={"companyId": company.company_id, "companyCode": company.company_code})
+        except AppError as exc:
+            add_step("company", "选择公司", "error", exc.message, True)
+            return self._publish_pipeline_payload(payload, steps, blockers)
+
+        selected_ids = sorted(set(int(item) for item in payload.server_ids if item))
+        if not selected_ids:
+            add_step("servers", "选择服务器", "error", "请选择至少一台当前公司下的可部署服务器", True)
+            return self._publish_pipeline_payload(payload, steps, blockers)
+        servers: list[CrawlerServer] = []
+        unavailable: list[dict] = []
+        for server_id in selected_ids:
+            server = self.db.get(CrawlerServer, server_id)
+            reason = self._server_block_reason_for_company(company.company_id, server)
+            if reason:
+                unavailable.append({"serverId": server_id, "serverName": server.server_name if server else "", "reason": reason})
+            elif server:
+                servers.append(server)
+        if unavailable:
+            add_step("servers", "选择服务器", "error", "所选服务器存在不可部署项，必须处理后才能继续", True, {"unavailableServers": unavailable})
+            return self._publish_pipeline_payload(payload, steps, blockers)
+        add_step("servers", "选择服务器", "success", f"已选择 {len(servers)} 台可部署服务器", data={"serverIds": selected_ids})
+
+        repo = (payload.repository_url or "").strip()
+        ref_name = (payload.ref_name or "main").strip()
+        if not self._is_repository_url(repo):
+            add_step("source", "确认代码仓库", "error", "Git 仓库地址必须以 https://、http:// 或 git@ 开头", True)
+            return self._publish_pipeline_payload(payload, steps, blockers)
+        if not ref_name:
+            add_step("source", "确认代码仓库", "error", "请填写分支或标签", True)
+            return self._publish_pipeline_payload(payload, steps, blockers)
+        add_step("source", "确认代码仓库", "success", f"仓库地址格式已确认，目标引用：{ref_name}", data={"repositoryUrl": repo, "refName": ref_name})
+
+        target = self._find_publish_target(company.company_id, repo)
+        if target.get("projectId"):
+            latest = self._latest_project_release(int(target["projectId"]))
+            if not latest:
+                add_step("release", "确认可发布版本", "error", "项目尚无可部署版本，请先完成平台构建中心配置或外部构建注册", True, target)
+                return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+            add_step("build", "构建镜像", "success", "已存在可部署镜像版本，本次无需重新构建", data={"releaseId": latest.release_id, "version": latest.version})
+            add_step("release", "确认可发布版本", "success", f"已确认版本 {latest.version}", data={"releaseId": latest.release_id, "imageDigest": latest.image_digest})
+            add_step("deploy", "部署服务器", "wait", "发布时将向所选服务器下发部署指令")
+            add_step("ready", "运行前自检", "wait", "等待服务器拉取镜像并完成自检")
+            return self._publish_pipeline_payload(payload, steps, blockers, target={**target, "releaseId": latest.release_id})
+
+        if target.get("discoveredProjectId"):
+            if not target.get("selectable") and not target.get("formalProjectId"):
+                add_step("release", "确认可发布版本", "error", "已登记版本当前不可接入，请到项目版本页检查项目状态", True, target)
+                return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+            add_step("build", "构建镜像", "success", "已存在外部构建登记版本，本次无需重新构建", data=target)
+            add_step("release", "确认可发布版本", "success", "可接入已登记版本并继续部署", data=target)
+            add_step("deploy", "部署服务器", "wait", "发布时会先接入项目，再向所选服务器下发部署指令")
+            add_step("ready", "运行前自检", "wait", "等待服务器拉取镜像并完成自检")
+            return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+
+        build_capability = self._platform_build_capability()
+        if not build_capability["enabled"]:
+            add_step("build", "构建镜像", "error", build_capability["message"], True, build_capability)
+            add_step("release", "确认可发布版本", "wait", "构建镜像通过后才能生成版本")
+            add_step("deploy", "部署服务器", "wait", "版本生成后才能部署服务器")
+            add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
+            return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+        add_step("build", "构建镜像", "process" if execute else "wait", "平台构建中心已配置，下一步将拉取代码并构建镜像", data=build_capability)
+        add_step("release", "确认可发布版本", "wait", "等待构建产物生成不可变版本")
+        add_step("deploy", "部署服务器", "wait", "版本生成后才能部署服务器")
+        add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
+        return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+
+    def _publish_pipeline_payload(self, payload: ProjectPublishPipelineRequest, steps: list[dict], blockers: list[dict], target: dict | None = None) -> dict:
+        return {
+            "pipelineStatus": "BLOCKED" if blockers else "READY_TO_PUBLISH",
+            "canContinue": not blockers,
+            "steps": steps,
+            "blockers": blockers,
+            "target": target or {},
+            "form": payload.model_dump(by_alias=True),
+            "message": "发布流水线前置检查通过" if not blockers else blockers[0]["message"],
+        }
+
+    def _find_publish_target(self, company_id: int, repository_url: str) -> dict:
+        normalized = self._normalized_repo(repository_url)
+        repo_name = self._repo_name(repository_url)
+        project = self.db.scalar(
+            select(CrawlerProject).where(
+                CrawlerProject.company_id == company_id,
+                CrawlerProject.status != "ARCHIVED",
+                (CrawlerProject.repository_url == repository_url) | (CrawlerProject.project_code == repo_name),
+            ).order_by(CrawlerProject.project_id.desc())
+        )
+        if not project:
+            rows = list(self.db.scalars(select(CrawlerProject).where(CrawlerProject.company_id == company_id, CrawlerProject.status != "ARCHIVED")).all())
+            project = next((row for row in rows if self._normalized_repo(row.repository_url) == normalized or row.project_code == repo_name), None)
+        if project:
+            return {"sourceType": "PROJECT", "projectId": project.project_id, "projectCode": project.project_code, "projectName": project.project_name}
+        discovered = None
+        rows = list(self.db.scalars(select(CrawlerDiscoveredProject).where(CrawlerDiscoveredProject.company_id == company_id).order_by(CrawlerDiscoveredProject.updated_at.desc())).all())
+        for row in rows:
+            if self._normalized_repo(row.repository_url) == normalized or row.project_code == repo_name or row.project_key == repo_name:
+                discovered = row
+                break
+        if discovered:
+            latest_release = self.db.scalar(select(CrawlerProjectRelease).where(CrawlerProjectRelease.discovered_project_id == discovered.discovered_project_id, CrawlerProjectRelease.release_status == "PUBLISHED", CrawlerProjectRelease.parse_status == "SUCCESS").order_by(CrawlerProjectRelease.published_at.desc(), CrawlerProjectRelease.release_id.desc()))
+            data = {"sourceType": "DISCOVERED", "discoveredProjectId": discovered.discovered_project_id, "projectCode": discovered.project_code, "projectName": discovered.project_name, "formalProjectId": discovered.formal_project_id, "releaseId": latest_release.release_id if latest_release else None, "discoveryStatus": discovered.discovery_status, "selectable": (not discovered.formal_project_id and discovered.discovery_status == "READY_TO_IMPORT")}
+            if discovered.formal_project_id:
+                data["projectId"] = discovered.formal_project_id
+            return data
+        return {"sourceType": "NONE", "repositoryUrl": repository_url, "projectCode": repo_name}
+
+    def _server_block_reason_for_company(self, company_id: int, server: CrawlerServer | None) -> str:
+        if not server or server.company_id != company_id:
+            return "服务器不存在或不属于当前公司"
+        if server.manage_status != "ENABLED":
+            return "服务器已停用"
+        if not server.agent:
+            return "服务器尚未接入"
+        if server.agent.connection_status != "ONLINE" or not server.agent.last_heartbeat_at:
+            return "服务器尚未上线"
+        if server.health_status == "OFFLINE":
+            return "服务器离线"
+        if server.health_status not in {"HEALTHY", "DEGRADED", "UNKNOWN"}:
+            return f"健康状态异常：{server.health_status}"
+        if server.capacity_status in {"FULL", "DRAINED", "EXHAUSTED"}:
+            return f"容量状态不可用：{server.capacity_status}"
+        metrics = server.metrics or {}
+        docker_status = str(metrics.get("dockerStatus") or metrics.get("docker_status") or "").upper()
+        if docker_status and docker_status not in {"OK", "READY", "UNKNOWN"}:
+            return f"容器服务异常：{docker_status}"
+        if metrics.get("dockerSockAccessible") is False or metrics.get("dockerSockPerm") is False or metrics.get("docker_sock_perm") is False:
+            return "执行权限不可用"
+        if metrics.get("projectDataRootWritable") is False or metrics.get("projectDirWritable") is False or metrics.get("project_dir_writable") is False:
+            return "工作目录不可写"
+        return ""
+
+    def _platform_build_capability(self) -> dict:
+        # 1.0.40 只做发布助手强流水线与阻断判断。平台构建执行器还未落地，
+        # 因此不能因为某些系统配置存在就放行到“构建成功/可部署”。
+        missing = ["平台构建执行器", "代码仓库读取凭据", "镜像仓库推送凭据"]
+        return {
+            "enabled": False,
+            "implemented": False,
+            "missingItems": missing,
+            "message": "平台构建中心未就绪：" + "、".join(missing) + " 尚未完成，发布流水线必须在此卡住。",
+        }
+
+
+    @staticmethod
+    def _is_repository_url(value: str) -> bool:
+        return bool(re.match(r"^(https?://[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$", (value or "").strip(), re.I))
+
+    @staticmethod
+    def _normalized_repo(value: str) -> str:
+        raw = (value or "").strip().replace("\\", "/")
+        raw = re.sub(r"\.git$", "", raw, flags=re.I)
+        raw = re.sub(r"^git@([^:]+):", r"https://\1/", raw, flags=re.I)
+        return raw.lower().rstrip("/")
+
+    @classmethod
+    def _repo_name(cls, value: str) -> str:
+        normalized = cls._normalized_repo(value)
+        name = normalized.split("/")[-1] if normalized else "crawler_project"
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "crawler_project"
 
     def import_project(self, user: SysUser, payload: ProjectImport) -> CrawlerProject:
         discovered = self.discovered.get(payload.discovered_project_id)

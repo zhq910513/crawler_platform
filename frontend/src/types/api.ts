@@ -116,6 +116,7 @@ export interface DiscoveredProject {
   projectKey: string
   projectCode: string
   projectName: string
+  repositoryUrl: string
   imageRepository: string
   latestVersion: string
   latestImageDigest: string
@@ -498,6 +499,10 @@ export interface RunDiagnosis { runId: number; failedStage: string; errorType: s
 export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number }
 export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
+
+export interface ProjectPublishPipelineRequest { companyId: number; serverIds: number[]; repositoryUrl: string; refName?: string }
+export interface ProjectPublishPipelineStep { key: string; title: string; status: 'wait' | 'process' | 'success' | 'error' | string; message: string; blocking?: boolean; data?: Record<string, unknown> }
+export interface ProjectPublishPipelineResult { pipelineStatus: string; canContinue: boolean; steps: ProjectPublishPipelineStep[]; blockers: Array<Record<string, unknown>>; target?: Record<string, unknown>; form?: Record<string, unknown>; deployment?: ProjectReleaseDeploymentResult; targets?: Array<Record<string, unknown>>; message: string }
 
 export interface SpiderProjectCicdGuide {
   provider: string

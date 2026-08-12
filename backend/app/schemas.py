@@ -371,6 +371,13 @@ class ProjectReleaseDeploy(ApiModel):
     reason: str = Field(default="", max_length=500)
 
 
+class ProjectPublishPipelineRequest(ApiModel):
+    company_id: int
+    server_ids: list[int] = Field(default_factory=list)
+    repository_url: str = Field(min_length=1, max_length=500)
+    ref_name: str = Field(default="main", min_length=1, max_length=120)
+
+
 class AgentHeartbeat(ApiModel):
     agent_instance_id: str = Field(min_length=1, max_length=100)
     agent_version: str = Field(default="", max_length=50)

@@ -2,8 +2,8 @@
   <div class="page-card platforms-page">
     <div class="toolbar platform-toolbar">
       <div>
-        <h3>采集平台</h3>
-        <p class="muted">采集平台是被采集的网站或系统，例如 Oilchem、JDL、CommerceHub。当前页面帮助确认项目任务中涉及的平台，具体账号请到“平台账号”维护。</p>
+        <h3>采集目标</h3>
+        <p class="muted">采集目标是被采集的网站或系统，例如 Oilchem、JDL、CommerceHub。当前页面帮助确认项目任务中涉及的平台，具体账号请到“账号资源”维护。</p>
       </div>
       <div>
         <el-select v-if="sessionState.user?.isSuperAdmin" v-model="companyId" filterable placeholder="选择公司" style="width: 240px" @change="load">
@@ -13,10 +13,10 @@
       </div>
     </div>
 
-    <el-alert type="info" :closable="false" show-icon title="平台信息主要由爬虫项目任务定义和平台账号状态自动汇总。本轮先用于定位与检查，后续可扩展为平台模板配置中心。" />
+    <el-alert type="info" :closable="false" show-icon title="平台信息主要由爬虫项目任务定义和账号资源状态自动汇总。本轮先用于定位与检查，后续可扩展为平台模板配置中心。" />
 
-    <el-empty v-if="!status?.counts.platformCodeCount" description="暂未发现采集平台">
-      <div class="empty-hint">请先部署爬虫项目，平台会从任务定义中识别采集平台。</div>
+    <el-empty v-if="!status?.counts.platformCodeCount" description="暂未发现采集目标">
+      <div class="empty-hint">请先部署爬虫项目，平台会从任务定义中识别采集目标。</div>
     </el-empty>
     <div v-else class="platform-summary">
       <div class="metric-card"><div class="metric-label">已识别平台</div><div class="metric-value">{{ status?.counts.platformCodeCount || 0 }}</div></div>

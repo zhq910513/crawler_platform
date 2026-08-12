@@ -1,18 +1,25 @@
 <template>
   <el-container class="layout-shell">
-    <el-aside width="248px" class="layout-aside">
+    <el-aside width="268px" class="layout-aside">
       <div class="brand-panel">
         <div class="brand-mark">爬</div>
         <div>
           <div class="brand-title">爬虫管理平台</div>
-          <div class="brand-subtitle">任务 · 节点 · 日志</div>
+          <div class="brand-subtitle">项目交付 · 运行治理</div>
         </div>
       </div>
-      <el-menu router :default-active="$route.path" class="side-menu">
-        <el-menu-item v-for="item in visibleMenus" :key="item.path" :index="item.path">
-          <el-icon><component :is="item.icon" /></el-icon>
-          <span>{{ item.title }}</span>
-        </el-menu-item>
+      <div class="quick-actions">
+        <el-button type="primary" plain @click="router.push('/project-publish')">发布项目</el-button>
+        <el-button plain @click="router.push('/servers?openOnboarding=1')">新增服务器</el-button>
+      </div>
+      <el-menu router :default-active="activePath" class="side-menu">
+        <el-sub-menu v-for="group in visibleGroups" :key="group.key" :index="group.key">
+          <template #title><span class="group-title">{{ group.title }}</span></template>
+          <el-menu-item v-for="item in group.items" :key="item.path" :index="item.path">
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.title }}</span>
+          </el-menu-item>
+        </el-sub-menu>
       </el-menu>
       <div class="version-card">
         <div class="version-label">当前版本</div>
@@ -22,8 +29,8 @@
     <el-container class="layout-main">
       <el-header class="topbar">
         <div>
-          <div class="page-title">{{ $route.meta.title }}</div>
-          <div class="page-subtitle">{{ routeSubtitle }}</div>
+          <div class="page-title">{{ currentNav?.title || $route.meta.title }}</div>
+          <div class="page-subtitle">{{ currentNav?.subtitle || routeSubtitle }}</div>
         </div>
         <div class="user-box">
           <el-tag v-if="sessionState.user?.passwordChangeRequired" type="warning" effect="light">需修改密码</el-tag>
@@ -32,10 +39,14 @@
           <el-button size="small" plain @click="logout">退出</el-button>
         </div>
       </el-header>
+      <div v-if="currentFlowItems.length > 1 && !passwordRequired" class="flow-strip">
+        <span class="flow-label">当前流程</span>
+        <el-button v-for="item in currentFlowItems" :key="item.path" size="small" :type="item.path === activePath ? 'primary' : 'default'" plain @click="router.push(item.path)">{{ item.title }}</el-button>
+      </div>
       <el-main class="content-wrap">
         <div v-if="passwordRequired" class="forced-password-panel">请先完成密码修改。完成后系统会要求重新登录，再进入业务页面。</div>
         <router-view v-else v-slot="{ Component, route }">
-          <KeepAlive :max="10">
+          <KeepAlive :max="12">
             <component :is="Component" v-if="route.meta.keepAlive" :key="route.name || route.path" />
           </KeepAlive>
           <component :is="Component" v-if="!route.meta.keepAlive" :key="route.fullPath" />
@@ -69,45 +80,18 @@ import { changeOwnPassword } from '../api/platform'
 import { apiErrorData } from '../api/client'
 import { getBackendHealth, getFrontendVersion } from '../api/health'
 import { frontendBuildVersion } from '../config/version'
+import { findNavigationItem, flowItems, visibleNavigationGroups } from '../config/navigation'
 import type { BackendHealthData, SystemVersionInfo } from '../types/api'
 import { deleteSession } from '../api/sessions'
-import { clearSession, sessionState } from '../stores/session'
-import { DataAnalysis, FolderOpened, Histogram, Key, List, Monitor, Operation, Setting, User, OfficeBuilding, Coin, Guide } from '@element-plus/icons-vue'
+import { clearSession, markPasswordChangeReloginInProgress, sessionState } from '../stores/session'
 import ConfigAssistantDrawer from '../components/ConfigAssistantDrawer.vue'
 
 const router = useRouter()
-const menus = [
-  { path: '/dashboard', title: '运行总览', adminOnly: true, icon: Histogram },
-  { path: '/running-center', title: '运行中心', adminOnly: false, icon: DataAnalysis },
-  { path: '/companies', title: '公司管理', adminOnly: true, icon: OfficeBuilding },
-  { path: '/users', title: '用户管理', adminOnly: true, icon: User },
-  { path: '/resources', title: '数据库配置', adminOnly: false, icon: Coin },
-  { path: '/servers', title: '执行节点', adminOnly: false, icon: Monitor },
-  { path: '/projects', title: '项目管理', adminOnly: false, icon: FolderOpened },
-  { path: '/tasks', title: '任务调度', adminOnly: false, icon: List },
-  { path: '/runs', title: '执行记录', adminOnly: false, icon: DataAnalysis },
-  { path: '/platforms', title: '采集平台', adminOnly: false, icon: Guide },
-  { path: '/accounts', title: '平台账号', adminOnly: false, icon: Key },
-  { path: '/operations', title: '操作日志', adminOnly: true, icon: Operation },
-  { path: '/settings', title: '系统设置', adminOnly: true, icon: Setting },
-]
-const subtitles: Record<string, string> = {
-  '/dashboard': '整体运行情况与待处理事项',
-  '/running-center': '按公司、项目、任务查看运行状态与处理建议',
-  '/companies': '公司边界与基础信息管理',
-  '/users': '用户、角色与登录安全',
-  '/resources': '公司数据库、缓存与存储资源',
-  '/servers': '执行节点健康、容量与部署状态',
-  '/projects': '项目版本、任务发现与执行节点配置',
-  '/tasks': '任务创建、账号分配、排程与手动执行',
-  '/runs': '任务执行过程、日志与失败诊断',
-  '/platforms': '被采集网站与系统的接入准备情况',
-  '/accounts': '平台账号健康、对象绑定与占用情况',
-  '/operations': '关键操作审计记录',
-  '/settings': '控制端公网回调地址、通知渠道与系统配置',
-}
-const visibleMenus = computed(() => menus.filter((item) => !item.adminOnly || sessionState.user?.isSuperAdmin))
-const routeSubtitle = computed(() => subtitles[router.currentRoute.value.path] || '爬虫项目统一交付与运行管理')
+const visibleGroups = computed(() => visibleNavigationGroups(Boolean(sessionState.user?.isSuperAdmin)))
+const activePath = computed(() => router.currentRoute.value.path)
+const currentNav = computed(() => findNavigationItem(activePath.value))
+const currentFlowItems = computed(() => flowItems(currentNav.value?.flow, Boolean(sessionState.user?.isSuperAdmin)))
+const routeSubtitle = computed(() => '爬虫项目统一交付与运行管理')
 const passwordDialogVisible = ref(false)
 const passwordSaving = ref(false)
 const passwordRequired = computed(() => Boolean(sessionState.user?.passwordChangeRequired))
@@ -153,9 +137,10 @@ async function submitPasswordChange() {
   passwordSaving.value = true
   try {
     await changeOwnPassword(passwordForm)
+    markPasswordChangeReloginInProgress()
     ElMessage.success('密码已修改，请重新登录')
     clearSession()
-    await router.push('/login')
+    await router.replace('/login')
   } catch (error) {
     const payload = apiErrorData<unknown>(error)
     const fallback = error instanceof Error ? error.message : '密码修改失败'
@@ -181,8 +166,14 @@ async function logout() {
 .brand-mark { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #3b82f6, #06b6d4); font-size: 20px; font-weight: 800; box-shadow: 0 12px 28px rgba(37, 99, 235, 0.3); }
 .brand-title { font-size: 18px; font-weight: 800; letter-spacing: 0.5px; }
 .brand-subtitle { margin-top: 3px; color: #94a3b8; font-size: 12px; }
-.side-menu { flex: 1; padding: 8px 10px; border-right: none; background: transparent; }
-.side-menu :deep(.el-menu-item) { height: 44px; margin: 4px 0; border-radius: 12px; color: #cbd5e1; font-size: 14px; }
+.quick-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 14px 10px; }
+.quick-actions .el-button { width: 100%; margin: 0; }
+.side-menu { flex: 1; padding: 8px 10px; border-right: none; background: transparent; overflow-y: auto; }
+.side-menu :deep(.el-sub-menu__title) { height: 38px; padding: 0 12px !important; color: #94a3b8; border-radius: 10px; }
+.side-menu :deep(.el-sub-menu__title:hover) { background: rgba(59, 130, 246, 0.1); color: #e2e8f0; }
+.group-title { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
+.side-menu :deep(.el-menu) { background: transparent; }
+.side-menu :deep(.el-menu-item) { height: 42px; margin: 4px 0; border-radius: 12px; color: #cbd5e1; font-size: 14px; }
 .side-menu :deep(.el-menu-item .el-icon) { margin-right: 12px; font-size: 17px; }
 .side-menu :deep(.el-menu-item:hover) { background: rgba(59, 130, 246, 0.13); color: #fff; }
 .side-menu :deep(.el-menu-item.is-active) { background: linear-gradient(135deg, #2563eb, #0ea5e9); color: #fff; box-shadow: 0 12px 28px rgba(37, 99, 235, 0.28); }
@@ -193,11 +184,13 @@ async function logout() {
 .topbar { display: flex; align-items: center; justify-content: space-between; height: 72px; padding: 0 28px; border-bottom: 1px solid #e6ebf2; background: rgba(255, 255, 255, 0.88); backdrop-filter: blur(10px); }
 .page-title { color: #111827; font-size: 20px; font-weight: 800; }
 .page-subtitle { margin-top: 4px; color: #7b8798; font-size: 12px; font-weight: 400; }
+.flow-strip { display: flex; align-items: center; gap: 8px; padding: 10px 28px; border-bottom: 1px solid #e6ebf2; background: #fff; }
+.flow-label { margin-right: 4px; color: #64748b; font-size: 12px; font-weight: 700; }
 .user-box { display: flex; gap: 12px; align-items: center; color: #334155; }
 .user-name { font-weight: 600; }
 .password-alert { margin-bottom: 14px; }
 .password-help { margin-top: -4px; color: #64748b; font-size: 12px; line-height: 1.6; }
 .content-wrap { padding: 22px 24px 28px; }
 .forced-password-panel { display: flex; align-items: center; justify-content: center; min-height: 360px; border: 1px dashed #f59e0b; border-radius: 16px; background: #fffbeb; color: #92400e; font-weight: 700; }
-@media (max-width: 980px) { .layout-aside { width: 216px !important; } .topbar { padding: 0 18px; } .content-wrap { padding: 16px; } }
+@media (max-width: 980px) { .layout-aside { width: 226px !important; } .topbar { padding: 0 18px; } .content-wrap { padding: 16px; } .quick-actions { grid-template-columns: 1fr; } }
 </style>

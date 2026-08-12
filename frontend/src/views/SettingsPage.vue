@@ -5,7 +5,7 @@
       <el-form label-position="top" class="base-form">
         <el-form-item label="控制端公网回调地址">
           <el-input v-model="baseForm.controlPlanePublicBaseUrl" placeholder="例如：http://公网IP:8080 或 https://crawler.example.com" />
-          <div class="field-hint">代码构建流程和外部执行节点访问控制端服务时使用。通常就是你当前打开平台的公网 IP + 端口或域名。</div>
+          <div class="field-hint">代码构建流程和外部服务器访问控制端服务时使用。通常就是你当前打开平台的公网 IP + 端口或域名。</div>
         </el-form-item>
         <div class="base-status"><el-tag :type="settings?.controlPlanePublicBaseUrlConfigured ? 'success' : 'warning'" effect="light">{{ settings?.controlPlanePublicBaseUrlConfigured ? '已配置' : '未配置' }}</el-tag><span class="muted">来源：{{ settings?.controlPlanePublicBaseUrlSource || '-' }}</span></div>
         <el-alert v-if="settings?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="settings.controlPlanePublicBaseUrlWarnings.join('；')" />

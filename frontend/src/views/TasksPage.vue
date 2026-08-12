@@ -184,7 +184,7 @@
       <template #footer><el-button @click="editVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button></template>
     </el-drawer>
 
-    <el-dialog v-model="scheduleVisible" title="修改任务调度" width="860px">
+    <el-dialog v-model="scheduleVisible" title="修改任务编排" width="860px">
       <el-form label-position="top" class="schedule-form">
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="调度状态"><el-select v-model="scheduleForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
@@ -219,11 +219,11 @@
       <template #footer><el-button @click="scheduleVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveSchedule">保存调度</el-button></template>
     </el-dialog>
 
-    <el-drawer v-model="detailVisible" title="任务调度详情" size="620px">
+    <el-drawer v-model="detailVisible" title="任务编排详情" size="620px">
       <el-descriptions v-if="detailRow" :column="1" border>
         <el-descriptions-item label="公司 / 项目">{{ detailRow.companyName }} / {{ detailRow.projectName }}</el-descriptions-item>
         <el-descriptions-item label="任务">{{ detailRow.taskName }}</el-descriptions-item>
-        <el-descriptions-item label="执行节点">{{ detailRow.serverName || '-' }} {{ detailRow.serverIp || '' }}</el-descriptions-item>
+        <el-descriptions-item label="服务器">{{ detailRow.serverName || '-' }} {{ detailRow.serverIp || '' }}</el-descriptions-item>
         <el-descriptions-item label="负责人">{{ detailRow.ownerUserName || '-' }}</el-descriptions-item>
         <el-descriptions-item label="调度">{{ scheduleText(detailRow) }}</el-descriptions-item>
         <el-descriptions-item label="时区">{{ detailRow.scheduleTimezone || '-' }}</el-descriptions-item>

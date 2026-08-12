@@ -2,18 +2,18 @@
   <div class="page-card servers-page">
     <div class="toolbar hero-toolbar">
       <div>
-        <h3>执行节点</h3>
-        <p class="muted">接入服务器后，平台会在这些节点上运行爬虫任务。</p>
+        <h3>服务器</h3>
+        <p class="muted">接入服务器后，平台会在这些服务器上运行爬虫任务。</p>
       </div>
       <div>
-        <el-button type="primary" @click="openOnboarding">接入执行节点</el-button>
+        <el-button type="primary" @click="openOnboarding">接入服务器</el-button>
         <el-button v-if="sessionState.user?.isSuperAdmin" @click="dialogVisible = true">手工新增</el-button>
         <el-button @click="load">刷新</el-button>
       </div>
     </div>
 
     <el-table :data="rows" stripe>
-      <el-table-column label="执行节点" min-width="220">
+      <el-table-column label="服务器" min-width="220">
         <template #default="s">
           <div class="server-name">{{ s.row.serverName }}</div>
           <div class="muted">{{ s.row.serverIp || '-' }}</div>
@@ -48,11 +48,11 @@
       <el-table-column label="最近异常" min-width="220"><template #default="s">{{ s.row.metrics?.lastError || '-' }}</template></el-table-column>
     </el-table>
 
-    <el-dialog v-model="onboardingVisible" title="接入执行节点" width="860px" class="onboarding-dialog">
+    <el-dialog v-model="onboardingVisible" title="接入服务器" width="860px" class="onboarding-dialog">
       <el-steps :active="joinResult ? 2 : 1" simple class="wizard-steps">
         <el-step title="填写服务器信息" />
         <el-step title="复制命令执行" />
-        <el-step title="等待节点上线" />
+        <el-step title="等待服务器上线" />
       </el-steps>
 
       <el-alert class="guide-alert" type="info" :closable="false" show-icon title="接入凭证会由系统自动生成并写入安装命令，不需要单独复制。" />
@@ -67,7 +67,7 @@
           <el-col :span="12"><el-form-item label="最大并发"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="控制端公网回调地址">
-          <el-input v-model="joinForm.controlPlaneUrl" placeholder="请输入执行节点可以访问的控制端地址，例如：http://10.1.0.13:8080" />
+          <el-input v-model="joinForm.controlPlaneUrl" placeholder="请输入服务器可以访问的控制端地址，例如：http://10.1.0.13:8080" />
           <div class="field-hint">远程服务器不能使用本机地址；请填写目标服务器能访问到的内网地址、外网地址或域名。</div>
         </el-form-item>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
@@ -75,7 +75,7 @@
           <el-collapse-item title="高级设置" name="advanced">
             <el-row :gutter="16">
               <el-col :span="12"><el-form-item label="服务器编号"><el-input v-model="joinForm.serverCode" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="执行器编号"><el-input v-model="joinForm.agentCode" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="执行服务编号"><el-input v-model="joinForm.agentCode" /></el-form-item></el-col>
             </el-row>
           </el-collapse-item>
         </el-collapse>
@@ -96,7 +96,7 @@
           <pre>{{ joinResult.connectivityCommand }}</pre>
         </div>
         <div class="command-block">
-          <div class="command-title"><span>第二步：安装并接入执行节点</span><el-button size="small" type="primary" @click="copyText(joinResult.installCommand)">复制</el-button></div>
+          <div class="command-title"><span>第二步：安装并接入服务器</span><el-button size="small" type="primary" @click="copyText(joinResult.installCommand)">复制</el-button></div>
           <pre>{{ joinResult.installCommand }}</pre>
         </div>
       </div>
@@ -107,11 +107,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="dialogVisible" title="新增执行节点" width="520px">
+    <el-dialog v-model="dialogVisible" title="新增服务器" width="520px">
       <el-form label-position="top">
         <el-form-item label="公司"><el-select v-if="sessionState.user?.isSuperAdmin" v-model="form.companyId"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select><el-input v-else :model-value="currentCompanyName" disabled /></el-form-item>
-        <el-form-item label="节点标识"><el-input v-model="form.serverCode" /></el-form-item>
-        <el-form-item label="节点名称"><el-input v-model="form.serverName" /></el-form-item>
+        <el-form-item label="服务器标识"><el-input v-model="form.serverCode" /></el-form-item>
+        <el-form-item label="服务器名称"><el-input v-model="form.serverName" /></el-form-item>
         <el-form-item label="服务器地址"><el-input v-model="form.serverIp" /></el-form-item>
         <el-form-item label="最大并发"><el-input-number v-model="form.maxContainerSlots" :min="1" /></el-form-item>
       </el-form>
@@ -148,7 +148,7 @@ async function loadSystemSettings() { const data = await getSystemSettings().cat
 function currentOrigin() { return configuredControlPlaneUrl.value || window.location.origin }
 function slug(value: string) { return (value || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server' }
 const addressWarning = computed(() => {
-  if (!joinForm.controlPlaneUrl) return '请填写执行节点可以访问的控制端公网回调地址。'
+  if (!joinForm.controlPlaneUrl) return '请填写服务器可以访问的控制端公网回调地址。'
   try { new URL(joinForm.controlPlaneUrl) } catch { return '控制端公网回调地址格式不正确。' }
   if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(joinForm.controlPlaneUrl)) return '远程服务器不能使用本机地址，请填写内网地址、外网地址或域名。'
   return ''

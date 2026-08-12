@@ -588,7 +588,7 @@ def test_128_frontend_forced_password_change_contract() -> None:
     assert 'passwordError' in source
     assert 'passwordFormProblem' in source
     assert '<router-view v-else v-slot=' in source
-    assert '<KeepAlive :max="10">' in source
+    assert '<KeepAlive :max="12">' in source
     assert ':close-on-press-escape="!passwordRequired"' in source
     assert '新密码至少 8 位' in source
 
@@ -617,6 +617,48 @@ def test_137_frontend_navigation_switch_performance_contract() -> None:
     assert 'onActivated' in runs_source
     assert 'lastRouteKey' in runs_source
 
+
+
+def test_138_frontend_commercial_navigation_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    nav_source = (root / 'frontend' / 'src' / 'config' / 'navigation.ts').read_text(encoding='utf-8')
+    layout_source = (root / 'frontend' / 'src' / 'layouts' / 'MainLayout.vue').read_text(encoding='utf-8')
+    router_source = (root / 'frontend' / 'src' / 'router.ts').read_text(encoding='utf-8')
+    assert '经营驾驶舱' in nav_source
+    assert '项目交付' in nav_source
+    assert '资源准备' in nav_source
+    assert '系统治理' in nav_source
+    assert '/project-publish' in nav_source
+    assert '当前流程' in layout_source
+    assert 'flowItems' in layout_source
+    assert '发布项目' in layout_source
+    assert '新增服务器' in layout_source
+    assert 'el-sub-menu' in layout_source
+    assert "path: 'project-publish'" in router_source
+    assert '项目发布' in router_source
+
+
+def test_138_frontend_project_publish_flow_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    page = (root / 'frontend' / 'src' / 'views' / 'ProjectPublishPage.vue').read_text(encoding='utf-8')
+    assert '选择公司、选择一台或多台服务器、填写代码仓库地址后发布' in page
+    assert '所属公司' in page
+    assert '部署服务器' in page
+    assert 'Git 仓库地址' in page
+    assert '新增公司' in page
+    assert '新增服务器' in page
+    assert 'multiple' in page
+    assert 'serverDeployable' in page
+    assert 'createAgentJoinToken' in page
+    assert 'analyzeProjectPublishPipeline' in page
+    assert 'runProjectPublishPipeline' in page
+    assert '发布助手流水线' in page
+    assert '不能跳过继续' in page
+    assert 'pendingJoinServerCode' in page
+    assert '服务器已上线并自动选中' in page
+    assert 'apiErrorData' in page
+    assert 'GitHub Secret' not in page
+    assert 'CRAWLER_DISCOVERY_TOKEN' not in page
 
 def test_102_frontend_run_log_routes_match_backend_contract() -> None:
     root = Path(__file__).resolve().parents[2]
@@ -1236,3 +1278,106 @@ def test_company_page_can_generate_one_time_discovery_secret() -> None:
     assert '只显示这一次' in page
     assert 'CRAWLER_DISCOVERY_TOKEN' in page
     assert 'CRAWLER_PLATFORM_DISCOVERY_TOKEN' not in page
+
+
+def test_139_project_publish_pipeline_blocks_without_build_center_or_registered_release() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'pipe_block', 'companyName': '流水线阻断公司'}).json()['data']
+    server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'pipe-block-srv', 'serverName': '流水线服务器'}).json()['data']
+    agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'pipe-block-srv', 'serverName': '流水线服务器', 'agentCode': 'pipe-block-agent', 'agentName': '流水线Agent'}).json()['data']
+    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'pipe-block-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0})
+
+    payload = {'companyId': company['companyId'], 'serverIds': [server['serverId']], 'repositoryUrl': 'https://github.com/zhq910513/not_registered_spider.git', 'refName': 'main'}
+    analysis = client.post('/api/v1/project-publish/pipeline-analyses', headers=headers, json=payload).json()['data']
+    assert analysis['pipelineStatus'] == 'BLOCKED'
+    assert analysis['canContinue'] is False
+    assert analysis['blockers']
+    assert analysis['blockers'][0]['step'] == 'build'
+    assert '平台构建中心未就绪' in analysis['message']
+
+    run = client.post('/api/v1/project-publish/pipelines', headers=headers, json=payload)
+    assert run.status_code == 400
+    assert run.json()['data']['canContinue'] is False
+
+
+def test_139_project_publish_pipeline_deploys_registered_release() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, meta = create_flow(client, headers, 'pipe_ready', ['pipe-ready-srv'])
+    from app.db import SessionLocal
+    from app.models import CrawlerDiscoveredProject, CrawlerProject, CrawlerServer
+    repo_url = 'https://github.com/zhq910513/pipe-ready.git'
+    with SessionLocal() as db:
+        server = db.query(CrawlerServer).filter(CrawlerServer.server_code == 'pipe-ready-srv').first()
+        server_id = server.server_id
+        project_row = db.get(CrawlerProject, project['projectId'])
+        project_row.repository_url = repo_url
+        discovered_row = db.get(CrawlerDiscoveredProject, project_row.discovered_project_id)
+        discovered_row.repository_url = repo_url
+        db.commit()
+    client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={'agentInstanceId': 'pipe-ready-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0})
+
+    payload = {'companyId': company['companyId'], 'serverIds': [server_id], 'repositoryUrl': repo_url, 'refName': 'main'}
+    analysis = client.post('/api/v1/project-publish/pipeline-analyses', headers=headers, json=payload).json()['data']
+    assert analysis['canContinue'] is True
+    assert [item['key'] for item in analysis['steps']] == ['company', 'servers', 'source', 'build', 'release', 'deploy', 'ready']
+
+    result = client.post('/api/v1/project-publish/pipelines', headers=headers, json=payload).json()['data']
+    assert result['pipelineStatus'] == 'DEPLOYING'
+    assert result['deployment']['projectId'] == project['projectId']
+    assert result['targets'][0]['serverId'] == server_id
+
+
+def test_140_normal_user_first_password_change_relogin_full_contract() -> None:
+    migrate()
+    client = TestClient(app)
+    _, admin_headers = login(client)
+    company = client.post('/api/v1/companies', headers=admin_headers, json={'companyCode': 'pwdflow140', 'companyName': '登录链路公司'}).json()['data']
+    created = client.post('/api/v1/users', headers=admin_headers, json={'companyId': company['companyId'], 'userName': 'normal_pwd_flow_140', 'nickName': '登录链路用户', 'password': 'Normal@123456', 'roleType': 'NORMAL_USER'}).json()['data']
+    assert created['mustChangePassword'] is True
+    assert 'passwordHash' not in created
+    assert 'password_hash' not in created
+
+    first_login = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_flow_140', 'password': 'Normal@123456'}).json()['data']
+    assert first_login['passwordChangeRequired'] is True
+    assert first_login['user']['passwordChangeRequired'] is True
+    headers = {'Authorization': 'Bearer ' + first_login['accessToken']}
+
+    business_blocked = client.get('/api/v1/projects', headers=headers).json()
+    assert business_blocked['code'] == 40320
+
+    changed = client.patch('/api/v1/users/me/password', headers=headers, json={'oldPassword': 'Normal@123456', 'newPassword': 'Normal@246810', 'confirmPassword': 'Normal@246810'}).json()
+    assert changed['code'] == 200
+    assert changed['data']['reloginRequired'] is True
+    assert client.get('/api/v1/projects', headers=headers).status_code == 401
+
+    old_password_login = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_flow_140', 'password': 'Normal@123456'}).json()
+    assert old_password_login['code'] == 40130
+    second_login = client.post('/api/v1/sessions', json={'userName': 'normal_pwd_flow_140', 'password': 'Normal@246810'}).json()['data']
+    assert second_login['passwordChangeRequired'] is False
+    assert second_login['user']['passwordChangeRequired'] is False
+    second_headers = {'Authorization': 'Bearer ' + second_login['accessToken']}
+    assert client.get('/api/v1/projects', headers=second_headers).json()['code'] == 200
+
+    users = client.get('/api/v1/users', headers=admin_headers).json()['data']
+    assert all('passwordHash' not in item and 'password_hash' not in item for item in users)
+
+
+def test_140_frontend_password_relogin_contract() -> None:
+    root = Path(__file__).resolve().parents[2]
+    session_source = (root / 'frontend' / 'src' / 'stores' / 'session.ts').read_text(encoding='utf-8')
+    client_source = (root / 'frontend' / 'src' / 'api' / 'client.ts').read_text(encoding='utf-8')
+    layout_source = (root / 'frontend' / 'src' / 'layouts' / 'MainLayout.vue').read_text(encoding='utf-8')
+    login_source = (root / 'frontend' / 'src' / 'views' / 'LoginPage.vue').read_text(encoding='utf-8')
+    user_service_source = (root / 'backend' / 'app' / 'services' / 'user_service.py').read_text(encoding='utf-8')
+
+    assert 'passwordChangeReloginInProgress' in session_source
+    assert 'markPasswordChangeReloginInProgress' in layout_source
+    assert "payload?.code === 40104" in client_source
+    assert "message.includes('密码已修改')" in client_source
+    assert "router.replace('/login')" in layout_source
+    assert "router.replace(data.user.isSuperAdmin ? '/dashboard' : '/project-publish')" in login_source
+    assert 'password_hash' not in user_service_source.split('def _user_payload', 1)[1]

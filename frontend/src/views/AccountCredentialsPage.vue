@@ -10,7 +10,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span class="card-title">平台账号</span>
+          <span class="card-title">账号资源</span>
           <div class="card-actions"><el-button type="primary" @click="openReportDialog">登记状态</el-button></div>
         </div>
       </template>
@@ -58,7 +58,7 @@
         <el-table-column label="账号" min-width="170" show-overflow-tooltip><template #default="s"><span class="identifier-text">{{ s.row.credentialKey || '-' }}</span></template></el-table-column>
         <el-table-column label="用途" width="120"><template #default="s">{{ slotName(s.row.slot) }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="s"><el-tag :type="leaseTag(s.row.leaseStatus)" effect="light">{{ zh(s.row.leaseStatus) }}</el-tag></template></el-table-column>
-        <el-table-column label="执行节点" width="140"><template #default="s">{{ s.row.agentCode || '-' }}</template></el-table-column>
+        <el-table-column label="服务器" width="140"><template #default="s">{{ s.row.agentCode || '-' }}</template></el-table-column>
         <el-table-column label="执行编号" width="110"><template #default="s">{{ s.row.runId || '-' }}</template></el-table-column>
         <el-table-column label="占用至" width="170"><template #default="s">{{ formatTime(s.row.leaseUntil) }}</template></el-table-column>
         <el-table-column label="释放原因" min-width="160" show-overflow-tooltip><template #default="s">{{ s.row.releaseReason || '-' }}</template></el-table-column>
@@ -71,7 +71,7 @@
         <el-table-column label="来源" width="110"><template #default="s">{{ sourceText(s.row.source) }}</template></el-table-column>
         <el-table-column label="结果" width="150"><template #default="s">{{ statusCodeText(s.row.statusCode) }}</template></el-table-column>
         <el-table-column label="级别" width="100"><template #default="s">{{ zh(s.row.severity) }}</template></el-table-column>
-        <el-table-column label="执行节点" width="140"><template #default="s">{{ s.row.agentCode || '-' }}</template></el-table-column>
+        <el-table-column label="服务器" width="140"><template #default="s">{{ s.row.agentCode || '-' }}</template></el-table-column>
         <el-table-column label="说明" min-width="260" show-overflow-tooltip><template #default="s">{{ s.row.messageSanitized || '-' }}</template></el-table-column>
       </el-table>
     </el-dialog>

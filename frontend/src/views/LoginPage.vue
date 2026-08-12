@@ -28,7 +28,7 @@ async function submit() {
   try {
     const data = await createSession(form)
     setSession(data.accessToken, data.sessionId, data.user)
-    await router.push(data.user.isSuperAdmin ? '/dashboard' : '/projects')
+    await router.replace(data.user.isSuperAdmin ? '/dashboard' : '/project-publish')
   } catch (error) {
     const payload = apiErrorData<LoginConflictData>(error)
     if (payload?.code === 40901 && payload.data?.forceLoginToken) {
