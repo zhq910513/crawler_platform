@@ -39,22 +39,22 @@ class RoutingService:
         candidates = self._resolve_candidates(task, project)
         if not candidates:
             run.server_id = None
-            set_routing_status(run, "WAITING_RESOURCE", reason="暂无可用执行服务器或镜像未就绪")
+            set_routing_status(run, "WAITING_RESOURCE", reason="暂无可用执行节点或镜像未就绪")
             return run
         available = self._score_candidates(candidates)
         if not available:
             run.server_id = None
-            set_routing_status(run, "WAITING_RESOURCE", reason="候选服务器槽位已满或资源不足")
+            set_routing_status(run, "WAITING_RESOURCE", reason="候选执行节点资源不足")
             return run
         candidate = available[0][1]
         run.server_id = candidate.server.server_id
         if candidate.project_server and candidate.project_server.image_readiness_status in {"OUTDATED", "WARMING"}:
             candidate.project_server.image_readiness_status = "WARMING"
-            set_routing_status(run, "WARMING_IMAGE", reason=f"已通过{candidate.layer}选中服务器，Agent 将按 digest 预热镜像")
+            set_routing_status(run, "WARMING_IMAGE", reason=f"已通过{candidate.layer}选中执行节点，节点服务将按 digest 预热镜像")
             # 当前 Agent 在领取时会先精确拉取 digest，因此可立即转为可领取状态。
-            set_routing_status(run, "ROUTED", reason=f"已通过{candidate.layer}路由到可用执行服务器，镜像将在运行前校验")
+            set_routing_status(run, "ROUTED", reason=f"已通过{candidate.layer}分配到可用执行节点，镜像将在运行前校验")
         else:
-            set_routing_status(run, "ROUTED", reason=f"已通过{candidate.layer}路由到可用执行服务器")
+            set_routing_status(run, "ROUTED", reason=f"已通过{candidate.layer}分配到可用执行节点")
         return run
 
     def reroute_or_wait_unclaimed(self, commit: bool = True) -> int:
@@ -70,7 +70,7 @@ class RoutingService:
                 continue
             if run.routing_status == "ROUTED":
                 run.server_id = None
-                set_routing_status(run, "PENDING", reason="目标服务器不可用，重新路由")
+                set_routing_status(run, "PENDING", reason="目标节点不可用，重新分配")
             self.route_run(run)
             count += 1
         if commit:
@@ -92,7 +92,7 @@ class RoutingService:
 
     def _runtime_policy_block_reason(self, run: CrawlerTaskRun, task: CrawlerTask) -> str:
         active_statuses = ["QUEUED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"]
-        # 任务级并发：包括已路由和运行中的同一任务实例，排除当前 run。
+        # 任务级并发：包括已分配和运行中的同一任务实例，排除当前 run。
         task_active = self.db.scalar(select(func.count(CrawlerTaskRun.run_id)).where(
             CrawlerTaskRun.task_id == task.task_id,
             CrawlerTaskRun.run_id != run.run_id,
@@ -142,14 +142,14 @@ class RoutingService:
     def _resolve_candidates(self, task: CrawlerTask, project: CrawlerProject) -> list[Candidate]:
         target_ids = list(self.db.scalars(select(CrawlerTaskServerTarget.server_id).where(CrawlerTaskServerTarget.task_id == task.task_id, CrawlerTaskServerTarget.enabled.is_(True))).all())
         if target_ids:
-            candidates = self._project_pool_candidates(task, project, layer="任务指定服务器池", server_ids=set(target_ids), include_candidate=True)
+            candidates = self._project_pool_candidates(task, project, layer="任务指定节点", server_ids=set(target_ids), include_candidate=True)
             if candidates:
                 return candidates
-        candidates = self._project_pool_candidates(task, project, layer="项目执行服务器池", enabled_only=True)
+        candidates = self._project_pool_candidates(task, project, layer="项目执行节点范围", enabled_only=True)
         if candidates:
             return candidates
         if project.allow_deployed_fallback:
-            candidates = self._project_pool_candidates(task, project, layer="项目已部署服务器兜底", include_candidate=True, allow_paused=False)
+            candidates = self._project_pool_candidates(task, project, layer="项目已部署节点兜底", include_candidate=True, allow_paused=False)
             if candidates:
                 return candidates
         if project.allow_company_pool_fallback:
@@ -188,7 +188,7 @@ class RoutingService:
     def _company_pool_candidates(self, task: CrawlerTask, company_id: int) -> list[Candidate]:
         stmt = select(CrawlerServer).join(CrawlerAgent, CrawlerAgent.server_id == CrawlerServer.server_id).where(CrawlerServer.company_id == company_id, CrawlerServer.manage_status == "ENABLED", CrawlerServer.health_status.in_(["HEALTHY", "DEGRADED"]), CrawlerServer.capacity_status.in_(["NORMAL", "PRESSURE"]), CrawlerAgent.connection_status == "ONLINE")
         rows = [s for s in self.db.scalars(stmt).all() if self._capabilities_match(s.agent.capabilities if s.agent else {}, task.required_capabilities or {})]
-        return [Candidate(server=s, project_server=None, layer="公司 Agent 池兜底", priority=10000, weight=10, max_concurrency=s.max_container_slots) for s in rows]
+        return [Candidate(server=s, project_server=None, layer="公司执行节点兜底", priority=10000, weight=10, max_concurrency=s.max_container_slots) for s in rows]
 
     def _score_candidates(self, candidates: list[Candidate]) -> list[tuple[int, Candidate]]:
         scored: list[tuple[int, Candidate]] = []

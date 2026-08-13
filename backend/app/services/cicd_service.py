@@ -57,8 +57,8 @@ class CicdGuideService:
                 "GitHub/GitLab 仓库不再配置控制端链接；初始化脚本会把控制端公网回调地址写入 workflow。",
                 "个人 GitHub 账号下混放不同公司项目时，不要把 companyId 配成个人账号全局变量；项目归属写进 crawler_project.json.companyCode。",
                 "CRAWLER_DISCOVERY_TOKEN 是公司级凭证；当前数据库没有全局多公司 discovery token，不能用 A 公司 token 注册 B 公司项目。",
-                "同一公司部署多台服务器不影响 Git 配置；CI 只构建并注册一个 digest，控制台一键部署时选择多台服务器，多个执行节点各自拉同一个 digest。",
-                "执行服务器不拉 Git、不构建镜像，只拉取控制端登记的 imageRepository@sha256:digest。",
+                "同一公司部署多个执行节点不影响 Git 配置；CI 只构建并注册一个 digest，控制台一键部署时选择多个节点，多个执行节点各自拉同一个 digest。",
+                "执行节点不拉 Git、不构建镜像，只拉取控制端登记的 imageRepository@sha256:digest。",
             ],
         }
 

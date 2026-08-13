@@ -29,9 +29,9 @@ export const navigationGroups: NavigationGroup[] = [
     title: '项目交付',
     items: [
       { path: '/companies', title: '公司管理', subtitle: '公司边界与基础信息管理', adminOnly: true, icon: OfficeBuilding, flow: 'delivery' },
-      { path: '/servers', title: '服务器管理', subtitle: '服务器接入、健康、容量与部署状态', icon: Monitor, flow: 'delivery' },
-      { path: '/project-publish', title: '项目发布', subtitle: '选择公司、服务器和代码仓库后发布爬虫项目', icon: UploadFilled, flow: 'delivery' },
-      { path: '/projects', title: '项目版本', subtitle: '已发布项目、版本和服务器部署结果', icon: FolderOpened, flow: 'delivery' },
+      { path: '/servers', title: '执行节点', subtitle: '节点接入、运行状态、资源与异常诊断', icon: Monitor, flow: 'delivery' },
+      { path: '/project-publish', title: '项目发布', subtitle: '选择公司、部署节点和代码仓库后发布爬虫项目', icon: UploadFilled, flow: 'delivery' },
+      { path: '/projects', title: '项目版本', subtitle: '已发布项目、版本和节点部署结果', icon: FolderOpened, flow: 'delivery' },
       { path: '/tasks', title: '任务编排', subtitle: '任务创建、账号分配、排程与手动执行', icon: List, flow: 'delivery' },
       { path: '/runs', title: '执行记录', subtitle: '任务执行过程、日志与失败诊断', icon: DataAnalysis, flow: 'delivery' },
     ],

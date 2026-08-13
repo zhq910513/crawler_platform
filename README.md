@@ -1,6 +1,6 @@
 # 爬虫管理平台
 
-本版本按冻结方案从零重建：平台数据库是唯一调度事实来源，`sch.py` 只作为项目任务清单声明来源；项目通过执行服务器池调度，Agent 仅负责资源上报、精确镜像 digest 校验、容器执行、租约心跳和结果回传。
+本版本按冻结方案从零重建：平台数据库是唯一调度事实来源，`sch.py` 只作为项目任务清单声明来源；项目通过执行节点范围分配运行，Agent 仅负责资源上报、精确镜像 digest 校验、容器执行、租约心跳和结果回传。
 
 ## 核心变化
 
@@ -11,8 +11,8 @@
 - 所有账号只允许单会话，十分钟内有有效操作视为在线，新登录需确认强制登录。
 - 项目接入改为公司级发现凭证 → 待接入项目 → 正式项目。
 - `sch.py` 只解析任务目录，正式任务必须由前端从任务定义中创建。
-- 项目使用多服务器执行池，支持主备和负载均衡；同一任务多机运行预留为任务层分片能力。
-- 调度先创建运行实例，再动态路由服务器；无资源时进入等待资源，不丢 Cron 触发。
+- 项目支持多执行节点运行范围，支持主备和负载均衡；同一任务多机运行预留为任务层分片能力。
+- 任务计划先创建运行实例，再动态分配执行节点；无资源时进入等待资源，不丢 Cron 触发。
 - 告警通知先预留飞书、企业微信、钉钉、邮箱基础配置，只有 P0 才外发。
 
 ## 上线检查命令
@@ -43,7 +43,7 @@
 
 查看前端日志：`docker compose logs --tail=200 web`
 
-后台健康检查：`curl -fsS http://127.0.0.1:8080/health`
+后台健康检查：`curl -fsS http://127.0.0.1/health`
 
 
 ## 宿主机兼容策略
@@ -62,7 +62,7 @@
 - 项目接入凭证：`POST /api/v1/companies/{companyId}/discovery-tokens`
 - 待接入项目：`GET/POST /api/v1/discovered-projects`
 - 正式项目：`GET/POST /api/v1/projects`
-- 项目执行服务器池：`GET/PUT /api/v1/projects/{projectId}/servers`
+- 项目执行节点范围：`GET/PUT /api/v1/projects/{projectId}/servers`
 - 任务定义：`GET /api/v1/projects/{projectId}/task-definitions`
 - 正式任务：`GET/POST /api/v1/tasks`
 - 执行记录：`GET/POST /api/v1/runs`
@@ -123,7 +123,7 @@
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.17`） > 最新 commit message 中的版本号（如 `上线前最高规格自检修复v1.0.17`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.46`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.46`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -142,10 +142,10 @@
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
 
-## 1.0.17 Agent 镜像更新不中断补充
+## 1.0.46 Agent 镜像更新不中断补充
 
 CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。
 
-## 1.0.17 账号状态上报规范
+## 1.0.46 账号状态上报规范
 
-1.0.17 新增账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。
+1.0.46 新增账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。

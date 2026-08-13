@@ -58,7 +58,7 @@ if [ "$avail_kb" -ge 10485760 ]; then ok "当前目录剩余磁盘 >= 10GB"; els
 inode_pct="$(df -Pi . | awk 'NR==2 {gsub(/%/,"",$5); print $5+0}')"
 if [ "$inode_pct" -lt 90 ]; then ok "inode 使用率 < 90%"; else warn "inode 使用率过高：${inode_pct}%；不阻断预检，但后续写文件可能失败。"; fi
 
-ports="${WEB_PORT:-8080} 3306 6379 5000"
+ports="${WEB_PORT:-80} 3306 6379 5000"
 for p in $ports; do
   if command -v ss >/dev/null 2>&1; then
     if ss -lnt 2>/dev/null | awk '{print $4}' | grep -q ":$p$"; then warn "端口 $p 已被监听；若非当前平台容器，可能冲突。"; else ok "端口 $p 当前未被宿主直接占用"; fi

@@ -6,7 +6,7 @@
 
 数据库迁移：
 
-- `0002_observability.py`：新增密码字段、运行日志字段、运行事件表、日志分片表。
+- `0002_observability.py`：新增密码字段、运行日志字段、运行事件表、日志分段表。
 - `0003_schedule_cron_len.py`：将 `crawler_task_schedule.cron_expression` 扩展到 1000 字符，用于保存业务多时间点组合表达式。
 
 ## 升级前检查
@@ -27,7 +27,7 @@
 - admin 用户仍可登录。
 - 已有公司、Agent、项目、任务和历史运行记录可查看。
 - 新建普通用户首次登录要求改密。
-- Agent 心跳资源字段在服务器列表可见。
+- Agent 心跳资源字段在执行节点列表可见。
 - 日志 V2 接口可查询 events、log-tails、diagnoses、log-downloads。
 - 每日/每周/每月多时间点可预览未来 5 次。
 

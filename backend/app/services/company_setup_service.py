@@ -98,11 +98,11 @@ class CompanySetupService:
         return [
             self._step("control_plane_url", "控制端公网回调地址", "代码构建流程和外部执行节点连接控制端服务时使用。", platform_step_status, "/settings", "去设置", {"configured": platform_ready}, blocked=platform_blocked, block_reason="请联系超级管理员配置控制端公网回调地址"),
             self._step("database", "公司数据库", "配置任务入库、缓存和原始数据存储。", "DONE" if database_done else "MISSING", "/resources", "去配置", {"resourceTotal": c["resourceTotal"], "resourcePassed": c["resourcePassed"]}),
-            self._step("agent", "执行节点", "接入服务器后才能部署项目和运行任务。", "DONE" if agent_done else "MISSING", "/servers", "去接入", {"onlineAgentCount": c["onlineAgentCount"], "serverTotal": c["serverTotal"]}),
+            self._step("agent", "执行节点", "接入执行节点后才能部署项目和运行任务。", "DONE" if agent_done else "MISSING", "/servers", "去接入", {"onlineAgentCount": c["onlineAgentCount"], "serverTotal": c["serverTotal"]}),
             self._step("project", "爬虫项目", "部署项目只会准备版本和任务定义，不会自动启动任务。", "DONE" if project_done and deployed_done else ("BLOCKED" if not agent_done else "MISSING"), "/projects", "去部署", {"projectCount": c["projectCount"], "taskDefinitionCount": c["taskDefinitionCount"], "deployedProjectServerCount": c["deployedProjectServerCount"]}, blocked=not agent_done, block_reason="请先接入在线执行节点"),
-            self._step("platform", "采集平台", "确认被采集的网站或系统，例如 Oilchem、JDL、CommerceHub。", "DONE" if platform_done else ("BLOCKED" if not project_done else "MISSING"), "/platforms", "去查看", {"platformCodeCount": c["platformCodeCount"]}, blocked=not project_done, block_reason="请先部署项目并发现任务"),
+            self._step("platform", "采集平台", "确认被采集的网站或系统，例如 Oilchem、JDL、CommerceHub。", "DONE" if platform_done else ("BLOCKED" if not project_done else "MISSING"), "/platforms", "去查看", {"platformCodeCount": c["platformCodeCount"]}, blocked=not project_done, block_reason="请先部署项目，然后发现任务"),
             self._step("account", "平台账号", "配置任务运行时使用的账号、Cookie 或 Token。", "DONE" if account_done else ("RISK" if c["accountNeedAttention"] else "MISSING"), "/accounts", "去添加", {"accountTotal": c["accountTotal"], "accountNeedAttention": c["accountNeedAttention"]}),
-            self._step("task", "任务调度", "查看任务是否可执行，再手动执行或设置定时。", "DONE" if task_done else ("BLOCKED" if not (database_done and agent_done and project_done and account_done) else "MISSING"), "/tasks", "去查看", {"taskCount": c["taskCount"], "scheduleCount": c["scheduleCount"]}, blocked=not (database_done and agent_done and project_done and account_done), block_reason="请先完成数据库、执行节点、项目和账号配置"),
+            self._step("task", "任务计划", "查看任务是否可执行，再手动执行或设置定时。", "DONE" if task_done else ("BLOCKED" if not (database_done and agent_done and project_done and account_done) else "MISSING"), "/tasks", "去查看", {"taskCount": c["taskCount"], "scheduleCount": c["scheduleCount"]}, blocked=not (database_done and agent_done and project_done and account_done), block_reason="请先完成数据库、执行节点、项目和账号配置"),
         ]
 
     @staticmethod

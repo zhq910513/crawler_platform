@@ -164,12 +164,12 @@ class ProjectService:
         for step in result["steps"]:
             if step["key"] == "deploy":
                 step["status"] = "success"
-                step["message"] = f"已向 {len(deploy.get('targets') or [])} 台服务器下发部署指令"
+                step["message"] = f"已向 {len(deploy.get('targets') or [])} 个执行节点下发部署指令"
             if step["key"] == "ready":
                 step["status"] = "process"
-                step["message"] = "等待服务器拉取镜像并完成运行前自检"
+                step["message"] = "等待执行节点拉取镜像并完成运行前自检"
         result["targets"] = deploy.get("targets") or []
-        result["message"] = deploy.get("message") or "发布流水线已进入服务器自检阶段"
+        result["message"] = deploy.get("message") or "发布流水线已进入节点自检阶段"
         return result
 
     def _build_publish_pipeline(self, user: SysUser, payload: ProjectPublishPipelineRequest, execute: bool = False) -> dict:
@@ -198,7 +198,7 @@ class ProjectService:
 
         selected_ids = sorted(set(int(item) for item in payload.server_ids if item))
         if not selected_ids:
-            add_step("servers", "选择服务器", "error", "请选择至少一台当前公司下的可部署服务器", True)
+            add_step("servers", "选择节点", "error", "请选择至少一个当前公司下的可部署节点", True)
             return self._publish_pipeline_payload(payload, steps, blockers)
         servers: list[CrawlerServer] = []
         unavailable: list[dict] = []
@@ -210,9 +210,9 @@ class ProjectService:
             elif server:
                 servers.append(server)
         if unavailable:
-            add_step("servers", "选择服务器", "error", "所选服务器存在不可部署项，必须处理后才能继续", True, {"unavailableServers": unavailable})
+            add_step("servers", "选择节点", "error", "所选节点存在不可部署项，必须处理后才能继续", True, {"unavailableServers": unavailable})
             return self._publish_pipeline_payload(payload, steps, blockers)
-        add_step("servers", "选择服务器", "success", f"已选择 {len(servers)} 台可部署服务器", data={"serverIds": selected_ids})
+        add_step("servers", "选择节点", "success", f"已选择 {len(servers)} 个可部署节点", data={"serverIds": selected_ids})
 
         repo = (payload.repository_url or "").strip()
         ref_name = (payload.ref_name or "main").strip()
@@ -232,8 +232,8 @@ class ProjectService:
                 return self._publish_pipeline_payload(payload, steps, blockers, target=target)
             add_step("build", "构建镜像", "success", "已存在可部署镜像版本，本次无需重新构建", data={"releaseId": latest.release_id, "version": latest.version})
             add_step("release", "确认可发布版本", "success", f"已确认版本 {latest.version}", data={"releaseId": latest.release_id, "imageDigest": latest.image_digest})
-            add_step("deploy", "部署服务器", "wait", "发布时将向所选服务器下发部署指令")
-            add_step("ready", "运行前自检", "wait", "等待服务器拉取镜像并完成自检")
+            add_step("deploy", "部署节点", "wait", "发布时将向所选节点下发部署指令")
+            add_step("ready", "运行前自检", "wait", "等待执行节点拉取镜像并完成自检")
             return self._publish_pipeline_payload(payload, steps, blockers, target={**target, "releaseId": latest.release_id})
 
         if target.get("discoveredProjectId"):
@@ -242,20 +242,20 @@ class ProjectService:
                 return self._publish_pipeline_payload(payload, steps, blockers, target=target)
             add_step("build", "构建镜像", "success", "已存在外部构建登记版本，本次无需重新构建", data=target)
             add_step("release", "确认可发布版本", "success", "可接入已登记版本并继续部署", data=target)
-            add_step("deploy", "部署服务器", "wait", "发布时会先接入项目，再向所选服务器下发部署指令")
-            add_step("ready", "运行前自检", "wait", "等待服务器拉取镜像并完成自检")
+            add_step("deploy", "部署节点", "wait", "发布时会先接入项目，再向所选节点下发部署指令")
+            add_step("ready", "运行前自检", "wait", "等待执行节点拉取镜像并完成自检")
             return self._publish_pipeline_payload(payload, steps, blockers, target=target)
 
         build_capability = self._platform_build_capability()
         if not build_capability["enabled"]:
             add_step("build", "构建镜像", "error", build_capability["message"], True, build_capability)
             add_step("release", "确认可发布版本", "wait", "构建镜像通过后才能生成版本")
-            add_step("deploy", "部署服务器", "wait", "版本生成后才能部署服务器")
+            add_step("deploy", "部署节点", "wait", "版本生成后才能部署节点")
             add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
             return self._publish_pipeline_payload(payload, steps, blockers, target=target)
         add_step("build", "构建镜像", "process" if execute else "wait", "平台构建中心已配置，下一步将拉取代码并构建镜像", data=build_capability)
         add_step("release", "确认可发布版本", "wait", "等待构建产物生成不可变版本")
-        add_step("deploy", "部署服务器", "wait", "版本生成后才能部署服务器")
+        add_step("deploy", "部署节点", "wait", "版本生成后才能部署节点")
         add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
         return self._publish_pipeline_payload(payload, steps, blockers, target=target)
 
@@ -301,19 +301,19 @@ class ProjectService:
 
     def _server_block_reason_for_company(self, company_id: int, server: CrawlerServer | None) -> str:
         if not server or server.company_id != company_id:
-            return "服务器不存在或不属于当前公司"
+            return "节点不存在或不属于当前公司"
         if server.manage_status != "ENABLED":
-            return "服务器已停用"
+            return "节点已停用"
         if not server.agent:
-            return "服务器尚未接入"
+            return "节点尚未接入"
         if server.agent.connection_status != "ONLINE" or not server.agent.last_heartbeat_at:
-            return "服务器尚未上线"
+            return "节点尚未上线"
         if server.health_status == "OFFLINE":
-            return "服务器离线"
+            return "节点离线"
         if server.health_status not in {"HEALTHY", "DEGRADED", "UNKNOWN"}:
             return f"健康状态异常：{server.health_status}"
         if server.capacity_status in {"FULL", "DRAINED", "EXHAUSTED"}:
-            return f"容量状态不可用：{server.capacity_status}"
+            return f"负载状态不可用：{server.capacity_status}"
         metrics = server.metrics or {}
         docker_status = str(metrics.get("dockerStatus") or metrics.get("docker_status") or "").upper()
         if docker_status and docker_status not in {"OK", "READY", "UNKNOWN"}:
@@ -495,7 +495,7 @@ class ProjectService:
         if payload.auto_select and not target_server_ids:
             target_server_ids = [server.server_id for server in self._auto_select_deploy_servers(project)]
         if not target_server_ids:
-            raise AppError("请选择至少一台已安装 Agent 的服务器，或开启自动选择", code=40051)
+            raise AppError("请选择至少一个已接入的执行节点，或开启自动选择", code=40051)
         servers = []
         unavailable = []
         for server_id in target_server_ids:
@@ -513,7 +513,7 @@ class ProjectService:
             CrawlerProjectServer.deployment_status.in_(["DEPLOYING", "ROLLING_BACK", "CLEANING"]),
         )) or 0
         if active_deploying:
-            raise AppError("所选服务器已有部署/清理动作未完成，请等待状态结束后再重试", code=40053)
+            raise AppError("所选节点已有部署/清理动作未完成，请等待状态结束后再重试", code=40053)
         now = utcnow()
         deployment = CrawlerProjectDeployment(
             company_id=project.company_id,
@@ -630,7 +630,7 @@ class ProjectService:
             available = True
             will_create = False
             if not server or server.company_id != project.company_id:
-                reason = "服务器不存在或不属于该公司"
+                reason = "节点不存在或不属于该公司"
                 available = False
             elif not ps or ps.deployment_status != "DEPLOYED":
                 if latest_release and latest_release.image_digest:
@@ -652,7 +652,7 @@ class ProjectService:
         project = require_project_role(self.db, user, project_id, "OWNER")
         analysis = self.analyze_server_pool(user, project_id, payload)
         if not analysis["canSave"]:
-            raise AppError("执行服务器池校验未通过", code=40045, data=analysis)
+            raise AppError("执行节点配置校验未通过", code=40045, data=analysis)
         existing = {item.server_id: item for item in self.project_servers.list_by_project(project_id)}
         before = [self._project_server_payload(item) for item in existing.values()]
         latest_release = self._latest_project_release(project.project_id)
@@ -709,11 +709,11 @@ class ProjectService:
 
     def _server_deploy_block_reason(self, project: CrawlerProject, server: CrawlerServer | None) -> str:
         if not server or server.company_id != project.company_id:
-            return "服务器不存在或不属于该公司"
+            return "节点不存在或不属于该公司"
         if server.manage_status != "ENABLED":
-            return "服务器已禁用"
+            return "节点已禁用"
         if not server.agent:
-            return "服务器未接入 Agent"
+            return "节点尚未接入"
         if server.agent.connection_status != "ONLINE" or not server.agent.last_heartbeat_at:
             return "Agent 尚未心跳上线"
         metrics = server.metrics or {}
@@ -773,8 +773,8 @@ class ProjectService:
             "steps": [
                 {"key": "SOURCE_CONFIRMED", "status": "SUCCEEDED", "message": "已固化 release、git commit 与镜像 digest", "finishedAt": now},
                 {"key": "CONTRACT_VALIDATED", "status": "SUCCEEDED", "message": "任务定义与镜像契约已通过平台校验", "finishedAt": now},
-                {"key": "SERVER_PRECHECKED", "status": "SUCCEEDED", "message": "目标服务器 Agent、Docker 与目录权限基础校验已通过", "finishedAt": now},
-                {"key": "DISPATCHING_AGENT", "status": "SUCCEEDED", "message": "部署指令已写入目标服务器队列", "finishedAt": now},
+                {"key": "SERVER_PRECHECKED", "status": "SUCCEEDED", "message": "目标节点服务、Docker 与目录权限基础校验已通过", "finishedAt": now},
+                {"key": "DISPATCHING_AGENT", "status": "SUCCEEDED", "message": "部署指令已写入目标节点队列", "finishedAt": now},
                 {"key": "AGENT_DEPLOY_PREPARE", "status": "PENDING", "message": "等待 Agent 拉取镜像、准备目录并执行运行时自检"},
             ],
             "targets": [],
@@ -1001,9 +1001,9 @@ class ProjectService:
         if project.dispatch_mode == "PRIMARY_STANDBY":
             primary_count = sum(1 for item in enabled if item.server_role == "PRIMARY")
             if primary_count != 1:
-                raise AppError("主备模式必须且只能配置一个主服务器", code=40046)
+                raise AppError("主备模式必须且只能配置一个主节点", code=40046)
         if len(enabled) < project.min_available_servers and project.online_status == "ONLINE":
-            raise AppError("可调度服务器数量低于项目最低要求", code=40047)
+            raise AppError("可接收任务的节点数量低于项目最低要求", code=40047)
 
     def _project_summary(self, project: CrawlerProject) -> dict:
         latest = self.db.scalar(select(CrawlerProjectRelease).where(CrawlerProjectRelease.project_id == project.project_id).order_by(CrawlerProjectRelease.published_at.desc()))

@@ -26,7 +26,7 @@ class AgentService:
     def heartbeat(self, agent: CrawlerAgent, payload: AgentHeartbeat) -> dict:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
-            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+            raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         current_run_ids = self._current_run_ids(payload)
         replaced = bool(agent.agent_instance_id and agent.agent_instance_id != payload.agent_instance_id)
         if replaced:
@@ -78,13 +78,13 @@ class AgentService:
             return None
         if not self._can_server_claim(project, run.server_id):
             run.server_id = None
-            set_routing_status(run, "PENDING", reason="服务器项目调度状态已不可领取，等待重新路由")
+            set_routing_status(run, "PENDING", reason="节点已暂停接收该项目任务，等待重新分配")
             self.db.commit()
             return None
         ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == run.project_id, CrawlerProjectServer.server_id == server.server_id))
         if ps and ps.image_readiness_status in {"OUTDATED", "UNKNOWN", "FAILED"}:
             ps.image_readiness_status = "WARMING"
-            ps.disabled_reason = "Agent 已领取任务，正在按 digest 拉取并校验镜像；不会中断该节点已有运行实例"
+            ps.disabled_reason = "执行节点已接收任务，正在按 digest 拉取并校验镜像；不会中断该节点已有运行实例"
         lease_token = secrets.token_hex(24)
         now = utcnow()
         claimed = self.db.execute(
@@ -108,7 +108,7 @@ class AgentService:
             self.db.rollback()
             return None
         self.db.refresh(run)
-        self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="Agent 已领取运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id}))
+        self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="执行节点已接收运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id}))
         self.db.commit()
         return {
             "runId": run.run_id,
@@ -142,13 +142,13 @@ class AgentService:
     def report_image_pull_result(self, agent: CrawlerAgent, payload: AgentImagePullResult) -> dict:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
-            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+            raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         ps = self.db.scalar(select(CrawlerProjectServer).where(
             CrawlerProjectServer.project_id == payload.project_id,
             CrawlerProjectServer.server_id == server.server_id,
         ))
         if not ps:
-            raise AppError("项目服务器池不存在，拒绝更新镜像状态", code=40404, http_status=status.HTTP_404_NOT_FOUND)
+            raise AppError("项目执行节点关系不存在，拒绝更新镜像状态", code=40404, http_status=status.HTTP_404_NOT_FOUND)
         if ps.latest_release_id and payload.release_id and ps.latest_release_id != payload.release_id:
             self.db.commit()
             return {"ignored": True, "reason": "release 已变化，忽略过期镜像回报", "imageReadinessStatus": ps.image_readiness_status}
@@ -178,7 +178,7 @@ class AgentService:
     def report_container_cleanup_result(self, agent: CrawlerAgent, payload: AgentContainerCleanupResult) -> dict:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
-            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+            raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         accepted = ContainerCleanupService(self.db).acknowledge(server, payload.cleanup_id, {
             "cleanupScope": payload.cleanup_scope,
             "projectId": payload.project_id,
@@ -195,7 +195,7 @@ class AgentService:
     def report_agent_command_result(self, agent: CrawlerAgent, payload: AgentCommandResult) -> dict:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
-            raise AppError("Agent 绑定服务器不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+            raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         service = AgentCommandService(self.db)
         ack = service.acknowledge(server, payload.model_dump(by_alias=True))
         service.apply_project_deploy_result(server, ack)
@@ -370,12 +370,12 @@ class AgentService:
             if unhealthy and ps.auto_eject_enabled and ps.scheduling_status in {"ENABLED", "RECOVERING"}:
                 before = {"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason}
                 ps.scheduling_status = "AUTO_EJECTED"
-                ps.disabled_reason = "Agent 连续检测到服务器异常或资源不足，系统自动摘除"
+                ps.disabled_reason = "执行节点连续检测到异常或资源不足，系统自动保护"
                 write_operation_log(self.db, None, None, operation_type="AUTO_EJECT_PROJECT_SERVER", resource_type="project_server", resource_id=str(ps.project_server_id), before_data=before, after_data={"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason})
             elif recovered and ps.auto_recover_enabled and ps.scheduling_status == "AUTO_EJECTED":
                 before = {"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason}
                 ps.scheduling_status = "RECOVERING"
-                ps.disabled_reason = "服务器已恢复，进入恢复观察"
+                ps.disabled_reason = "执行节点已恢复，进入恢复观察"
                 write_operation_log(self.db, None, None, operation_type="RECOVER_PROJECT_SERVER", resource_type="project_server", resource_id=str(ps.project_server_id), before_data=before, after_data={"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason})
             elif recovered and ps.auto_recover_enabled and ps.scheduling_status == "RECOVERING":
                 before = {"projectServerId": ps.project_server_id, "schedulingStatus": ps.scheduling_status, "disabledReason": ps.disabled_reason}

@@ -4,13 +4,13 @@
 
 本版本用于补齐“爬虫项目 CI/CD 多 Agent 发布”后的两个关键使用问题：
 
-1. 开发者推送爬虫项目代码后，执行服务器如何快速知道有最新版本。
+1. 开发者推送爬虫项目代码后，执行节点如何快速知道有最新版本。
 2. B 服务器上仍有运行中任务时，新镜像更新是否会打断任务，以及是否自动断点续爬。
 
 ## 核心结论
 
-- 执行服务器通过 Agent 心跳感知新 release，不再要求每台机器 `git pull`。
-- 平台在 release 注册后把项目服务器池标记为 `OUTDATED`。
+- 执行节点通过 Agent 心跳感知新 release，不再要求每台机器 `git pull`。
+- 平台在 release 注册后把项目执行节点范围标记为 `OUTDATED`。
 - Agent 心跳响应新增 `pendingImagePulls`，用于通知该节点存在待预热镜像。
 - Agent 空闲时才主动预热镜像；已有运行实例不会被停止或替换。
 - 任务领取后仍按 run 快照中的 `imageRepository@imageDigest` 拉取和校验镜像。
@@ -49,6 +49,6 @@
 新增覆盖：
 
 - 心跳返回待预热镜像。
-- Agent 回报 READY/FAILED 更新项目服务器池镜像状态。
+- Agent 回报 READY/FAILED 更新项目执行节点范围镜像状态。
 - 新 release 注册不会中断旧 digest 的运行中任务。
 - 运行中 Agent 收到 `PREWARM_WHEN_IDLE`，不会立即预热。

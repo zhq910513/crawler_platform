@@ -23,7 +23,7 @@ cp_compose up -d mysql redis
 cp_compose run --rm migrate
 cp_compose up -d --force-recreate api scheduler maintenance web
 
-PORT="$(cp_env_value .env WEB_PORT)"; PORT="${PORT:-8080}"
+PORT="$(cp_env_value .env WEB_PORT)"; PORT="${PORT:-80}"
 if cp_wait_http "http://127.0.0.1:${PORT}/health" 120 2; then
   cp_compose ps
   echo "crawler_platform 部署完成：http://服务器IP:${PORT}"

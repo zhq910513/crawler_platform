@@ -9,7 +9,7 @@
 3. 平台管理负责被爬平台模板、账号类型和字段模板。
 4. 平台账号负责公司在某个平台下的多个账号、启用状态、健康状态、登录态状态、临时 Cookie/API Token 状态。
 5. 项目管理接收 CI/CD 注册的 release，并主动发现代码里的 `TASK_DEFINITION`。
-6. 任务调度只负责把系统发现的平台任务绑定数据库槽位、账号槽位和调度时间。
+6. 任务计划只负责把系统发现的平台任务绑定数据库绑定项、账号绑定项和自动计划时间。
 7. 爬虫代码只通过 `context.config` 与 `context.accounts` 取配置和账号，不硬编码公司账号、Cookie、Token、数据库连接。
 
 ## 任务发现合约
@@ -17,18 +17,18 @@
 爬虫项目必须在每个业务任务中提供静态 `TASK_DEFINITION`。平台 1.0.19 会解析以下字段：
 
 - `platformCode`：被爬平台编码。
-- `requiredConfigs`：任务需要的数据库/缓存/OSS 配置槽位。
-- `requiredCredentials`：任务需要的账号槽位。
+- `requiredConfigs`：任务需要的数据库/缓存/OSS 配置绑定项。
+- `requiredCredentials`：任务需要的账号绑定项。
 - `outputTables`：任务会写入的表。
 - `allowOfflineRun` / `offlinePolicy`：离线兜底策略。
 
-如果缺少 `platformCode` 或账号/配置槽位结构不规范，平台不会中断历史兼容任务，但会将任务契约标记为 `WARNING` 并保存 `contractWarnings`，供项目管理和任务调度页面提示。
+如果缺少 `platformCode` 或账号/配置绑定项结构不规范，平台不会中断历史兼容任务，但会将任务契约标记为 `WARNING` 并保存 `contractWarnings`，供项目管理和任务调度页面提示。
 
 ## 账号绑定模式
 
 任务调度里只保存账号引用，不保存 Cookie、Token、密码、API key 明文。
 
-支持的账号槽位绑定模式：
+支持的账号绑定模式：
 
 - `fixed`：固定单账号，对应 `context.accounts.get(slot)`。
 - `fixed_list`：固定多个账号，对应 `context.accounts.list(slot)`。

@@ -642,12 +642,12 @@ def test_138_frontend_commercial_navigation_contract() -> None:
 def test_138_frontend_project_publish_flow_contract() -> None:
     root = Path(__file__).resolve().parents[2]
     page = (root / 'frontend' / 'src' / 'views' / 'ProjectPublishPage.vue').read_text(encoding='utf-8')
-    assert '填写发布所需的公司、服务器、代码仓库和分支。' in page
+    assert '填写发布所需的公司、部署节点、代码仓库和分支。' in page
     assert '所属公司' in page
-    assert '部署服务器' in page
+    assert '部署节点' in page
     assert 'Git 仓库地址' in page
     assert '新增公司' in page
-    assert '新增服务器' in page
+    assert '新增节点' in page
     assert 'multiple' in page
     assert 'serverDeployable' in page
     assert 'createAgentJoinToken' in page
@@ -668,7 +668,7 @@ def test_138_frontend_project_publish_flow_contract() -> None:
     assert 'floatSide' in page
     assert 'is-collapsing' in page
     assert 'pendingJoinServerCode' in page
-    assert '服务器已上线并自动选中' in page
+    assert '节点已上线并自动选中' in page
     assert 'label="控制端公网回调地址"' not in page
     assert 'controlBaseUrl.value' in page
     assert 'apiErrorData' in page
@@ -684,7 +684,7 @@ def test_141_server_onboarding_hides_control_plane_address_input() -> None:
     assert 'currentOrigin' in page
     assert 'createAgentJoinToken' in page
     assert 'connectivityCommand' in page
-    assert '服务器连接地址未配置' in page
+    assert '节点连接地址未配置' in page
 def test_102_frontend_run_log_routes_match_backend_contract() -> None:
     root = Path(__file__).resolve().parents[2]
     api_source = (root / 'frontend' / 'src' / 'api' / 'platform.ts').read_text(encoding='utf-8')
@@ -1406,3 +1406,36 @@ def test_140_frontend_password_relogin_contract() -> None:
     assert "router.replace('/login')" in layout_source
     assert "router.replace(data.user.isSuperAdmin ? '/dashboard' : '/project-publish')" in login_source
     assert 'password_hash' not in user_service_source.split('def _user_payload', 1)[1]
+
+
+def test_agent_join_command_preserves_detected_external_port() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    request_headers = {
+        **headers,
+        'host': '42.193.226.138:8080',
+        'x-forwarded-host': '42.193.226.138:8080',
+        'x-forwarded-proto': 'http',
+    }
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'join_port_1046', 'companyName': '入口统一公司'}).json()['data']
+    token_body = client.post('/api/v1/servers/agent-join-tokens', headers=request_headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-port-node-1046',
+        'serverName': '入口统一节点',
+        'agentCode': 'join-port-agent-1046',
+        'controlPlaneUrl': 'http://42.193.226.138',
+        'installTarget': 'REMOTE',
+    }).json()['data']
+    assert token_body['controlPlaneUrl'] == 'http://42.193.226.138:8080'
+    assert 'http://42.193.226.138:8080/api/v1/agent-installers/linux.sh' in token_body['installCommand']
+    assert '--control-plane-url http://42.193.226.138:8080' in token_body['installCommand']
+    assert token_body['connectivityCommand'] == 'curl -fsSL http://42.193.226.138:8080/health && echo'
+    assert token_body['warnings']
+    env_resp = client.post('/api/v1/agent-bootstrap/env', headers={
+        'host': '42.193.226.138:8080',
+        'x-forwarded-host': '42.193.226.138:8080',
+        'x-forwarded-proto': 'http',
+    }, json={'joinToken': token_body['joinToken'], 'hostname': 'port-test-host', 'installReport': {'pass': 7}})
+    assert env_resp.status_code == 200
+    assert "AGENT_CONTROL_PLANE_URL='http://42.193.226.138:8080'" in env_resp.text

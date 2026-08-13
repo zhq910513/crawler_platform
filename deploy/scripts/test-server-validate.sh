@@ -39,7 +39,7 @@ if [ "$SKIP_RESET" != "1" ]; then
 else
   ./deploy/scripts/check-env.sh .env
   cp_compose config >/dev/null
-  WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-8080}"
+  WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"
   cp_wait_http "http://127.0.0.1:${WEB_PORT_VALUE}/health" 30 2
 fi
 

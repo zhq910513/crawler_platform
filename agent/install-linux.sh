@@ -5,13 +5,13 @@ AGENT_HOME="${AGENT_HOME:-/opt/crawler-agent}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-/var/lib/crawler-agent}"
 AGENT_PROJECT_DATA_ROOT="${AGENT_PROJECT_DATA_ROOT:-/data/crawler-platform/projects}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
-AGENT_VERSION="${AGENT_VERSION:-${AGENT_AGENT_VERSION:-1.0.17}}"
+AGENT_VERSION="${AGENT_VERSION:-${AGENT_AGENT_VERSION:-1.0.46}}"
 AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:${AGENT_VERSION}}"
 ENV_FILE="${ENV_FILE:-$AGENT_HOME/.env}"
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 
 if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then
-  echo "建议使用 root/sudo 执行服务器级 Agent 安装；普通用户必须具备 Docker 权限和目标目录写权限。" >&2
+  echo "建议使用 root/sudo 安装执行节点服务；普通用户必须具备 Docker 权限和目标目录写权限。" >&2
 fi
 command -v docker >/dev/null 2>&1 || { echo "Docker 未安装。" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker 服务不可用或当前用户无 Docker 权限。" >&2; exit 1; }

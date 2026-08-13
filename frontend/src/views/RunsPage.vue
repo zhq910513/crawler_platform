@@ -4,9 +4,9 @@
     <el-table :data="rows" stripe>
       <el-table-column label="执行编号" width="100"><template #default="s">{{ s.row.runId }}</template></el-table-column>
       <el-table-column label="任务" min-width="120"><template #default="s">{{ s.row.taskId }}</template></el-table-column>
-      <el-table-column label="服务器" min-width="120"><template #default="s">{{ s.row.serverId || '-' }}</template></el-table-column>
+      <el-table-column label="执行节点" min-width="120"><template #default="s">{{ s.row.serverId || '-' }}</template></el-table-column>
       <el-table-column label="执行状态"><template #default="s"><el-tag :type="runTag(s.row.runStatus)" effect="light">{{ zh(s.row.runStatus) }}</el-tag></template></el-table-column>
-      <el-table-column label="路由状态"><template #default="s">{{ zh(s.row.routingStatus) }}</template></el-table-column>
+      <el-table-column label="分配状态"><template #default="s">{{ zh(s.row.routingStatus) }}</template></el-table-column>
       <el-table-column label="日志状态"><template #default="s">{{ zh(s.row.logStatus) }}</template></el-table-column>
       <el-table-column label="异常摘要" min-width="220"><template #default="s">{{ s.row.errorSummary || s.row.errorMessage || '-' }}</template></el-table-column>
       <el-table-column label="创建时间" min-width="170"><template #default="s">{{ formatTime(s.row.createdAt) }}</template></el-table-column>

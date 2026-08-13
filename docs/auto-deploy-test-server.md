@@ -1,12 +1,12 @@
-# 服务器自动部署说明
+# 测试环境自动部署说明
 
-目标：本地提交并 push 到 `main` 后，GitHub Actions 自动执行商业发布门禁，门禁通过后通过 SSH 登录目标服务器，并调用项目内标准脚本完成部署。
+目标：本地提交并 push 到 `main` 后，GitHub Actions 自动执行商业发布门禁，门禁通过后通过 SSH 登录目标节点，并调用项目内标准脚本完成部署。
 
 ## 设计原则
 
 - GitHub Actions 只负责触发、门禁和远程编排。
 - 真正发布逻辑仍在项目内脚本：`deploy/scripts/release-upgrade.sh`。
-- 目标服务器工作区必须干净；发现本地未提交改动或本地提交未推送时自动停止。
+- 目标节点工作区必须干净；发现本地未提交改动或本地提交未推送时自动停止。
 - 版本来自同一条公共解析链：Git tag > 最新 commit message > `VERSION`。
 
 ## GitHub Secrets
@@ -17,7 +17,7 @@
 |---|---|---|
 | `SERVER_HOST` | `1.2.3.4` | 测试服 IP 或域名 |
 | `SERVER_USER` | `deploy` | SSH 用户，测试期可用 root，商业交付建议 deploy 用户 |
-| `SERVER_SSH_KEY` | 私钥内容 | 只给目标服务器部署权限 |
+| `SERVER_SSH_KEY` | 私钥内容 | 只给目标节点部署权限 |
 | `SERVER_PORT` | `22` | SSH 端口 |
 | `SERVER_PROJECT_DIR` | `/data/projects/crawler_platform` | 测试服项目目录 |
 
@@ -30,7 +30,7 @@ git add -A && git commit -m "自动部署优化v1.0.6" && git push origin main
 GitHub Actions 会执行：
 
 1. `commercial-release-gate.sh`
-2. SSH 到目标服务器
+2. SSH 到目标节点
 3. `remote-auto-deploy.sh`
 4. `release-upgrade.sh`
 5. 校验 `/health` 和 `/version.json`
@@ -46,8 +46,8 @@ RELEASE_UPGRADE=PASS version=X.Y.Z
 
 自动部署会在以下情况停止：
 
-- 目标服务器工作区有未提交改动。
-- 目标服务器本地分支有未推送提交。
+- 目标节点工作区有未提交改动。
+- 目标节点本地分支有未推送提交。
 - GitHub 传入的 commit 不在 `origin/main` 上。
 - 商业发布门禁失败。
 - 数据库备份、迁移、构建、健康检查、前端版本校验失败。

@@ -1,4 +1,4 @@
-# crawler_platform 1.0.17 商业化运维 Runbook
+# crawler_platform 1.0.46 商业化运维 Runbook
 
 ## 1. 首次部署失败
 
@@ -21,15 +21,15 @@
 
 不要用 `python3 -m compileall backend agent` 直接判断平台代码是否可上线。客户宿主机可能是 Python 3.6 或更旧版本，而平台后端/Agent 在 Python 3.12 容器内运行。正确检查命令是：`deploy/scripts/container-compile-check.sh` 或 `deploy/scripts/commercial-release-gate.sh`。
 
-## 2. Agent 离线或不可调度
+## 2. Agent 离线或不可接收任务
 
-前端服务器列表先看：健康状态、容量状态、最近心跳、Docker 状态、docker.sock、项目目录可写、lastError。
+前端执行节点列表先看：健康状态、负载状态、最近心跳、Docker 状态、docker.sock、项目目录可写、lastError。
 
 常见判断：
 
 - 最近心跳超时：检查 Agent 进程、网络、防火墙、平台地址和 Agent token。
 - Docker 不可用：检查 Docker daemon、当前用户 Docker 权限、docker.sock 挂载。
-- 可用槽位为 0：检查运行容器数量、maxContainerSlots、资源模板和任务并发。
+- 可用绑定项为 0：检查运行容器数量、maxContainerSlots、资源模板和任务并发。
 - 磁盘或 inode 高水位：先清理日志、构建缓存、无用镜像，再恢复调度。
 - 项目目录不可写：检查部署目录 owner、group、ACL、挂载路径。
 
@@ -40,14 +40,14 @@
 1. 生命周期事件：确认失败阶段是平台、Agent、Docker、爬虫代码、目标网站还是数据库。
 2. 诊断卡片：查看 `failedStage`、`errorType`、`retryable`、`errorSummary`。
 3. 日志尾部：优先过滤 `ERROR`、`WARNING` 或关键业务词。
-4. Agent 资源快照：确认失败时 CPU/内存/磁盘/槽位/Docker 是否异常。
+4. Agent 资源快照：确认失败时 CPU/内存/磁盘/绑定项/Docker 是否异常。
 5. 下载完整日志：提供给研发或售后，不要直接截屏代替日志。
 
 如果是 `LOST`，优先检查 Agent 心跳和 lease 过期；如果是 `WAITING_RESOURCE`，优先检查路由原因和资源锁。
 
 ## 4. 操作日志膨胀
 
-`sys_operation_log` 只应记录用户操作和关键管理动作。Agent 心跳、领取任务、运行心跳、结果、事件、日志分片和日志完成上报不得写入该表。
+`sys_operation_log` 只应记录用户操作和关键管理动作。Agent 心跳、领取任务、运行心跳、结果、事件、日志分段和日志完成上报不得写入该表。
 
 发现膨胀时检查：
 
@@ -77,6 +77,6 @@
 - API `/health` 结果和平台版本。
 
 
-## 1.0.17 Agent 镜像更新不中断补充
+## 1.0.46 Agent 镜像更新不中断补充
 
 CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。

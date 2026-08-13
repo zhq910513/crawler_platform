@@ -198,10 +198,10 @@ class AgentCommandService:
             if isinstance(step, dict) and step.get("key") == "AGENT_DEPLOY_PREPARE":
                 if any(isinstance(item, dict) and item.get("status") == "FAILED" for item in targets):
                     step["status"] = "FAILED"
-                    step["message"] = "至少一个目标服务器部署失败"
+                    step["message"] = "至少一个目标节点部署失败"
                 elif targets and all(isinstance(item, dict) and item.get("status") == "DEPLOYED" for item in targets):
                     step["status"] = "SUCCEEDED"
-                    step["message"] = "所有目标服务器已完成镜像拉取、目录准备和运行时自检"
+                    step["message"] = "所有目标节点已完成镜像拉取、目录准备和运行时自检"
                 else:
                     step["status"] = "RUNNING"
         strategy["targets"] = targets

@@ -4,7 +4,7 @@
       <div>
         <div class="breadcrumb-line">{{ summary?.company.companyName || '当前公司' }} > 项目 > 任务</div>
         <h2>{{ summary?.company.companyName || '公司' }}运行中心</h2>
-        <p>按“公司 → 项目 → 任务”查看运行情况。项目部署不会自动启动任务，只有手动执行或启用调度后才会运行。</p>
+        <p>按“公司 → 项目 → 任务”查看运行情况。项目部署不会自动启动任务，只有手动执行或启用自动计划后才会运行。</p>
       </div>
       <div class="hero-actions">
         <el-button :loading="loading" @click="load">刷新</el-button>
@@ -75,7 +75,7 @@
           <el-button type="primary" :loading="runningTaskId === selectedTask.taskId" @click="manualRun(selectedTask)">手动执行</el-button>
           <el-button @click="goTasks(selectedTask)">返回任务编排</el-button>
           <el-button v-if="selectedTask.latestRun" @click="goRunLogs(selectedTask)">查看完整日志</el-button>
-          <el-button v-if="selectedTask.server" @click="router.push('/servers')">查看服务器</el-button>
+          <el-button v-if="selectedTask.server" @click="router.push('/servers')">查看执行节点</el-button>
         </div>
         <el-tabs v-model="activeTab" class="detail-tabs" @tab-change="handleTabChange">
           <el-tab-pane label="概览" name="overview">
@@ -117,14 +117,13 @@
               <el-descriptions-item label="最近日志">{{ selectedTask.container.lastLogLine || '-' }}</el-descriptions-item>
             </el-descriptions>
           </el-tab-pane>
-          <el-tab-pane label="服务器" name="server">
-            <el-empty v-if="!selectedTask.server" description="本任务最近一次执行还没有绑定服务器" />
+          <el-tab-pane label="执行节点" name="server">
+            <el-empty v-if="!selectedTask.server" description="本任务最近一次执行还没有绑定执行节点" />
             <el-descriptions v-else :column="1" border>
               <el-descriptions-item label="节点名称">{{ selectedTask.server.serverName }}</el-descriptions-item>
               <el-descriptions-item label="节点状态">{{ zh(selectedTask.server.healthStatus) }} / {{ zh(selectedTask.server.capacityStatus) }}</el-descriptions-item>
               <el-descriptions-item label="Docker">{{ selectedTask.server.dockerStatus || '-' }}</el-descriptions-item>
               <el-descriptions-item label="CPU / 内存 / 磁盘">{{ pct(selectedTask.server.cpuUsage) }} / {{ pct(selectedTask.server.memoryUsage) }} / {{ pct(selectedTask.server.diskUsage) }}</el-descriptions-item>
-              <el-descriptions-item label="并发槽位">{{ selectedTask.server.availableSlots ?? '-' }} / {{ selectedTask.server.maxSlots ?? '-' }}</el-descriptions-item>
               <el-descriptions-item label="最近错误">{{ selectedTask.server.lastError || '-' }}</el-descriptions-item>
             </el-descriptions>
           </el-tab-pane>

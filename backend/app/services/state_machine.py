@@ -53,7 +53,7 @@ def set_routing_status(run: CrawlerTaskRun, next_status: str, *, reason: str = "
         if {current, next_status} <= {"PENDING", "WAITING_RESOURCE", "ROUTED"}:
             pass
         else:
-            raise AppError(f"路由状态不允许从 {current} 变更为 {next_status}", code=40072, http_status=status.HTTP_400_BAD_REQUEST)
+            raise AppError(f"分配状态不允许从 {current} 变更为 {next_status}", code=40072, http_status=status.HTTP_400_BAD_REQUEST)
     run.routing_status = next_status
     run.routing_reason = reason
 

@@ -48,10 +48,11 @@ class SystemConfigService:
         return self.inspect_control_plane_public_base_url(detected_base_url)["controlPlanePublicBaseUrl"]
 
     def inspect_control_plane_public_base_url(self, detected_base_url: str = "") -> dict:
+        detected = (detected_base_url or "").strip().rstrip("/")
         candidates = [
             ("SYSTEM_SETTING", self._get_value(CONTROL_PLANE_PUBLIC_BASE_URL_KEY)),
             ("ENV", settings.control_plane_public_base_url),
-            ("DETECTED_ORIGIN", detected_base_url),
+            ("DETECTED_ORIGIN", detected),
         ]
         for source, value in candidates:
             cleaned = (value or "").strip().rstrip("/")
@@ -59,8 +60,11 @@ class SystemConfigService:
                 continue
             parsed = urlparse(cleaned)
             if parsed.scheme in {"http", "https"} and parsed.netloc:
-                warnings = self._url_warnings(parsed)
-                return {"controlPlanePublicBaseUrl": cleaned, "source": source, "warnings": warnings}
+                resolved, source_suffix, port_warning = self._prefer_detected_origin_port(cleaned, detected)
+                warnings = self._url_warnings(urlparse(resolved))
+                if port_warning:
+                    warnings.append(port_warning)
+                return {"controlPlanePublicBaseUrl": resolved, "source": source + source_suffix, "warnings": warnings}
         return {"controlPlanePublicBaseUrl": "", "source": "EMPTY", "warnings": []}
 
     @staticmethod
@@ -72,6 +76,27 @@ class SystemConfigService:
         if not host:
             return ""
         return f"{proto}://{host}".rstrip("/")
+
+
+    @staticmethod
+    def _prefer_detected_origin_port(configured_url: str, detected_url: str) -> tuple[str, str, str]:
+        if not detected_url:
+            return configured_url, "", ""
+        configured = urlparse(configured_url)
+        detected = urlparse(detected_url)
+        if configured.scheme not in {"http", "https"} or detected.scheme not in {"http", "https"}:
+            return configured_url, "", ""
+        if not configured.hostname or not detected.hostname:
+            return configured_url, "", ""
+        same_origin_host = configured.scheme == detected.scheme and configured.hostname.lower() == detected.hostname.lower()
+        if not same_origin_host:
+            return configured_url, "", ""
+        detected_has_explicit_non_default_port = detected.port is not None and detected.port != (80 if detected.scheme == "http" else 443)
+        configured_missing_port = configured.port is None
+        if configured_missing_port and detected_has_explicit_non_default_port:
+            warning = f"配置地址未带端口，已按当前访问入口临时使用 {detected_url} 生成外部接入命令；请到系统设置保存完整地址。"
+            return detected_url, "+DETECTED_PORT", warning
+        return configured_url, "", ""
 
     def _get_value(self, key: str) -> str:
         item = self.db.scalar(select(SysConfig).where(SysConfig.config_key == key))

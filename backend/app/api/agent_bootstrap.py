@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.schemas import AgentBootstrapEnvRequest
 from app.services.server_service import ServerService
+from app.services.system_config_service import SystemConfigService
 
 router = APIRouter(tags=["Agent 接入"])
 
@@ -26,8 +27,9 @@ def get_linux_agent_installer() -> PlainTextResponse:
 
 
 @router.post("/agent-bootstrap/env", response_class=PlainTextResponse)
-def create_agent_bootstrap_env(payload: AgentBootstrapEnvRequest, db: Session = Depends(get_db)) -> PlainTextResponse:
-    content = ServerService(db).consume_agent_join_token(payload)
+def create_agent_bootstrap_env(payload: AgentBootstrapEnvRequest, request: Request, db: Session = Depends(get_db)) -> PlainTextResponse:
+    detected = SystemConfigService.detected_base_url_from_request(request)
+    content = ServerService(db).consume_agent_join_token(payload, detected)
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
 

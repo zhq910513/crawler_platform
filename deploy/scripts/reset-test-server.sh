@@ -58,7 +58,7 @@ chmod 0600 .env || true
 ./deploy/scripts/check-env.sh .env
 cp_python_tool deploy/scripts/check-mysql-identifiers.py
 
-WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-8080}"
+WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"
 
 echo "停止并清理测试服容器..."
 cp_compose down --remove-orphans || true

@@ -1,4 +1,4 @@
-# crawler_platform 1.0.17 商业化发布检查清单
+# crawler_platform 1.0.46 商业化发布检查清单
 
 本清单用于把“测试服跑通”升级为“可商业交付”。正式发布必须给出 `PASS`、`PASS_WITH_RISK` 或 `FAIL` 结论。
 
@@ -44,7 +44,7 @@
 ## 5. Agent 运维验收
 
 - Agent 心跳上报 CPU、内存、磁盘、inode、load average、runningContainers、availableSlots、Docker 状态、docker.sock 权限、项目目录可写性、lastError。
-- 前端服务器列表展示状态灯、资源卡片、最近心跳、槽位、Docker 异常和 lastError。
+- 前端执行节点列表展示状态灯、资源卡片、最近心跳、绑定项、Docker 异常和 lastError。
 - Agent 离线、Docker 异常、磁盘高水位、资源不足时，任务路由原因必须能解释。
 
 ## 6. 日志 V2 验收
@@ -52,7 +52,7 @@
 - 任务失败可看到生命周期事件、失败阶段、错误类型、是否可重试、错误摘要和建议动作。
 - 前端可查看日志尾部、按关键字/日志流过滤并下载完整日志。
 - Agent 高频接口不得写入 `sys_operation_log`。
-- 日志分片保留末尾换行，不得因为 Schema 裁剪丢失证据。
+- 日志分段保留末尾换行，不得因为 Schema 裁剪丢失证据。
 
 ## 7. 权限与租户隔离验收
 

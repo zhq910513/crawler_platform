@@ -8,10 +8,10 @@
 2. 推送镜像仓库；
 3. 获取 `sha256:digest`；
 4. 回调爬虫平台控制端 API 注册 release；
-5. 平台页面选择一台或多台服务器一键部署；
-6. 目标服务器 Agent 拉取同一个 `imageRepository@sha256:digest`。
+5. 平台页面选择一个或多个执行节点一键部署；
+6. 目标节点 Agent 拉取同一个 `imageRepository@sha256:digest`。
 
-执行服务器 Agent 不拉 Git、不构建镜像。
+执行节点 Agent 不拉 Git、不构建镜像。
 
 ## 控制端公网回调地址
 
@@ -24,7 +24,7 @@ GitHub Actions / GitLab CI 需要访问平台 API 注册 release。这个地址�
 它通常就是你当前打开爬虫平台的公网 IP + 端口或域名，例如：
 
 ```text
-http://1.2.3.4:8080
+http://1.2.3.4
 https://crawler.example.com
 ```
 
@@ -37,7 +37,7 @@ https://crawler.example.com
 在平台项目页点击“CI一键初始化”，复制生成的一行命令，例如：
 
 ```bash
-curl -fsSL 'http://1.2.3.4:8080/api/v1/cicd/spider-project-init.sh?provider=github&companyCode=ulike' | sh
+curl -fsSL 'http://1.2.3.4/api/v1/cicd/spider-project-init.sh?provider=github&companyCode=ulike' | sh
 ```
 
 该命令会在爬虫项目仓库根目录生成：
@@ -87,8 +87,8 @@ CRAWLER_REGISTRY_USERNAME
 CRAWLER_REGISTRY_PASSWORD
 ```
 
-## 多服务器部署
+## 多节点部署
 
-CI 只构建和注册 release，不写服务器列表。
+CI 只构建和注册 release，不写执行节点列表。
 
-同一个 release 要部署到多台服务器时，在平台页面选择目标服务器并一键部署。多个 Agent 会拉取同一个 digest 镜像。
+同一个 release 要部署到多个执行节点时，在平台页面选择目标节点并一键部署。多个 Agent 会拉取同一个 digest 镜像。

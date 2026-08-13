@@ -47,7 +47,7 @@ if ! printf '%s' "$health_json" | grep -Eq '"gitCommit"[[:space:]]*:[[:space:]]*
 fi
 
 web_port="$(cp_env_value .env WEB_PORT)"
-web_port="${web_port:-8080}"
+web_port="${web_port:-80}"
 cp_info "校验前端版本文件 /version.json。"
 version_json=""
 for i in $(seq 1 30); do

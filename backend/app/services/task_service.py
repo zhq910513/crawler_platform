@@ -58,45 +58,45 @@ class TaskService:
         required = bool(requirement.get("required", False))
         if not self._binding_value_exists(binding):
             if required:
-                errors.append(f"账号槽位 {slot} 必须配置")
+                errors.append(f"账号绑定项 {slot} 必须配置")
             return errors
         mode = self._credential_mode(binding)
         allowed = set(str(item) for item in (requirement.get("supportedModes") or requirement.get("supported_modes") or ["fixed"]))
         if mode not in allowed:
-            errors.append(f"账号槽位 {slot} 不支持模式 {mode}，允许：{sorted(allowed)}")
+            errors.append(f"账号绑定项 {slot} 不支持模式 {mode}，允许：{sorted(allowed)}")
         expected_platform = str(requirement.get("platformCode") or requirement.get("platform_code") or "").strip().lower()
         expected_type = str(requirement.get("credentialType") or requirement.get("credential_type") or "").strip()
         if isinstance(binding, dict):
             actual_platform = str(binding.get("platformCode") or binding.get("platform_code") or "").strip().lower()
             actual_type = str(binding.get("credentialType") or binding.get("credential_type") or "").strip()
             if expected_platform and actual_platform and actual_platform != expected_platform:
-                errors.append(f"账号槽位 {slot} platformCode 不匹配：期望 {expected_platform}，实际 {actual_platform}")
+                errors.append(f"账号绑定项 {slot} platformCode 不匹配：期望 {expected_platform}，实际 {actual_platform}")
             if expected_type and actual_type and actual_type != expected_type:
-                errors.append(f"账号槽位 {slot} credentialType 不匹配：期望 {expected_type}，实际 {actual_type}")
+                errors.append(f"账号绑定项 {slot} credentialType 不匹配：期望 {expected_type}，实际 {actual_type}")
             if mode == "fixed":
                 if not (binding.get("credentialKey") or binding.get("credential_key") or binding.get("credentialRef") or binding.get("credential_ref") or isinstance(binding.get("credential"), dict)):
-                    errors.append(f"账号槽位 {slot} fixed 模式必须配置 credentialKey/credentialRef")
+                    errors.append(f"账号绑定项 {slot} fixed 模式必须配置 credentialKey/credentialRef")
             elif mode == "fixed_list":
                 keys = binding.get("credentialKeys") or binding.get("credential_keys") or binding.get("credentialRefs") or binding.get("credential_refs") or binding.get("credentials")
                 if not isinstance(keys, list) or not keys:
-                    errors.append(f"账号槽位 {slot} fixed_list 模式必须配置非空账号列表")
+                    errors.append(f"账号绑定项 {slot} fixed_list 模式必须配置非空账号列表")
             elif mode == "pool":
                 if not (binding.get("selector") or actual_platform or expected_platform):
-                    errors.append(f"账号槽位 {slot} pool 模式必须配置 selector 或 platformCode")
+                    errors.append(f"账号绑定项 {slot} pool 模式必须配置 selector 或 platformCode")
             elif mode == "binding_rule":
                 rules = binding.get("rules") or []
                 if not isinstance(rules, list) or not rules:
-                    errors.append(f"账号槽位 {slot} binding_rule 模式必须配置 rules")
+                    errors.append(f"账号绑定项 {slot} binding_rule 模式必须配置 rules")
             elif mode in {"affinity_pool", "external_affinity_pool"}:
                 subject_type = binding.get("subjectType") or binding.get("subject_type") or (requirement.get("affinity") or {}).get("subjectType") or (requirement.get("affinity") or {}).get("subject_type")
                 if not subject_type:
-                    errors.append(f"账号槽位 {slot} {mode} 模式必须配置 subjectType")
+                    errors.append(f"账号绑定项 {slot} {mode} 模式必须配置 subjectType")
                 if mode == "external_affinity_pool" and not (binding.get("externalField") or binding.get("external_field") or binding.get("externalSubjectField") or binding.get("external_subject_field")):
-                    errors.append(f"账号槽位 {slot} external_affinity_pool 模式必须配置 externalField")
+                    errors.append(f"账号绑定项 {slot} external_affinity_pool 模式必须配置 externalField")
         elif mode == "fixed_list" and not binding:
-            errors.append(f"账号槽位 {slot} fixed_list 模式账号列表不能为空")
+            errors.append(f"账号绑定项 {slot} fixed_list 模式账号列表不能为空")
         elif mode == "fixed" and isinstance(binding, str) and not binding.strip():
-            errors.append(f"账号槽位 {slot} fixed 模式账号不能为空")
+            errors.append(f"账号绑定项 {slot} fixed 模式账号不能为空")
         return errors
 
     def _validate_task_contract_bindings(self, *, required_configs: list[Any] | None, required_credentials: list[Any] | None, config_bindings: dict[str, Any] | None, credential_bindings: dict[str, Any] | None, target_status: str = "DRAFT") -> None:
@@ -111,7 +111,7 @@ class TaskService:
                 errors.append("requiredConfigs 存在缺少 slot 的配置声明")
                 continue
             if bool(item.get("required", False)) and not self._binding_value_exists(configs.get(slot)):
-                errors.append(f"数据库/配置槽位 {slot} 必须绑定")
+                errors.append(f"数据库/配置绑定项 {slot} 必须绑定")
         for item in required_credentials or []:
             if not isinstance(item, dict):
                 continue
@@ -249,7 +249,7 @@ class TaskService:
         for server_id in payload.server_ids:
             ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.server_id == server_id, CrawlerProjectServer.deployment_status == "DEPLOYED"))
             if not ps:
-                raise AppError("任务指定服务器必须属于该项目已部署服务器", code=40053)
+                raise AppError("任务指定节点必须属于该项目已部署节点", code=40053)
             self.db.add(CrawlerTaskServerTarget(company_id=project.company_id, task_id=task.task_id, server_id=server_id))
         definition.definition_status = "CREATED"
         try:

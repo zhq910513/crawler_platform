@@ -36,7 +36,7 @@ if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
 if "currentOrigin" not in frontend or "connectivityCommand" not in frontend:
     errors.append("执行节点接入前端缺少系统地址读取或连通性验证命令")
 if 'label="控制端公网回调地址"' in frontend:
-    errors.append("执行节点接入前端不应在新增服务器表单展示控制端公网回调地址输入项")
+    errors.append("执行节点接入前端不应在新增执行节点表单展示控制端公网回调地址输入项")
 legacy_token_text = "生成" + "接入" + "凭证"
 if legacy_token_text in companies:
     errors.append("公司页面仍使用含糊的“" + legacy_token_text + "”文案")

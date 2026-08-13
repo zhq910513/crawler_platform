@@ -228,7 +228,7 @@ def print_failure_diagnostics(agent_container):
 
 def main():
     parser = argparse.ArgumentParser(description="爬虫管理平台零数据测试服端到端 smoke-test")
-    parser.add_argument("--base-url", default=os.getenv("SMOKE_BASE_URL", "http://127.0.0.1:8080"))
+    parser.add_argument("--base-url", default=os.getenv("SMOKE_BASE_URL", "http://127.0.0.1"))
     parser.add_argument("--env-file", default=".env")
     parser.add_argument("--build-smoke-image", action="store_true")
     parser.add_argument("--registry", default=os.getenv("SMOKE_REGISTRY", "localhost:5000"))
@@ -344,7 +344,7 @@ def main():
     project_id = int(project["projectId"])
     print(f"projectId={project_id}")
 
-    print("确认项目执行服务器池...")
+    print("确认项目执行节点范围...")
     client.request("PUT", f"/projects/{project_id}/servers", {"servers": [{"serverId": server_id, "schedulingStatus": "ENABLED", "serverRole": "ACTIVE", "priority": 100, "weight": 100, "maxConcurrency": args.max_slots, "autoEjectEnabled": True, "autoRecoverEnabled": True}], "reason": "smoke test"})
 
     print("读取任务定义...")

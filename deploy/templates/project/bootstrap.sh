@@ -115,4 +115,4 @@ PY
 PROJECT_DIR="$PROJECT_DIR" IMAGE_DIGEST="$DIGEST" GIT_BRANCH="$GIT_BRANCH" GIT_COMMIT="$GIT_COMMIT" IMAGE_TAG="$IMAGE_TAG" run_python "$MANIFEST_SCRIPT" > "$MANIFEST_JSON"
 curl_file -fsS -X POST "$PLATFORM/api/v1/discovered-projects" -H "Authorization: Discovery ${CRAWLER_PLATFORM_DISCOVERY_TOKEN}" -H 'Content-Type: application/json' -d "@$MANIFEST_JSON" > "$RESPONSE_JSON"
 run_python -m json.tool "$RESPONSE_JSON" || cat "$RESPONSE_JSON"
-echo "✅ 接入上报完成：版本、部署服务器和任务定义已登记；生产调度仍以前端平台配置为准。"
+echo "✅ 接入上报完成：版本、部署节点和任务定义已登记；生产自动计划仍以前端平台配置为准。"

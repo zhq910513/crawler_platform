@@ -51,7 +51,7 @@ class ServerService:
             raise AppError("公司不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         exists = self.servers.by_code(payload.server_code)
         if exists:
-            raise AppError("服务器编码已存在", code=40031)
+            raise AppError("节点编码已存在", code=40031)
         data = payload.model_dump()
         data["company_id"] = company_id
         server = CrawlerServer(**data)
@@ -80,12 +80,13 @@ class ServerService:
             raise AppError("公司不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         exists = self.servers.by_code(payload.server_code)
         if exists and exists.company_id != company_id:
-            raise AppError("服务器编码已被其他公司使用", code=40032)
+            raise AppError("节点编码已被其他公司使用", code=40032)
         agent = self.agents.by_code(payload.agent_code)
         if agent and agent.company_id != company_id:
             raise AppError("Agent 编码已被其他公司使用", code=40033)
         raw_token = secrets.token_urlsafe(40)
         expires_at = utcnow() + timedelta(hours=payload.expires_in_hours)
+        control_plane_url = self._resolve_control_plane_url(payload.control_plane_url, detected_base_url, payload.install_target)
         token = CrawlerAgentJoinToken(
             company_id=company_id,
             token_hash=sha256_text(raw_token),
@@ -101,11 +102,11 @@ class ServerService:
             registry_credential_ref=payload.registry_credential_ref,
             install_mode=payload.install_mode,
             expires_at=expires_at,
+            last_preflight_report={"controlPlaneUrl": control_plane_url},
             created_by=user.user_id,
         )
         self.db.add(token)
         self.db.flush()
-        control_plane_url = self._resolve_control_plane_url(payload.control_plane_url, detected_base_url, payload.install_target)
         command = self._install_command(raw_token, control_plane_url)
         connectivity_command = f"curl -fsSL {control_plane_url.rstrip('/')}/health && echo"
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
@@ -122,6 +123,7 @@ class ServerService:
             "controlPlaneUrl": control_plane_url,
             "joinTokenMasked": self._mask_token(raw_token),
             "installTarget": payload.install_target,
+            "warnings": self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
         }
 
@@ -134,7 +136,7 @@ class ServerService:
         rows = list(self.db.scalars(stmt).all())
         return [{**{c.name: getattr(row, c.name) for c in row.__table__.columns}, "tokenHash": "***"} for row in rows]
 
-    def consume_agent_join_token(self, payload: AgentBootstrapEnvRequest) -> str:
+    def consume_agent_join_token(self, payload: AgentBootstrapEnvRequest, detected_base_url: str = "") -> str:
         from sqlalchemy import select
         token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(payload.join_token), CrawlerAgentJoinToken.status == "ACTIVE"))
         if not token:
@@ -159,7 +161,7 @@ class ServerService:
             self.servers.add(server)
             self.db.flush()
         elif server.company_id != token.company_id:
-            raise AppError("服务器编码已被其他公司使用", code=40032)
+            raise AppError("节点编码已被其他公司使用", code=40032)
         else:
             server.server_name = token.server_name or server.server_name
             server.max_container_slots = token.max_container_slots
@@ -170,7 +172,7 @@ class ServerService:
         raw_agent_token = secrets.token_urlsafe(36)
         agent = self.agents.by_code(token.agent_code)
         if agent and agent.server_id != server.server_id:
-            raise AppError("Agent 编码已绑定其他服务器", code=40033)
+            raise AppError("节点服务编码已绑定其他节点", code=40033)
         if not agent:
             agent = CrawlerAgent(
                 company_id=token.company_id,
@@ -188,10 +190,12 @@ class ServerService:
             agent.capabilities = token.capabilities or agent.capabilities or {}
         token.status = "USED"
         token.used_at = utcnow()
-        token.last_preflight_report = payload.install_report or {}
+        previous_report = dict(token.last_preflight_report or {})
+        control_plane_url = str(previous_report.get("controlPlaneUrl") or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "")
+        token.last_preflight_report = {**previous_report, **(payload.install_report or {}), "controlPlaneUrl": control_plane_url}
         self.db.commit()
         lines = {
-            "AGENT_CONTROL_PLANE_URL": SystemConfigService(self.db).resolve_control_plane_public_base_url() or "",
+            "AGENT_CONTROL_PLANE_URL": control_plane_url,
             "AGENT_AGENT_TOKEN": raw_agent_token,
             "AGENT_AGENT_CODE": token.agent_code,
             "AGENT_SERVER_CODE": token.server_code,
@@ -211,13 +215,40 @@ class ServerService:
         base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")
         if not base:
             raise AppError("请先填写执行节点可以访问的控制端公网回调地址", code=40071)
+        base = self._prefer_detected_origin_port(base, detected_base_url)
         parsed = urlparse(base)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise AppError("控制端公网回调地址必须以 http:// 或 https:// 开头", code=40072)
         host = (parsed.hostname or "").lower()
         if install_target == "REMOTE" and self._is_loopback_host(host):
-            raise AppError("远程服务器接入不能使用 127.0.0.1 或 localhost，请填写执行节点可访问的控制端公网回调地址", code=40073)
+            raise AppError("远程节点接入不能使用 127.0.0.1 或 localhost，请填写执行节点可访问的控制端公网回调地址", code=40073)
         return base
+
+
+    @staticmethod
+    def _prefer_detected_origin_port(base: str, detected_base_url: str = "") -> str:
+        detected_base = (detected_base_url or "").strip().rstrip("/")
+        if not detected_base:
+            return base
+        configured = urlparse(base)
+        detected = urlparse(detected_base)
+        if configured.scheme not in {"http", "https"} or detected.scheme not in {"http", "https"}:
+            return base
+        if not configured.hostname or not detected.hostname:
+            return base
+        same_host = configured.scheme == detected.scheme and configured.hostname.lower() == detected.hostname.lower()
+        if not same_host:
+            return base
+        detected_default_port = 80 if detected.scheme == "http" else 443
+        if configured.port is None and detected.port is not None and detected.port != detected_default_port:
+            return detected_base
+        return base
+
+    def _control_plane_url_warnings(self, requested_url: str, resolved_url: str, detected_base_url: str = "") -> list[str]:
+        requested = (requested_url or "").strip().rstrip("/")
+        if requested and requested != resolved_url and self._prefer_detected_origin_port(requested, detected_base_url) == resolved_url:
+            return [f"配置地址未带端口，已按当前访问入口临时使用 {resolved_url} 生成接入命令；请到系统设置保存完整地址。"]
+        return []
 
     @staticmethod
     def _is_loopback_host(host: str) -> bool:
@@ -254,10 +285,10 @@ class ServerService:
             )
             self.servers.add(server)
         elif server.company_id != company_id:
-            raise AppError("服务器编码已被其他公司使用", code=40032)
+            raise AppError("节点编码已被其他公司使用", code=40032)
         agent = self.agents.by_code(payload.agent_code)
         if agent and agent.server_id != server.server_id:
-            raise AppError("Agent 编码已绑定其他服务器", code=40033)
+            raise AppError("节点服务编码已绑定其他节点", code=40033)
         raw_token = secrets.token_urlsafe(36)
         if not agent:
             agent = CrawlerAgent(

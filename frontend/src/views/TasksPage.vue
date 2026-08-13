@@ -11,8 +11,8 @@
         <el-form-item label="任务标识">
           <el-input v-model="query.taskCode" clearable placeholder="请输入任务标识" @keyup.enter="search" />
         </el-form-item>
-        <el-form-item label="服务器分组">
-          <el-select v-model="query.serverId" clearable filterable placeholder="请选择服务器">
+        <el-form-item label="执行节点">
+          <el-select v-model="query.serverId" clearable filterable placeholder="请选择执行节点">
             <el-option v-for="server in filteredServers" :key="server.serverId" :label="serverLabel(server)" :value="server.serverId" />
           </el-select>
         </el-form-item>
@@ -44,7 +44,7 @@
       </div>
       <el-collapse v-model="advancedFilterNames" class="advanced-filter">
         <el-collapse-item name="advanced">
-          <template #title>高级筛选（公司 / 项目 / 调度状态）</template>
+          <template #title>高级筛选（公司 / 项目 / 计划状态）</template>
           <div class="advanced-filter-grid">
             <el-form-item v-if="sessionState.user?.isSuperAdmin" label="公司">
               <el-select v-model="query.companyId" clearable filterable placeholder="全部公司" @change="handleCompanyChange">
@@ -59,8 +59,8 @@
                 <el-option v-for="project in filteredProjects" :key="project.projectId" :label="project.projectName" :value="project.projectId" />
               </el-select>
             </el-form-item>
-            <el-form-item label="调度状态">
-              <el-select v-model="query.scheduleStatus" clearable placeholder="全部调度状态">
+            <el-form-item label="计划状态">
+              <el-select v-model="query.scheduleStatus" clearable placeholder="全部计划状态">
                 <el-option v-for="item in scheduleStatusOptions" :key="item" :label="statusText(item)" :value="item" />
               </el-select>
             </el-form-item>
@@ -86,7 +86,7 @@
     <el-table v-loading="loading" :data="rows" row-key="taskId" class="ops-table" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="42" fixed="left" />
       <el-table-column label="任务号" prop="taskId" width="86" fixed="left" />
-      <el-table-column label="服务器" min-width="108" align="center" show-overflow-tooltip>
+      <el-table-column label="执行节点" min-width="108" align="center" show-overflow-tooltip>
         <template #default="s">
           <div class="server-cell">{{ s.row.serverIp || s.row.serverName || '-' }}</div>
           <div v-if="s.row.serverIp && s.row.serverName" class="cell-subtitle">{{ s.row.serverName }}</div>
@@ -124,7 +124,7 @@
           <el-tooltip content="删除"><el-button link type="primary" :icon="Delete" @click="disableRow(s.row)" /></el-tooltip>
           <el-tooltip content="立即执行"><el-button link type="primary" :icon="VideoPlay" @click="manualRun(s.row)" /></el-tooltip>
           <el-tooltip content="查看"><el-button link type="primary" :icon="View" @click="openDetail(s.row)" /></el-tooltip>
-          <el-tooltip content="调度配置"><el-button link type="primary" :icon="Operation" @click="openSchedule(s.row)" /></el-tooltip>
+          <el-tooltip content="计划设置"><el-button link type="primary" :icon="Operation" @click="openSchedule(s.row)" /></el-tooltip>
         </template>
       </el-table-column>
     </el-table>
@@ -148,17 +148,17 @@
         </el-row>
         <el-row :gutter="16">
           <el-col :span="8"><el-form-item label="调度类型"><el-select v-model="createForm.scheduleType"><el-option label="手动" value="MANUAL" /><el-option label="定时" value="CRON" /></el-select></el-form-item></el-col>
-          <el-col :span="8"><el-form-item label="调度状态"><el-select v-model="createForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="计划状态"><el-select v-model="createForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="任务组"><el-input v-model="createForm.taskGroup" /></el-form-item></el-col>
         </el-row>
         <el-form-item v-if="createForm.scheduleType === 'CRON'" label="高级表达式"><el-input v-model="createForm.cronExpression" placeholder="5 段格式：分钟 小时 日 月 星期" /></el-form-item>
-        <el-form-item label="指定服务器"><el-select v-model="createForm.serverIds" multiple clearable filterable placeholder="为空时使用项目服务器池"><el-option v-for="server in createProjectServers" :key="server.serverId" :label="server.serverName || String(server.serverId)" :value="server.serverId" /></el-select></el-form-item>
+        <el-form-item label="指定执行节点"><el-select v-model="createForm.serverIds" multiple clearable filterable placeholder="为空时使用项目默认节点"><el-option v-for="server in createProjectServers" :key="server.serverId" :label="server.serverName || String(server.serverId)" :value="server.serverId" /></el-select></el-form-item>
         <el-collapse>
           <el-collapse-item title="高级执行配置" name="advanced">
             <el-row :gutter="16">
               <el-col :span="8"><el-form-item label="运行模式"><el-select v-model="createForm.runtimeMode"><el-option label="标准容器" value="SHARED_ENV_ISOLATED" /><el-option label="常驻服务" value="WORKER_POOL" /><el-option label="独占容器" value="DEDICATED_CONTAINER" /></el-select></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="任务最大并发"><el-input-number v-model="createForm.taskMaxConcurrency" :min="1" :max="1000" /></el-form-item></el-col>
-              <el-col :span="8"><el-form-item label="任务组最大并发"><el-input-number v-model="createForm.groupMaxConcurrency" :min="1" :max="1000" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="单任务同时运行上限"><el-input-number v-model="createForm.taskMaxConcurrency" :min="1" :max="1000" /></el-form-item></el-col>
+              <el-col :span="8"><el-form-item label="任务组同时运行上限"><el-input-number v-model="createForm.groupMaxConcurrency" :min="1" :max="1000" /></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="内存共享"><el-input-number v-model="createForm.shmSizeMb" :min="16" :max="65536" /></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="日志上限 MB"><el-input-number v-model="createForm.logLimitMb" :min="1" :max="10240" /></el-form-item></el-col>
               <el-col :span="8"><el-form-item label="独占运行"><el-switch v-model="createForm.exclusiveMode" /></el-form-item></el-col>
@@ -187,7 +187,7 @@
     <el-dialog v-model="scheduleVisible" title="修改任务编排" width="860px">
       <el-form label-position="top" class="schedule-form">
         <el-row :gutter="16">
-          <el-col :span="8"><el-form-item label="调度状态"><el-select v-model="scheduleForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
+          <el-col :span="8"><el-form-item label="计划状态"><el-select v-model="scheduleForm.scheduleStatus"><el-option label="启用" value="ENABLED" /><el-option label="暂停" value="PAUSED" /><el-option label="停用" value="DISABLED" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="调度类型"><el-select v-model="scheduleForm.scheduleType"><el-option label="手动" value="MANUAL" /><el-option label="定时" value="CRON" /></el-select></el-form-item></el-col>
           <el-col :span="8"><el-form-item label="重叠策略"><el-select v-model="scheduleForm.overlapPolicy"><el-option label="排队等待" value="QUEUE" /><el-option label="跳过新触发" value="SKIP" /><el-option label="允许并发" value="CONCURRENT" /><el-option label="取消旧任务" value="CANCEL_OLD" /></el-select></el-form-item></el-col>
         </el-row>
@@ -223,13 +223,13 @@
       <el-descriptions v-if="detailRow" :column="1" border>
         <el-descriptions-item label="公司 / 项目">{{ detailRow.companyName }} / {{ detailRow.projectName }}</el-descriptions-item>
         <el-descriptions-item label="任务">{{ detailRow.taskName }}</el-descriptions-item>
-        <el-descriptions-item label="服务器">{{ detailRow.serverName || '-' }} {{ detailRow.serverIp || '' }}</el-descriptions-item>
+        <el-descriptions-item label="执行节点">{{ detailRow.serverName || '-' }} {{ detailRow.serverIp || '' }}</el-descriptions-item>
         <el-descriptions-item label="负责人">{{ detailRow.ownerUserName || '-' }}</el-descriptions-item>
         <el-descriptions-item label="调度">{{ scheduleText(detailRow) }}</el-descriptions-item>
         <el-descriptions-item label="时区">{{ detailRow.scheduleTimezone || '-' }}</el-descriptions-item>
         <el-descriptions-item label="下次执行">{{ formatTime(detailRow.nextRunAt) }}</el-descriptions-item>
         <el-descriptions-item label="最近结果">{{ statusText(detailRow.lastRunStatus) }}</el-descriptions-item>
-        <el-descriptions-item label="路由状态">{{ statusText(detailRow.routingStatus) }}</el-descriptions-item>
+        <el-descriptions-item label="分配状态">{{ statusText(detailRow.routingStatus) }}</el-descriptions-item>
         <el-descriptions-item label="最近完成">{{ formatTime(detailRow.lastFinishedAt) }}</el-descriptions-item>
         <el-descriptions-item label="最近错误">{{ detailRow.lastErrorSummary || '-' }}</el-descriptions-item>
       </el-descriptions>
@@ -307,7 +307,7 @@ const detailRow = ref<TaskSchedulePanelItem | null>(null)
 
 function serverLabel(server: ServerNode) { return `${server.serverName}${server.serverIp ? `（${server.serverIp}）` : ''}` }
 function statusText(value?: string | null) {
-  const map: Record<string, string> = { ENABLED: '启用', DISABLED: '停用', PAUSED: '暂停', DRAFT: '草稿', ARCHIVED: '归档', ERROR: '异常', NONE: '无调度', QUEUED: '排队中', ROUTED: '已路由', RUNNING: '运行中', STARTING: '启动中', ASSIGNED: '已分配', SUCCEEDED: '成功', FAILED: '失败', CANCELED: '已取消', CANCELLED: '已取消', TIMED_OUT: '超时', TIMEOUT: '超时', LOST: '失联', NOT_RUN: '未运行', WAITING_RESOURCE: '等待资源', NO_AVAILABLE_SERVER: '无可用节点', PENDING: '待处理' }
+  const map: Record<string, string> = { ENABLED: '启用', DISABLED: '停用', PAUSED: '暂停', DRAFT: '草稿', ARCHIVED: '归档', ERROR: '异常', NONE: '无自动计划', QUEUED: '排队中', ROUTED: '已分配', RUNNING: '运行中', STARTING: '启动中', ASSIGNED: '已分配', SUCCEEDED: '成功', FAILED: '失败', CANCELED: '已取消', CANCELLED: '已取消', TIMED_OUT: '超时', TIMEOUT: '超时', LOST: '失联', NOT_RUN: '未运行', WAITING_RESOURCE: '等待资源', NO_AVAILABLE_SERVER: '无可用节点', PENDING: '待处理' }
   return value ? (map[value] || value) : '-'
 }
 type TagType = '' | 'primary' | 'success' | 'warning' | 'info' | 'danger'
@@ -434,7 +434,7 @@ async function manualRun(row: TaskSchedulePanelItem) {
 }
 async function toggleTaskStatus(row: TaskSchedulePanelItem, enabled: boolean) {
   const nextStatus = enabled ? 'ENABLED' : 'DISABLED'
-  const message = enabled ? `确认启用任务“${row.taskName}”？` : `确认停用任务“${row.taskName}”？停用后不会被自动调度。`
+  const message = enabled ? `确认启用任务“${row.taskName}”？` : `确认停用任务“${row.taskName}”？停用后不会自动运行。`
   try {
     await ElMessageBox.confirm(message, enabled ? '启用任务' : '停用任务', { type: 'warning' })
     await updateTask(row.taskId, { status: nextStatus })
@@ -446,7 +446,7 @@ async function toggleTaskStatus(row: TaskSchedulePanelItem, enabled: boolean) {
 }
 async function disableRow(row: TaskSchedulePanelItem) {
   try {
-    await ElMessageBox.confirm(`确认删除任务“${row.taskName}”？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用调度。`, '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确认删除任务“${row.taskName}”？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用自动计划。`, '删除确认', { type: 'warning' })
     const result = await deleteTask(row.taskId)
     const cleanupCount = result.containerCleanupCommands?.length || 0
     ElMessage.success(result.deleted ? `任务已删除，已下发 ${cleanupCount} 条容器清理指令` : `任务已有历史执行记录，已归档隐藏，并下发 ${cleanupCount} 条容器清理指令`)
@@ -458,7 +458,7 @@ async function disableRow(row: TaskSchedulePanelItem) {
 async function disableSelected() {
   if (!selectedRows.value.length) { ElMessage.warning('请先选择要删除的任务'); return }
   try {
-    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 个任务？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用调度。`, '批量删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedRows.value.length} 个任务？没有历史记录的任务会被删除；已有历史记录的任务会归档并停用自动计划。`, '批量删除确认', { type: 'warning' })
     let deleted = 0
     let archived = 0
     for (const row of selectedRows.value) {
@@ -466,7 +466,7 @@ async function disableSelected() {
       if (result.deleted) deleted += 1
       else if (result.archived) archived += 1
     }
-    ElMessage.success(`删除完成：物理删除 ${deleted} 个，归档隐藏 ${archived} 个；容器清理指令由对应执行端心跳处理`)
+    ElMessage.success(`删除完成：物理删除 ${deleted} 个，归档隐藏 ${archived} 个；容器清理指令由对应执行节点心跳处理`)
     selectedRows.value = []
     await loadPanel()
   } catch (error) {
@@ -476,7 +476,7 @@ async function disableSelected() {
 function editSelected() { const row = assertSingleSelection('修改'); if (row) void openEdit(row) }
 function openLogsSelected() { const row = assertSingleSelection('查看日志'); if (row) void openLogs(row) }
 function exportRows() {
-  const headers = ['任务号', '服务器', '所属平台', '任务名称', '最近完成', '执行计划', '下次执行时间', '开发人员', '状态', '最近结果']
+  const headers = ['任务号', '执行节点', '所属平台', '任务名称', '最近完成', '执行计划', '下次执行时间', '开发人员', '状态', '最近结果']
   const source = selectedRows.value.length ? selectedRows.value : rows.value
   const lines = [headers, ...source.map((row) => [row.taskId, row.serverIp || row.serverName || '', row.taskPlatform || row.projectName || '', row.taskName, formatTime(row.lastFinishedAt), cronText(row), formatTime(row.nextRunAt), row.ownerUserName || '', statusText(row.taskStatus), statusText(row.lastRunStatus)])]
   const csv = lines.map((line) => line.map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')).join('\n')
@@ -489,11 +489,11 @@ function exportRows() {
   URL.revokeObjectURL(url)
 }
 async function toggleSchedule(row: TaskSchedulePanelItem, enabled: boolean) {
-  const message = enabled ? '确认启用该任务自动调度？' : '确认停用后该任务不会自动运行，但仍可手动执行。'
+  const message = enabled ? '确认启用该任务自动计划？' : '确认停用后该任务不会自动运行，但仍可手动执行。'
   try {
-    await ElMessageBox.confirm(message, enabled ? '启用调度' : '停用调度', { type: 'warning' })
+    await ElMessageBox.confirm(message, enabled ? '启用计划' : '停用计划', { type: 'warning' })
     await updateTaskSchedule(row.taskId, { scheduleStatus: enabled ? 'ENABLED' : 'DISABLED' })
-    ElMessage.success(enabled ? '调度已启用' : '调度已停用')
+    ElMessage.success(enabled ? '计划已启用' : '计划已停用')
     await loadPanel()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') throw error

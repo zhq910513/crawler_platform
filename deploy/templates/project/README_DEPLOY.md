@@ -1,10 +1,10 @@
 # 爬虫项目一键接入说明
 
 1. 在平台“公司配置”中生成公司级项目接入凭证 `CRAWLER_PLATFORM_DISCOVERY_TOKEN`。
-2. 复制 `.env.example` 为 `.env`，填写平台地址、公司编号、服务器编码、镜像仓库和 discovery token。
-3. 项目 `sch.py` 只用于本地执行和声明 `TASKS` 任务清单；生产调度由平台任务调度控制。
+2. 复制 `.env.example` 为 `.env`，填写平台地址、公司编号、节点编码、镜像仓库和 discovery token。
+3. 项目 `sch.py` 只用于本地执行和声明 `TASKS` 任务清单；生产自动计划由平台任务调度控制。
 4. 每次构建完成执行：`./deploy/bootstrap.sh --non-interactive`。
-5. 脚本会向 `/api/v1/discovered-projects` 上报 manifest、镜像 digest、部署服务器和任务定义，不会创建或覆盖生产 Cron。
+5. 脚本会向 `/api/v1/discovered-projects` 上报 manifest、镜像 digest、部署节点和任务定义，不会创建或覆盖生产 Cron。
 
 
 ## 业务镜像运行时要求

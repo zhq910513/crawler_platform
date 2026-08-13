@@ -10,7 +10,7 @@ from app.responses import ok
 from app.schemas import AgentJoinTokenCreate, AgentRegistration, ServerCreate, ServerUpdate
 from app.services.server_service import ServerService
 
-router = APIRouter(prefix="/servers", tags=["服务器"])
+router = APIRouter(prefix="/servers", tags=["执行节点"])
 
 
 def _detected_base_url(request: Request) -> str:

@@ -3,7 +3,7 @@
     <div class="toolbar company-toolbar">
       <div>
         <h3>公司管理</h3>
-        <p class="muted">创建公司后，通过配置助手引导完成数据库、服务器、项目、账号和任务编排准备。</p>
+        <p class="muted">创建公司后，通过配置助手引导完成数据库、执行节点、项目、账号和任务编排准备。</p>
       </div>
       <div><el-button type="primary" @click="dialogVisible = true">新增公司</el-button><el-button @click="load">刷新</el-button></div>
     </div>

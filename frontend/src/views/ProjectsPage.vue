@@ -15,9 +15,9 @@
             <el-table-column label="备注" prop="remark" min-width="160" />
       <el-table-column label="上线状态"><template #default="s">{{ zh(s.row.onlineStatus) }}</template></el-table-column>
       <el-table-column label="最新版本" prop="latestVersion" />
-      <el-table-column label="部署服务器数" prop="deployedServerCount" />
-      <el-table-column label="启用服务器数" prop="executionServerCount" />
-      <el-table-column label="调度模式"><template #default="s">{{ zh(s.row.dispatchMode) }}</template></el-table-column>
+      <el-table-column label="部署节点数" prop="deployedServerCount" />
+      <el-table-column label="启用节点数" prop="executionServerCount" />
+      <el-table-column label="运行模式"><template #default="s">{{ zh(s.row.dispatchMode) }}</template></el-table-column>
       <el-table-column label="创建时间"><template #default="s">{{ formatTime(s.row.createdAt) }}</template></el-table-column>
       <el-table-column label="操作" width="180" fixed="right"><template #default="s"><el-button size="small" type="primary" link @click.stop="oneClickDeploy(s.row)">部署当前版本</el-button><el-button size="small" type="danger" link @click.stop="deleteProjectRow(s.row)">删除</el-button></template></el-table-column>
     </el-table>
@@ -25,19 +25,18 @@
     <el-divider />
     <section v-if="selectedProject">
       <div class="section-title">
-        <h3>部署与服务器：{{ selectedProject.projectName }}</h3>
-        <div><el-button size="small" type="primary" @click="oneClickDeploy(selectedProject)">部署当前版本当前版本</el-button><el-button size="small" @click="openServerPoolEditor">配置服务器</el-button><el-button size="small" @click="refreshSelectedProject">刷新</el-button></div>
+        <h3>部署与节点：{{ selectedProject.projectName }}</h3>
+        <div><el-button size="small" type="primary" @click="oneClickDeploy(selectedProject)">部署当前版本</el-button><el-button size="small" @click="openServerPoolEditor">配置节点</el-button><el-button size="small" @click="refreshSelectedProject">刷新</el-button></div>
       </div>
       <el-table :data="projectServers" border>
-        <el-table-column label="服务器名称" prop="serverName" />
+        <el-table-column label="节点名称" prop="serverName" />
                 <el-table-column label="部署状态"><template #default="s">{{ zh(s.row.deploymentStatus) }}</template></el-table-column>
-        <el-table-column label="调度状态"><template #default="s">{{ zh(s.row.schedulingStatus) }}</template></el-table-column>
+        <el-table-column label="接收任务"><template #default="s">{{ zh(s.row.schedulingStatus) }}</template></el-table-column>
         <el-table-column label="镜像状态"><template #default="s">{{ zh(s.row.imageReadinessStatus) }}</template></el-table-column>
         <el-table-column label="角色"><template #default="s">{{ zh(s.row.serverRole) }}</template></el-table-column>
         <el-table-column label="健康"><template #default="s">{{ zh(s.row.healthStatus || '') }}</template></el-table-column>
-        <el-table-column label="容量"><template #default="s">{{ zh(s.row.capacityStatus || '') }}</template></el-table-column>
-        <el-table-column label="权重" prop="weight" />
-        <el-table-column label="项目并发" prop="maxConcurrency" />
+        <el-table-column label="负载"><template #default="s">{{ zh(s.row.capacityStatus || '') }}</template></el-table-column>
+        <el-table-column label="任务上限" prop="maxConcurrency" />
         <el-table-column label="暂停原因" prop="disabledReason" min-width="180" />
       </el-table>
       <el-divider />
@@ -62,27 +61,25 @@
       <el-table :data="discoveredProjects" border :row-class-name="discoveredRowClass" @row-click="setDiscovered">
         <el-table-column label="项目名称" prop="projectName" />
                 <el-table-column label="最新版本" prop="latestVersion" />
-        <el-table-column label="部署服务器数" prop="deploymentServerCount" />
+        <el-table-column label="部署节点数" prop="deploymentServerCount" />
         <el-table-column label="状态"><template #default="s">{{ s.row.selectable ? '待接入' : zh(s.row.discoveryStatus) }}</template></el-table-column>
         <el-table-column label="最近部署"><template #default="s">{{ formatTime(s.row.lastDeployedAt) }}</template></el-table-column>
       </el-table>
       <el-form label-position="top" style="margin-top: 14px">
         <el-form-item label="备注"><el-input v-model="importForm.remark" /></el-form-item>
-        <el-form-item label="调度模式"><el-select v-model="importForm.dispatchMode"><el-option label="负载均衡" value="LOAD_BALANCE" /><el-option label="主备模式" value="PRIMARY_STANDBY" /></el-select></el-form-item>
+        <el-form-item label="运行模式"><el-select v-model="importForm.dispatchMode"><el-option label="负载均衡" value="LOAD_BALANCE" /><el-option label="主备模式" value="PRIMARY_STANDBY" /></el-select></el-form-item>
       </el-form>
       <template #footer><el-button @click="importVisible = false">取消</el-button><el-button type="primary" :disabled="!selectedDiscovered?.selectable" @click="submitImport">确认接入</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="serverPoolVisible" title="配置服务器" width="1080px">
+    <el-dialog v-model="serverPoolVisible" title="配置节点" width="1080px">
       <el-table :data="serverPoolDraft" border>
         <el-table-column label="启用" width="70"><template #default="s"><el-checkbox v-model="s.row.enabled" /></template></el-table-column>
-        <el-table-column label="服务器" min-width="170"><template #default="s">{{ s.row.serverName }}</template></el-table-column>
+        <el-table-column label="执行节点" min-width="170"><template #default="s">{{ s.row.serverName }}</template></el-table-column>
         <el-table-column label="接入状态" width="100"><template #default="s">{{ s.row.projectServerId ? '已加入' : '未加入' }}</template></el-table-column>
-        <el-table-column label="调度状态" width="140"><template #default="s"><el-select v-model="s.row.schedulingStatus"><el-option label="可调度" value="ENABLED" /><el-option label="排空中" value="DRAINING" /><el-option label="人工暂停" value="PAUSED" /><el-option label="禁用" value="DISABLED" /></el-select></template></el-table-column>
-        <el-table-column label="角色" width="140"><template #default="s"><el-select v-model="s.row.serverRole"><el-option label="活动服务器" value="ACTIVE" /><el-option label="主服务器" value="PRIMARY" /><el-option label="备用服务器" value="STANDBY" /><el-option label="候选服务器" value="CANDIDATE" /></el-select></template></el-table-column>
-        <el-table-column label="优先级" width="120"><template #default="s"><el-input-number v-model="s.row.priority" :min="1" /></template></el-table-column>
-        <el-table-column label="权重" width="120"><template #default="s"><el-input-number v-model="s.row.weight" :min="0" /></template></el-table-column>
-        <el-table-column label="项目并发" width="130"><template #default="s"><el-input-number v-model="s.row.maxConcurrency" :min="1" /></template></el-table-column>
+        <el-table-column label="接收任务" width="140"><template #default="s"><el-select v-model="s.row.schedulingStatus"><el-option label="可接收任务" value="ENABLED" /><el-option label="暂停接收新任务" value="DRAINING" /><el-option label="暂停" value="PAUSED" /><el-option label="禁用" value="DISABLED" /></el-select></template></el-table-column>
+        <el-table-column label="角色" width="140"><template #default="s"><el-select v-model="s.row.serverRole"><el-option label="活动节点" value="ACTIVE" /><el-option label="主节点" value="PRIMARY" /><el-option label="备用节点" value="STANDBY" /><el-option label="候选节点" value="CANDIDATE" /></el-select></template></el-table-column>
+        <el-table-column label="任务上限" width="130"><template #default="s"><el-input-number v-model="s.row.maxConcurrency" :min="1" /></template></el-table-column>
       </el-table>
       <el-form label-position="top" style="margin-top: 14px"><el-form-item label="调整原因"><el-input v-model="serverPoolReason" /></el-form-item></el-form>
       <div v-if="poolAnalysis" class="soft-panel">影响分析已完成，请确认后保存。</div>
@@ -193,7 +190,7 @@ async function loadProjectServers() { if (selectedProject.value) projectServers.
 async function loadProjectDeployments() { if (selectedProject.value) deploymentHistory.value = await listProjectReleaseDeployments(selectedProject.value.projectId) }
 async function deleteProjectRow(row: Project) {
   try {
-    await ElMessageBox.confirm(`确认删除项目“${row.projectName}”？删除后会向项目执行服务器下发容器清理指令；存在历史运行记录的项目会归档隐藏。`, '删除项目确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确认删除项目“${row.projectName}”？删除后会向项目执行节点下发容器清理指令；存在历史运行记录的项目会归档隐藏。`, '删除项目确认', { type: 'warning' })
     const result = await deleteProject(row.projectId)
     const cleanupCount = result.containerCleanupCommands?.length || 0
     ElMessage.success(result.deleted ? `项目已删除，已下发 ${cleanupCount} 条容器清理指令` : `项目已有历史运行记录，已归档隐藏，并下发 ${cleanupCount} 条容器清理指令`)
@@ -286,7 +283,7 @@ async function deploySelectedRelease() {
 async function oneClickDeploy(row: Project | null) {
   if (!row) return
   try {
-    await ElMessageBox.confirm(`确认部署当前版本项目“${row.projectName}”的当前最新版本？平台会自动选择可用 Agent 服务器，下发镜像拉取、目录准备和运行时自检指令。`, '部署当前版本确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确认部署当前版本项目“${row.projectName}”？平台会自动选择可用执行节点，下发镜像拉取、目录准备和运行时自检指令。`, '部署当前版本确认', { type: 'warning' })
     const result = await deployProjectRelease(row.projectId, { serverIds: [], autoSelect: true, reason: '项目部署当前版本' })
     ElMessage.success(result.message || '部署当前版本单已创建')
     selectedProject.value = row
@@ -304,7 +301,7 @@ function deploymentStepText(row: Record<string, unknown>) {
   return active ? `${active.name || active.key}：${zh(String(active.status || ''))}` : '-'
 }
 
-async function savePool() { if (!selectedProject.value) return; await updateProjectServers(selectedProject.value.projectId, poolPayload()); ElMessage.success('执行服务器池已更新'); serverPoolVisible.value = false; await loadProjectServers(); await loadProjects() }
+async function savePool() { if (!selectedProject.value) return; await updateProjectServers(selectedProject.value.projectId, poolPayload()); ElMessage.success('执行节点范围已更新'); serverPoolVisible.value = false; await loadProjectServers(); await loadProjects() }
 onMounted(async () => { await loadAll(); applyRouteIntent() })
 onActivated(applyRouteIntent)
 </script>

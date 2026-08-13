@@ -2,18 +2,18 @@
   <div class="page-card servers-page">
     <div class="toolbar hero-toolbar">
       <div>
-        <h3>服务器</h3>
-        <p class="muted">接入服务器后，平台会在这些服务器上运行爬虫任务。</p>
+        <h3>执行节点</h3>
+        <p class="muted">接入节点后，平台会在这些节点上运行爬虫任务。</p>
       </div>
       <div>
-        <el-button type="primary" @click="openOnboarding">接入服务器</el-button>
+        <el-button type="primary" @click="openOnboarding">接入节点</el-button>
         <el-button v-if="sessionState.user?.isSuperAdmin" @click="dialogVisible = true">手工新增</el-button>
         <el-button @click="load">刷新</el-button>
       </div>
     </div>
 
     <el-table :data="rows" stripe>
-      <el-table-column label="服务器" min-width="220">
+      <el-table-column label="执行节点" min-width="220">
         <template #default="s">
           <div class="server-name">{{ s.row.serverName }}</div>
           <div class="muted">{{ s.row.serverIp || '-' }}</div>
@@ -21,7 +21,7 @@
       </el-table-column>
       <el-table-column label="管理状态"><template #default="s">{{ zh(s.row.manageStatus) }}</template></el-table-column>
       <el-table-column label="健康状态"><template #default="s"><el-tag :type="healthTag(s.row.healthStatus)" effect="light">{{ zh(s.row.healthStatus) }}</el-tag></template></el-table-column>
-      <el-table-column label="容量状态"><template #default="s"><el-tag :type="capacityTag(s.row.capacityStatus)" effect="light">{{ zh(s.row.capacityStatus) }}</el-tag></template></el-table-column>
+      <el-table-column label="负载状态"><template #default="s"><el-tag :type="capacityTag(s.row.capacityStatus)" effect="light">{{ zh(s.row.capacityStatus) }}</el-tag></template></el-table-column>
       <el-table-column label="资源使用" min-width="260">
         <template #default="s">
           <div class="metric-line">处理器 <el-progress :percentage="percent(s.row.metrics?.cpuUsage)" :show-text="true" /></div>
@@ -30,11 +30,8 @@
           <div class="metric-line">文件数 <el-progress :percentage="percent(s.row.metrics?.inodeUsage)" :show-text="true" /></div>
         </template>
       </el-table-column>
-      <el-table-column label="可用槽位" min-width="140">
-        <template #default="s">
-          <div>{{ s.row.metrics?.availableSlots ?? '-' }} / {{ s.row.metrics?.maxSlots ?? s.row.maxContainerSlots }}</div>
-          <div class="muted">运行中：{{ s.row.metrics?.runningContainers ?? 0 }}</div>
-        </template>
+      <el-table-column label="运行中任务" min-width="120">
+        <template #default="s">{{ s.row.metrics?.runningContainers ?? 0 }}</template>
       </el-table-column>
       <el-table-column label="环境检查" min-width="180">
         <template #default="s">
@@ -48,11 +45,11 @@
       <el-table-column label="最近异常" min-width="220"><template #default="s">{{ s.row.metrics?.lastError || '-' }}</template></el-table-column>
     </el-table>
 
-    <el-dialog v-model="onboardingVisible" title="接入服务器" width="860px" class="onboarding-dialog">
+    <el-dialog v-model="onboardingVisible" title="接入执行节点" width="860px" class="onboarding-dialog">
       <el-steps :active="joinResult ? 2 : 1" simple class="wizard-steps">
-        <el-step title="填写服务器信息" />
+        <el-step title="填写节点信息" />
         <el-step title="复制命令执行" />
-        <el-step title="等待服务器上线" />
+        <el-step title="等待节点上线" />
       </el-steps>
 
       <el-alert class="guide-alert" type="info" :closable="false" show-icon title="接入凭证会由系统自动生成并写入安装命令，不需要单独复制。" />
@@ -60,18 +57,18 @@
       <el-form label-position="top" class="onboarding-form">
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="公司"><el-select v-if="sessionState.user?.isSuperAdmin" v-model="joinForm.companyId" @change="applyAutoCodes"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select><el-input v-else :model-value="currentCompanyName" disabled /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="接入场景"><el-radio-group v-model="joinForm.installTarget" @change="applyInstallTarget"><el-radio-button label="REMOTE">远程服务器</el-radio-button><el-radio-button label="LOCAL">本机测试</el-radio-button></el-radio-group></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="接入场景"><el-radio-group v-model="joinForm.installTarget" @change="applyInstallTarget"><el-radio-button label="REMOTE">远程节点</el-radio-button><el-radio-button label="LOCAL">本机测试</el-radio-button></el-radio-group></el-form-item></el-col>
         </el-row>
         <el-row :gutter="16">
-          <el-col :span="12"><el-form-item label="服务器名称"><el-input v-model="joinForm.serverName" placeholder="例如：测试服务器01" @blur="applyAutoCodes" /></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="最大并发"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="节点名称"><el-input v-model="joinForm.serverName" placeholder="例如：上海执行节点01" @blur="applyAutoCodes" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="同时运行任务上限"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
         <el-collapse class="advanced-box">
           <el-collapse-item title="高级设置" name="advanced">
             <el-row :gutter="16">
-              <el-col :span="12"><el-form-item label="服务器编号"><el-input v-model="joinForm.serverCode" /></el-form-item></el-col>
-              <el-col :span="12"><el-form-item label="执行服务编号"><el-input v-model="joinForm.agentCode" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="节点编号"><el-input v-model="joinForm.serverCode" /></el-form-item></el-col>
+              <el-col :span="12"><el-form-item label="节点服务编号"><el-input v-model="joinForm.agentCode" /></el-form-item></el-col>
             </el-row>
           </el-collapse-item>
         </el-collapse>
@@ -88,11 +85,11 @@
           <el-tag type="success" effect="light">有效期：{{ formatTime(joinResult.expiresAt) }}</el-tag>
         </div>
         <div class="command-block">
-          <div class="command-title"><span>第一步：在目标服务器验证连通性</span><el-button size="small" @click="copyText(joinResult.connectivityCommand || '')">复制</el-button></div>
+          <div class="command-title"><span>第一步：在目标节点验证连通性</span><el-button size="small" @click="copyText(joinResult.connectivityCommand || '')">复制</el-button></div>
           <pre>{{ joinResult.connectivityCommand }}</pre>
         </div>
         <div class="command-block">
-          <div class="command-title"><span>第二步：安装并接入服务器</span><el-button size="small" type="primary" @click="copyText(joinResult.installCommand)">复制</el-button></div>
+          <div class="command-title"><span>第二步：安装并接入节点</span><el-button size="small" type="primary" @click="copyText(joinResult.installCommand)">复制</el-button></div>
           <pre>{{ joinResult.installCommand }}</pre>
         </div>
       </div>
@@ -103,13 +100,13 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="dialogVisible" title="新增服务器" width="520px">
+    <el-dialog v-model="dialogVisible" title="新增执行节点" width="520px">
       <el-form label-position="top">
         <el-form-item label="公司"><el-select v-if="sessionState.user?.isSuperAdmin" v-model="form.companyId"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select><el-input v-else :model-value="currentCompanyName" disabled /></el-form-item>
-        <el-form-item label="服务器标识"><el-input v-model="form.serverCode" /></el-form-item>
-        <el-form-item label="服务器名称"><el-input v-model="form.serverName" /></el-form-item>
-        <el-form-item label="服务器地址"><el-input v-model="form.serverIp" /></el-form-item>
-        <el-form-item label="最大并发"><el-input-number v-model="form.maxContainerSlots" :min="1" /></el-form-item>
+        <el-form-item label="节点标识"><el-input v-model="form.serverCode" /></el-form-item>
+        <el-form-item label="节点名称"><el-input v-model="form.serverName" /></el-form-item>
+        <el-form-item label="节点地址"><el-input v-model="form.serverIp" /></el-form-item>
+        <el-form-item label="同时运行任务上限"><el-input-number v-model="form.maxContainerSlots" :min="1" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="dialogVisible = false">取消</el-button><el-button type="primary" @click="save">保存</el-button></template>
     </el-dialog>
@@ -141,13 +138,29 @@ function capacityTag(status: string) { if (status === 'NORMAL') return 'success'
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
 const configuredControlPlaneUrl = ref('')
 async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); configuredControlPlaneUrl.value = data?.controlPlanePublicBaseUrl || '' }
-function currentOrigin() { return configuredControlPlaneUrl.value || window.location.origin }
+function normalizedCurrentOrigin() { return window.location.origin.replace(/\/+$/, '') }
+function resolveControlBaseUrl(value?: string) {
+  const configured = (value || '').trim().replace(/\/+$/, '')
+  const current = normalizedCurrentOrigin()
+  if (!configured) return current
+  try {
+    const configuredUrl = new URL(configured)
+    const currentUrl = new URL(current)
+    const sameHost = configuredUrl.protocol === currentUrl.protocol && configuredUrl.hostname === currentUrl.hostname
+    const currentHasExplicitPort = Boolean(currentUrl.port)
+    if (sameHost && !configuredUrl.port && currentHasExplicitPort) return current
+  } catch {
+    return configured
+  }
+  return configured
+}
+function currentOrigin() { return resolveControlBaseUrl(configuredControlPlaneUrl.value) }
 function slug(value: string) { return (value || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'server' }
 const addressWarning = computed(() => {
   const baseUrl = currentOrigin()
-  if (!baseUrl) return '服务器连接地址未配置，请超级管理员先到系统设置保存。'
-  try { new URL(baseUrl) } catch { return '服务器连接地址格式不正确，请到系统设置修正。' }
-  if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(baseUrl)) return '远程服务器不能使用本机地址，请到系统设置改成服务器可访问的地址。'
+  if (!baseUrl) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
+  try { new URL(baseUrl) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
+  if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(baseUrl)) return '远程节点不能使用本机地址，请到系统设置改成节点可访问的地址。'
   return ''
 })
 function applyAutoCodes() {
@@ -163,7 +176,7 @@ function openOnboarding() {
   joinResult.value = null
   onboardingVisible.value = true
   if (!joinForm.companyId) joinForm.companyId = form.companyId
-  if (!joinForm.serverName) joinForm.serverName = '测试服务器01'
+  if (!joinForm.serverName) joinForm.serverName = '上海执行节点01'
   applyAutoCodes()
   applyInstallTarget()
 }
@@ -178,7 +191,10 @@ async function createJoin() {
   if (addressWarning.value) { ElMessage.warning(addressWarning.value); return }
   applyAutoCodes()
   joinResult.value = await createAgentJoinToken({ ...joinForm, controlPlaneUrl: currentOrigin(), agentName: joinForm.agentName || joinForm.serverName, labels: {}, capabilities: {} })
-  ElMessage.success('接入命令已生成')
+  configuredControlPlaneUrl.value = joinResult.value.controlPlaneUrl || configuredControlPlaneUrl.value
+  const warning = joinResult.value.warnings?.[0]
+  if (warning) ElMessage.warning(warning)
+  else ElMessage.success('接入命令已生成')
 }
 async function copyText(text: string) {
   if (!text) return

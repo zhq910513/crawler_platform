@@ -10,8 +10,8 @@
 
 - `POST /api/v1/discovered-projects` 支持 CI/CD 只注册项目 release，不再强制绑定单台 `serverCode`。
 - 保留兼容：仍支持 `serverCode`，并新增 `serverCodes` 批量挂载多个 Agent/服务器。
-- 已接入正式项目的新 release 会同步任务定义、release channel，并把已有项目服务器池的镜像状态标记为 `OUTDATED`，等待 Agent 按 digest 拉取校验。
-- 项目服务器池支持把同公司服务器加入已有 release 的执行池；不要求操作员先在每台机器 git pull 或手工部署源码。
+- 已接入正式项目的新 release 会同步任务定义、release channel，并把已有项目执行节点范围的镜像状态标记为 `OUTDATED`，等待 Agent 按 digest 拉取校验。
+- 项目执行节点范围支持把同公司服务器加入已有 release 的执行池；不要求操作员先在每台机器 git pull 或手工部署源码。
 - Agent claim 返回新增 `releaseId`，任务容器环境变量新增 `CRAWLER_COMPANY_ID`、`CRAWLER_RELEASE_ID`、`CRAWLER_IMAGE_REPOSITORY`、`CRAWLER_IMAGE_DIGEST`。
 - Agent 仍优先按 `imageRepository@imageDigest` 拉取并校验镜像，确保多台设备运行同一份镜像内容。
 
@@ -20,7 +20,7 @@
 标准模式：
 
 ```text
-开发者提交代码 → CI/CD 构建并推送镜像 → CI/CD 注册 release 到 crawler_platform → 平台选择可执行服务器池 → Agent 按 digest 拉取并执行
+开发者提交代码 → CI/CD 构建并推送镜像 → CI/CD 注册 release 到 crawler_platform → 平台选择可执行节点范围 → Agent 按 digest 拉取并执行
 ```
 
 操作员不再需要在每台设备上拉取爬虫项目代码。

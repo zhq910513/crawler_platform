@@ -1,23 +1,23 @@
-# Agent 镜像更新与不中断运行规范（crawler_platform 1.0.17）
+# Agent 镜像更新与不中断运行规范（crawler_platform 1.0.46）
 
 ## 目标
 
-当开发者推送爬虫项目代码后，执行服务器不再通过 `git pull` 判断是否更新，而是通过平台 release 与 Agent 心跳感知最新镜像 digest。
+当开发者推送爬虫项目代码后，执行节点不再通过 `git pull` 判断是否更新，而是通过平台 release 与 Agent 心跳感知最新镜像 digest。
 
 标准链路：
 
 1. 开发者 `git push`。
 2. CI/CD 构建并推送镜像，得到 `imageDigest`。
 3. CI/CD 调用 `POST /api/v1/discovered-projects` 注册 release。
-4. 平台把项目服务器池中对应节点标记为 `OUTDATED`。
+4. 平台把项目执行节点范围中对应节点标记为 `OUTDATED`。
 5. Agent 下一次心跳收到 `pendingImagePulls`。
 6. Agent 空闲时预热镜像；如果任务已经运行，不打断运行实例。
 7. 新任务启动前仍会按 run 快照中的 `imageRepository@imageDigest` 拉取并校验。
 8. Agent 通过 `POST /api/v1/agent-image-pull-results` 回报 `READY/FAILED`。
 
-## 问题一：执行服务器如何快速知道有最新版本
+## 问题一：执行节点如何快速知道有最新版本
 
-执行服务器通过 Agent 心跳知道。平台心跳响应包含：
+执行节点通过 Agent 心跳知道。平台心跳响应包含：
 
 ```json
 {
@@ -37,9 +37,9 @@
 }
 ```
 
-默认 Agent 心跳间隔较短，因此 CI 注册 release 后，各执行服务器通常会在下一次心跳内知道有新镜像。
+默认 Agent 心跳间隔较短，因此 CI 注册 release 后，各执行节点通常会在下一次心跳内知道有新镜像。
 
-## 问题二：B 服务器正在执行任务时是否会被打断
+## 问题二：B 节点正在执行任务时是否会被打断
 
 不会。
 
@@ -47,7 +47,7 @@
 
 - 已经创建的 run 会保存自己的 `releaseId/imageDigest` 快照。
 - 项目发布新 release 后，只影响后续新 run。
-- B 服务器上正在运行的容器不会被停止、重启或替换。
+- B 节点上正在运行的容器不会被停止、重启或替换。
 - Agent 心跳发现有运行实例时，只返回 `PREWARM_WHEN_IDLE`，默认不执行预热。
 - 任务结束后，Agent 空闲，再拉取新镜像。
 
