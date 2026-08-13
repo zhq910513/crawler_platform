@@ -9,6 +9,31 @@
         </el-form-item>
         <div class="base-status"><el-tag :type="settings?.controlPlanePublicBaseUrlConfigured ? 'success' : 'warning'" effect="light">{{ settings?.controlPlanePublicBaseUrlConfigured ? '已配置' : '未配置' }}</el-tag><span class="muted">来源：{{ settings?.controlPlanePublicBaseUrlSource || '-' }}</span></div>
         <el-alert v-if="settings?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="settings.controlPlanePublicBaseUrlWarnings.join('；')" />
+        <div v-if="settings?.controlPlanePreflight" class="preflight-panel" :class="`preflight-${settings.controlPlanePreflight.status.toLowerCase()}`">
+          <div class="preflight-header">
+            <div>
+              <div class="preflight-title">控制端对外接入预检</div>
+              <div class="muted">{{ settings.controlPlanePreflight.summary }}</div>
+            </div>
+            <el-tag :type="preflightTag(settings.controlPlanePreflight.status)" effect="light">{{ preflightLabel(settings.controlPlanePreflight.status) }}</el-tag>
+          </div>
+          <div v-if="settings.controlPlanePreflight.requiredPorts?.length" class="port-list">
+            <div v-for="item in settings.controlPlanePreflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="port-item">
+              <strong>{{ item.name }}</strong>：{{ item.host }}:{{ item.port }}/{{ item.protocol }}
+              <span>{{ item.reason }}</span>
+            </div>
+          </div>
+          <div class="preflight-checks">
+            <div v-for="item in settings.controlPlanePreflight.checks" :key="item.key" class="preflight-check">
+              <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
+              <div>
+                <div class="check-label">{{ item.label }}</div>
+                <div class="muted">{{ item.message }}</div>
+                <div v-if="item.suggestion && item.status !== 'PASS'" class="check-suggestion">{{ item.suggestion }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
         <div v-if="baseForm.controlPlanePublicBaseUrl" class="command-preview">连通性验证：curl -fsSL {{ baseForm.controlPlanePublicBaseUrl }}/health && echo</div>
       </el-form>
     </div>
@@ -67,6 +92,8 @@ const rows = ref<NotificationChannel[]>([]); const alerts = ref<AlertEvent[]>([]
 const settings = ref<SystemSettings | null>(null)
 const baseForm = reactive({ controlPlanePublicBaseUrl: '' })
 const form = reactive<NotificationChannelCreateRequest>({ scopeType: 'SYSTEM', channelName: '', channelType: 'FEISHU', channelStatus: 'DISABLED', p0Only: true, cooldownSeconds: 1800, config: {} })
+function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '提醒' }
 async function load() { settings.value = await getSystemSettings(); baseForm.controlPlanePublicBaseUrl = settings.value.controlPlanePublicBaseUrl || ''; rows.value = await listNotificationChannels(); alerts.value = await listAlertEvents() }
 async function saveBaseSettings() { savingBase.value = true; try { settings.value = await updateSystemSettings({ controlPlanePublicBaseUrl: baseForm.controlPlanePublicBaseUrl }); ElMessage.success('基础配置已保存') } finally { savingBase.value = false } }
 async function save() { await createNotificationChannel({ ...form, config: webhookUrl.value ? { webhook: webhookUrl.value } : {} }); dialogVisible.value = false; webhookUrl.value = ''; await load() }
@@ -82,4 +109,17 @@ onMounted(async () => { await load(); if (route.query.focus === 'controlPlaneUrl
 .base-status { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
 .command-preview { margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: #111827; color: #e5e7eb; font-size: 12px; word-break: break-all; }
 .empty-hint { margin-bottom: 12px; color: #64748b; }
+
+.preflight-panel { margin-top: 14px; padding: 14px; border-radius: 14px; border: 1px solid #dbeafe; background: #eff6ff; }
+.preflight-fail { border-color: #fecaca; background: #fef2f2; }
+.preflight-warn { border-color: #fed7aa; background: #fff7ed; }
+.preflight-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.preflight-title { font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+.port-list { display: grid; gap: 6px; margin: 8px 0 12px; }
+.port-item { font-size: 12px; color: #334155; }
+.port-item span { display: block; color: #64748b; margin-top: 2px; }
+.preflight-checks { display: grid; gap: 8px; }
+.preflight-check { display: grid; grid-template-columns: 54px 1fr; gap: 8px; align-items: flex-start; }
+.check-label { font-weight: 700; color: #1f2937; margin-bottom: 2px; }
+.check-suggestion { margin-top: 4px; color: #b45309; font-size: 12px; }
 </style>

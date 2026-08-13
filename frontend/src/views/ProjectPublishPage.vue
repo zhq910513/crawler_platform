@@ -140,6 +140,21 @@
         <el-step title="等待上线" />
       </el-steps>
       <el-alert class="guide-alert" type="info" show-icon :closable="false" title="连接地址由系统设置统一管理，这里只需要填写节点基础信息。" />
+      <div v-if="controlPreflight" class="preflight-panel" :class="`preflight-${controlPreflight.status.toLowerCase()}`">
+        <div class="preflight-header">
+          <div>
+            <div class="preflight-title">控制端接入预检</div>
+            <div class="muted">{{ controlPreflight.summary }}</div>
+          </div>
+          <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
+        </div>
+        <div v-if="controlPreflight.requiredPorts?.length" class="port-list">
+          <div v-for="item in controlPreflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="port-item">
+            <strong>{{ item.name }}</strong>：{{ item.host }}:{{ item.port }}/{{ item.protocol }}
+            <span>{{ item.reason }}</span>
+          </div>
+        </div>
+      </div>
       <el-form label-position="top" class="drawer-form">
         <el-form-item label="所属公司"><el-input :model-value="selectedCompanyName" disabled /></el-form-item>
         <el-form-item label="节点名称"><el-input v-model="joinForm.serverName" placeholder="例如：上海执行节点01" @blur="applyJoinCodes" /></el-form-item>
@@ -175,7 +190,7 @@ import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
 import { analyzeProjectPublishPipeline, createAgentJoinToken, createCompany, listCompanies, listServers, getSystemSettings, runProjectPublishPipeline } from '../api/platform'
 import { sessionState } from '../stores/session'
-import type { AgentJoinTokenResult, Company, ProjectPublishPipelineStep, ServerNode } from '../types/api'
+import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode } from '../types/api'
 import { zh } from '../utils/dictionaries'
 
 const router = useRouter()
@@ -187,6 +202,7 @@ const serverDrawerVisible = ref(false)
 const publishing = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
 const controlBaseUrl = ref('')
+const controlPreflight = ref<ControlPlanePreflight | null>(null)
 const publishSummary = ref('')
 const publishSucceeded = ref(false)
 const publishTargets = ref<Array<Record<string, unknown>>>([])
@@ -257,6 +273,7 @@ const joinWarning = computed(() => {
   if (!joinForm.serverName.trim()) return '请填写节点名称。'
   if (!controlBaseUrl.value) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
   try { new URL(controlBaseUrl.value) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
+  if (controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '控制端接入预检未通过，请先修复阻断项。'
   return ''
 })
 
@@ -279,6 +296,8 @@ function resolveControlBaseUrl(value?: string) {
 }
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
+function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '提醒' }
 function serverBlockReason(server: ServerNode) {
   if (server.manageStatus !== 'ENABLED') return '已停用'
   if (!['HEALTHY', 'DEGRADED'].includes(server.healthStatus)) return server.healthStatus === 'OFFLINE' ? '离线' : '健康异常'
@@ -361,6 +380,7 @@ async function loadBase() {
   try {
     const settings = await getSystemSettings().catch(() => null)
     controlBaseUrl.value = resolveControlBaseUrl(settings?.controlPlanePublicBaseUrl)
+    controlPreflight.value = settings?.controlPlanePreflight || null
     companies.value = await listCompanies()
     if (!form.companyId) form.companyId = sessionState.user?.companyId || companies.value[0]?.companyId || 0
     await refreshCompanyServers()
@@ -662,4 +682,13 @@ onUnmounted(() => {
 .command-block pre { white-space: pre-wrap; word-break: break-all; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 10px; margin: 0; }
 @media (max-width: 1280px) { .publish-page.assistant-open { padding-right: 0; } .publish-assistant-panel { position: static; width: auto; max-height: none; margin-top: 14px; } .publish-main { width: 100%; } }
 @media (max-width: 900px) { .assistant-dock { width: 174px; } .publish-form :deep(.el-form-item) { display: block; } .publish-form :deep(.el-form-item__label) { width: auto !important; height: auto; line-height: 1.4; margin-bottom: 6px; } .inline-control { flex-direction: column; align-items: stretch; } .append-action { width: 100%; flex-basis: auto; } .selected-server-pill { align-items: flex-start; flex-direction: column; } }
+
+.preflight-panel { margin: 12px 0; padding: 12px; border-radius: 12px; border: 1px solid #dbeafe; background: #eff6ff; }
+.preflight-fail { border-color: #fecaca; background: #fef2f2; }
+.preflight-warn { border-color: #fed7aa; background: #fff7ed; }
+.preflight-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.preflight-title { font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+.port-list { display: grid; gap: 6px; margin-top: 8px; }
+.port-item { font-size: 12px; color: #334155; }
+.port-item span { display: block; color: #64748b; margin-top: 2px; }
 </style>

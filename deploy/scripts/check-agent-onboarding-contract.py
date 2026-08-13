@@ -14,6 +14,8 @@ schemas = (ROOT / "backend/app/schemas.py").read_text(encoding="utf-8")
 api = (ROOT / "backend/app/api/agent_bootstrap.py").read_text(encoding="utf-8")
 installer = ROOT / "backend/app/templates/install-agent.sh"
 frontend = (ROOT / "frontend/src/views/ServersPage.vue").read_text(encoding="utf-8")
+settings_page = (ROOT / "frontend/src/views/SettingsPage.vue").read_text(encoding="utf-8")
+system_config_service = (ROOT / "backend/app/services/system_config_service.py").read_text(encoding="utf-8")
 companies = (ROOT / "frontend/src/views/CompaniesPage.vue").read_text(encoding="utf-8")
 
 if not installer.exists():
@@ -35,6 +37,17 @@ if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
     errors.append("安装脚本接口不应依赖 API 镜像外的 deploy 目录")
 if "currentOrigin" not in frontend or "connectivityCommand" not in frontend:
     errors.append("执行节点接入前端缺少系统地址读取或连通性验证命令")
+
+if "controlPlanePreflight" not in system_config_service or "requiredPorts" not in system_config_service:
+    errors.append("控制端缺少对外接入预检和必要端口清单，执行节点接入前无法提前暴露安全组/镜像仓库问题")
+if "inspect_control_plane_preflight" not in service or "readyForRemoteAgent" not in service or "code=40075" not in service:
+    errors.append("后端生成远程接入命令前未强制执行控制端接入预检，直接调用 API 仍可能绕过前端阻断")
+if "Agent 镜像仓库" not in system_config_service or "/api/v1/agent-installers/linux.sh" not in system_config_service:
+    errors.append("控制端预检未覆盖 Agent 镜像仓库或安装脚本地址")
+if "controlPreflight" not in frontend or "控制端接入预检" not in frontend:
+    errors.append("执行节点接入前端未展示控制端接入预检")
+if "controlPlanePreflight" not in settings_page or "控制端对外接入预检" not in settings_page:
+    errors.append("系统设置页未展示控制端对外接入预检")
 if 'label="控制端公网回调地址"' in frontend:
     errors.append("执行节点接入前端不应在新增执行节点表单展示控制端公网回调地址输入项")
 legacy_token_text = "生成" + "接入" + "凭证"

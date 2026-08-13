@@ -60,6 +60,32 @@
 
       <el-alert class="guide-alert" type="info" :closable="false" show-icon title="接入凭证会由系统自动生成并写入安装命令，不需要单独复制。" />
 
+      <div v-if="controlPreflight" class="preflight-panel" :class="`preflight-${controlPreflight.status.toLowerCase()}`">
+        <div class="preflight-header">
+          <div>
+            <div class="preflight-title">控制端接入预检</div>
+            <div class="muted">{{ controlPreflight.summary }}</div>
+          </div>
+          <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
+        </div>
+        <div v-if="controlPreflight.requiredPorts?.length" class="port-list">
+          <div v-for="item in controlPreflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="port-item">
+            <strong>{{ item.name }}</strong>：{{ item.host }}:{{ item.port }}/{{ item.protocol }}
+            <span>{{ item.reason }}</span>
+          </div>
+        </div>
+        <div class="preflight-checks">
+          <div v-for="item in controlPreflight.checks" :key="item.key" class="preflight-check">
+            <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
+            <div>
+              <div class="check-label">{{ item.label }}</div>
+              <div class="muted">{{ item.message }}</div>
+              <div v-if="item.suggestion && item.status !== 'PASS'" class="check-suggestion">{{ item.suggestion }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <el-form label-position="top" class="onboarding-form">
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="公司"><el-select v-if="sessionState.user?.isSuperAdmin" v-model="joinForm.companyId" @change="applyAutoCodes"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select><el-input v-else :model-value="currentCompanyName" disabled /></el-form-item></el-col>
@@ -124,7 +150,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { createAgentJoinToken, createServer, deleteServer, getSystemSettings, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
 import { useRoute } from 'vue-router'
-import type { AgentJoinTokenResult, Company, ServerNode } from '../types/api'
+import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
 const route = useRoute()
@@ -141,9 +167,12 @@ function percent(value?: number | null) { if (value === null || value === undefi
 function boolText(value?: boolean | null) { if (value === null || value === undefined) return '-'; return value ? '可用' : '不可用' }
 function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
+function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '提醒' }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
 const configuredControlPlaneUrl = ref('')
-async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); configuredControlPlaneUrl.value = data?.controlPlanePublicBaseUrl || '' }
+const controlPreflight = ref<ControlPlanePreflight | null>(null)
+async function loadSystemSettings() { const data = await getSystemSettings().catch(() => null); configuredControlPlaneUrl.value = data?.controlPlanePublicBaseUrl || ''; controlPreflight.value = data?.controlPlanePreflight || null }
 function normalizedCurrentOrigin() { return window.location.origin.replace(/\/+$/, '') }
 function resolveControlBaseUrl(value?: string) {
   const configured = (value || '').trim().replace(/\/+$/, '')
@@ -167,6 +196,7 @@ const addressWarning = computed(() => {
   if (!baseUrl) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
   try { new URL(baseUrl) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
   if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(baseUrl)) return '远程节点不能使用本机地址，请到系统设置改成节点可访问的地址。'
+  if (joinForm.installTarget === 'REMOTE' && controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '控制端接入预检未通过，请先修复阻断项。'
   return ''
 })
 function applyAutoCodes() {
@@ -259,4 +289,17 @@ watch(() => route.query.openOnboarding, (value) => { if (value === '1') openOnbo
 .command-block { margin-top: 12px; }
 .command-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-weight: 700; color: #1f2937; }
 .command-block pre { white-space: pre-wrap; word-break: break-all; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 10px; margin: 0; }
+
+.preflight-panel { margin: 14px 0; padding: 14px; border-radius: 14px; border: 1px solid #dbeafe; background: #eff6ff; }
+.preflight-fail { border-color: #fecaca; background: #fef2f2; }
+.preflight-warn { border-color: #fed7aa; background: #fff7ed; }
+.preflight-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.preflight-title { font-weight: 800; color: #0f172a; margin-bottom: 4px; }
+.port-list { display: grid; gap: 6px; margin: 8px 0 12px; }
+.port-item { font-size: 12px; color: #334155; }
+.port-item span { display: block; color: #64748b; margin-top: 2px; }
+.preflight-checks { display: grid; gap: 8px; }
+.preflight-check { display: grid; grid-template-columns: 54px 1fr; gap: 8px; align-items: flex-start; }
+.check-label { font-weight: 700; color: #1f2937; margin-bottom: 2px; }
+.check-suggestion { margin-top: 4px; color: #b45309; font-size: 12px; }
 </style>

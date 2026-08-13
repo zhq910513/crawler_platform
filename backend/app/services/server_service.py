@@ -166,6 +166,14 @@ class ServerService:
         raw_token = secrets.token_urlsafe(40)
         expires_at = utcnow() + timedelta(hours=payload.expires_in_hours)
         control_plane_url = self._resolve_control_plane_url(payload.control_plane_url, detected_base_url, payload.install_target)
+        control_preflight = SystemConfigService(self.db).inspect_control_plane_preflight(control_plane_url, detected_base_url)
+        if payload.install_target == "REMOTE" and not control_preflight.get("readyForRemoteAgent"):
+            blockers = [item for item in control_preflight.get("checks", []) if item.get("blocking") and item.get("status") == "FAIL"]
+            detail = "；".join(f"{item.get('label')}: {item.get('message')}" for item in blockers[:3])
+            message = control_preflight.get("summary") or "控制端接入预检未通过"
+            if detail:
+                message = f"{message}：{detail}"
+            raise AppError(message, code=40075, http_status=status.HTTP_400_BAD_REQUEST)
         token = CrawlerAgentJoinToken(
             company_id=company_id,
             token_hash=sha256_text(raw_token),
@@ -206,6 +214,7 @@ class ServerService:
                 *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
                 *self._agent_image_warnings(),
             ],
+            "controlPlanePreflight": control_preflight,
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
         }
 

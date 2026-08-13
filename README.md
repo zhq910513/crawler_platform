@@ -123,7 +123,7 @@
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.50`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.50`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.52`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.52`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -142,10 +142,10 @@
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
 
-## 1.0.50 Agent 镜像下发与运行版本说明
+## 1.0.52 Agent 镜像下发与运行版本说明
 
 CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。
 
-## 1.0.50 账号状态上报规范
+## 1.0.52 账号状态上报规范
 
-1.0.50 继续保留账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。
+1.0.52 继续保留账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。

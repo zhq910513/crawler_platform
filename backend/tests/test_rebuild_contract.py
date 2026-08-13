@@ -1067,11 +1067,36 @@ def test_agent_restart_keeps_detected_running_container_alive() -> None:
         assert row.lease_expires_at is not None
 
 
+def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    body = client.get('/api/v1/system-settings', headers=headers).json()['data']
+    assert 'controlPlanePreflight' in body
+    preflight = body['controlPlanePreflight']
+    assert isinstance(preflight.get('checks'), list) and preflight['checks']
+    assert isinstance(preflight.get('requiredPorts'), list) and preflight['requiredPorts']
+    assert any(item['name'] == '平台访问入口' for item in preflight['requiredPorts'])
+    assert any(item['key'] == 'agent_image' and item['status'] == 'FAIL' for item in preflight['checks'])
+    assert preflight['readyForRemoteAgent'] is False
+    assert preflight['blockingCount'] >= 1
+
+
 def test_agent_join_token_bootstrap_and_install_script() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'joinco', 'companyName': '接入公司'}).json()['data']
+    remote_preflight = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-srv-remote-blocked',
+        'serverName': '远程阻断节点',
+        'agentCode': 'join-agent-remote-blocked',
+        'installTarget': 'REMOTE',
+    })
+    assert remote_preflight.status_code == 400
+    assert remote_preflight.json()['code'] == 40075
+    assert '控制端' in remote_preflight.json()['message']
     token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-01',
@@ -1082,12 +1107,14 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
         'workDir': '/tmp/crawler-agent-join',
         'labels': {'region': 'cn', 'browser': 'false'},
         'capabilities': {'docker': True, 'browser': False},
+        'installTarget': 'LOCAL',
     }).json()['data']
     assert token_body['joinToken']
     assert '--join-token' in token_body['installCommand']
     assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
     assert any('Agent 镜像未配置私有仓库前缀' in item for item in token_body.get('warnings') or [])
+    assert 'controlPlanePreflight' in token_body
     bad_remote = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-loopback',
@@ -1142,8 +1169,8 @@ def test_unhealthy_agent_can_be_cleaned_and_rejoined() -> None:
         'agentName': '异常Agent01',
         'maxContainerSlots': 2,
         'workDir': '/tmp/crawler-agent-cleanup',
-        'controlPlaneUrl': 'http://10.1.0.20:8080',
-        'installTarget': 'REMOTE',
+        'controlPlaneUrl': 'http://127.0.0.1:8080',
+        'installTarget': 'LOCAL',
     }).json()['data']
     env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'cleanup-host', 'installReport': {'docker': 'pull_failed'}})
     assert env_resp.status_code == 200
@@ -1170,8 +1197,8 @@ def test_unhealthy_agent_can_be_cleaned_and_rejoined() -> None:
         'serverName': '重新接入节点',
         'agentCode': 'cleanup-agent-01',
         'agentName': '重新接入Agent',
-        'controlPlaneUrl': 'http://10.1.0.20:8080',
-        'installTarget': 'REMOTE',
+        'controlPlaneUrl': 'http://127.0.0.1:8080',
+        'installTarget': 'LOCAL',
     })
     assert rejoin.status_code == 200
     assert rejoin.json()['data']['serverCode'] == 'cleanup-node-01'
@@ -1490,7 +1517,7 @@ def test_agent_join_command_preserves_detected_external_port() -> None:
         'serverName': '入口统一节点',
         'agentCode': 'join-port-agent-1046',
         'controlPlaneUrl': 'http://42.193.226.138',
-        'installTarget': 'REMOTE',
+        'installTarget': 'LOCAL',
     }).json()['data']
     assert token_body['controlPlaneUrl'] == 'http://42.193.226.138:8080'
     assert 'http://42.193.226.138:8080/api/v1/agent-installers/linux.sh' in token_body['installCommand']

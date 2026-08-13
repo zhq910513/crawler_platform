@@ -503,7 +503,7 @@ export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: b
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
 
 export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number }
-export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; note: string }
+export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; controlPlanePreflight?: ControlPlanePreflight; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
 
 export interface ProjectPublishPipelineRequest { companyId: number; serverIds: number[]; repositoryUrl: string; refName?: string }
@@ -678,12 +678,42 @@ export interface CredentialSubjectBindingUpdateRequest {
   metadata?: Record<string, unknown>
 }
 
+export interface ControlPlanePreflightCheck {
+  key: string
+  label: string
+  status: 'PASS' | 'WARN' | 'FAIL'
+  message: string
+  blocking: boolean
+  suggestion: string
+  details?: Record<string, unknown>
+}
+
+export interface ControlPlaneRequiredPort {
+  name: string
+  host: string
+  port: number
+  protocol: string
+  reason: string
+}
+
+export interface ControlPlanePreflight {
+  readyForRemoteAgent: boolean
+  status: 'PASS' | 'WARN' | 'FAIL'
+  summary: string
+  blockingCount: number
+  warningCount: number
+  checks: ControlPlanePreflightCheck[]
+  requiredPorts: ControlPlaneRequiredPort[]
+  agentImage: string
+}
+
 export interface SystemSettings {
   controlPlanePublicBaseUrl: string
   controlPlanePublicBaseUrlSource: string
   controlPlanePublicBaseUrlConfigured: boolean
   controlPlanePublicBaseUrlWarnings: string[]
-  }
+  controlPlanePreflight?: ControlPlanePreflight
+}
 
 export interface CompanyResourceConfig {
   configId: number
