@@ -123,7 +123,10 @@ class ServerService:
             "controlPlaneUrl": control_plane_url,
             "joinTokenMasked": self._mask_token(raw_token),
             "installTarget": payload.install_target,
-            "warnings": self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
+            "warnings": [
+                *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
+                *self._agent_image_warnings(),
+            ],
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
         }
 
@@ -203,6 +206,8 @@ class ServerService:
             "AGENT_PROJECT_DATA_ROOT": token.work_dir.rstrip("/") + "/projects",
             "AGENT_RUN_ROOT": token.work_dir.rstrip("/") + "/runs",
             "AGENT_SPOOL_DIR": token.work_dir.rstrip("/") + "/spool",
+            "AGENT_IMAGE": settings.crawler_agent_image,
+            "AGENT_AGENT_VERSION": settings.crawler_agent_version,
             "AGENT_CAPABILITIES_JSON": __import__('json').dumps(token.capabilities or {}, ensure_ascii=False),
         }
         return "\n".join(f"{k}={self._quote_env(v)}" for k, v in lines.items()) + "\n"
@@ -249,6 +254,22 @@ class ServerService:
         if requested and requested != resolved_url and self._prefer_detected_origin_port(requested, detected_base_url) == resolved_url:
             return [f"配置地址未带端口，已按当前访问入口临时使用 {resolved_url} 生成接入命令；请到系统设置保存完整地址。"]
         return []
+
+
+    def _agent_image_warnings(self) -> list[str]:
+        image = str(settings.crawler_agent_image or "").strip()
+        if not image:
+            return ["Agent 镜像地址为空，请先配置 CRAWLER_AGENT_IMAGE。"]
+        if not self._image_has_registry_prefix(image):
+            return [f"Agent 镜像未配置私有仓库前缀：{image}。远程执行节点会默认从 Docker Hub 拉取；生产环境建议配置 CRAWLER_AGENT_IMAGE 为执行节点可访问的私有仓库镜像。"]
+        return []
+
+    @staticmethod
+    def _image_has_registry_prefix(image: str) -> bool:
+        first = (image or "").split("/", 1)[0]
+        if not first or first == image:
+            return False
+        return "." in first or ":" in first or first == "localhost"
 
     @staticmethod
     def _is_loopback_host(host: str) -> bool:

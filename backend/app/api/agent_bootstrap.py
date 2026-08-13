@@ -6,12 +6,17 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import get_db
 from app.schemas import AgentBootstrapEnvRequest
 from app.services.server_service import ServerService
 from app.services.system_config_service import SystemConfigService
 
 router = APIRouter(tags=["Agent 接入"])
+
+
+def _shell_double_quote_value(value: str) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$").replace("`", "\\`")
 
 
 def _installer_script_path() -> Path:
@@ -23,7 +28,9 @@ def _installer_script_path() -> Path:
 @router.get("/agent-installers/linux.sh", response_class=PlainTextResponse)
 def get_linux_agent_installer() -> PlainTextResponse:
     script_path = _installer_script_path()
-    return PlainTextResponse(script_path.read_text(encoding="utf-8"), media_type="text/x-shellscript; charset=utf-8")
+    script = script_path.read_text(encoding="utf-8")
+    script = script.replace("__CRAWLER_AGENT_IMAGE__", _shell_double_quote_value(settings.crawler_agent_image))
+    return PlainTextResponse(script, media_type="text/x-shellscript; charset=utf-8")
 
 
 @router.post("/agent-bootstrap/env", response_class=PlainTextResponse)

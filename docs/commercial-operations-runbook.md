@@ -1,4 +1,4 @@
-# crawler_platform 1.0.46 商业化运维 Runbook
+# crawler_platform 1.0.48 商业化运维 Runbook
 
 ## 1. 首次部署失败
 
@@ -29,8 +29,8 @@
 
 - 最近心跳超时：检查 Agent 进程、网络、防火墙、平台地址和 Agent token。
 - Docker 不可用：检查 Docker daemon、当前用户 Docker 权限、docker.sock 挂载。
-- 可用绑定项为 0：检查运行容器数量、maxContainerSlots、资源模板和任务并发。
-- 磁盘或 inode 高水位：先清理日志、构建缓存、无用镜像，再恢复调度。
+- 节点任务达到上限：检查运行容器数量、任务上限、资源模板和同时运行任务数量。
+- 磁盘或 inode 高水位：先清理日志、构建缓存、无用镜像，再恢复接收任务。
 - 项目目录不可写：检查部署目录 owner、group、ACL、挂载路径。
 
 ## 3. 任务运行失败
@@ -77,6 +77,6 @@
 - API `/health` 结果和平台版本。
 
 
-## 1.0.46 Agent 镜像更新不中断补充
+## 1.0.48 Agent 镜像下发与更新不中断补充
 
 CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。

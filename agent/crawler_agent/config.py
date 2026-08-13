@@ -13,7 +13,7 @@ from crawler_agent.version import default_build_time, default_git_commit, defaul
 class AgentConfig(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="AGENT_", extra="ignore")
 
-    control_plane_url: str = Field(default="http://api:8000")
+    control_plane_url: str = Field(default="")
     agent_token: str = Field(default="")
     agent_code: str = Field(default="")
     server_code: str = Field(default="")

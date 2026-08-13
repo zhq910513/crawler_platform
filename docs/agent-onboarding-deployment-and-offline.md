@@ -1,4 +1,4 @@
-# Agent 接入、项目部署与离线兜底说明（1.0.46）
+# Agent 接入、项目部署与离线兜底说明（1.0.48）
 
 ## 角色边界
 
@@ -9,7 +9,7 @@
 
 ## 新节点接入流程
 
-1. 在平台「Agent 节点」中打开「Agent 接入向导」。
+1. 在平台「执行节点」中打开「Agent 接入向导」。
 2. 选择公司，填写节点编码、节点名称、节点服务编码、同时运行任务上限、工作目录、标签与能力。
 3. 平台生成一次性安装命令。
 4. 公司运维复制命令到目标节点执行。
@@ -25,15 +25,15 @@ Agent 默认只主动连接平台和镜像仓库，不要求节点所在主机�
 
 1. 开发者提交 Git tag。
 2. CI/CD 构建镜像并注册不可变 Release。
-3. 平台项目管理中选择公司、项目、Release 和目标 Agent。
-4. 平台创建 Release 部署计划，并把目标 Agent 标记为 OUTDATED。
-5. Agent 心跳获得 pendingImagePulls，空闲时拉取 imageRepository@imageDigest。
+3. 平台项目管理中选择公司、项目、Release 和目标执行节点。
+4. 平台创建 Release 部署计划，并把目标执行节点 标记为 OUTDATED。
+5. 执行节点心跳获得 pendingImagePulls，空闲时拉取 imageRepository@imageDigest。
 6. 拉取成功后回报 READY，失败后回报 FAILED 和错误原因。
 7. 任务执行时平台按 releaseId/imageDigest 启动隔离容器。
 
 ## 一个执行节点多个项目
 
-一个 Agent 可以承载多个项目。每个项目都必须有独立 Release 和 imageDigest。Agent 执行任务时通过 Docker label、工作目录和运行参数隔离：
+一个 Agent 可以承载多个项目。每个项目都必须有独立 Release 和 imageDigest。执行节点执行任务时通过 Docker label、工作目录和运行参数隔离：
 
 - companyId
 - projectId

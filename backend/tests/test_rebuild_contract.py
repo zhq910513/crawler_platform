@@ -1087,6 +1087,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert '--join-token' in token_body['installCommand']
     assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
+    assert any('Agent 镜像未配置私有仓库前缀' in item for item in token_body.get('warnings') or [])
     bad_remote = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-loopback',
@@ -1108,16 +1109,31 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     script = client.get('/api/v1/agent-installers/linux.sh')
     assert script.status_code == 200
     assert '控制端连通' in script.text and 'Docker' in script.text
+    assert 'crawler_platform_agent:1.0.48' in script.text
+    assert 'crawler_platform_agent:1.0.44' not in script.text
+    assert '__CRAWLER_AGENT_IMAGE__' not in script.text
+    assert 'Agent 镜像拉取失败且本机不存在' in script.text
     env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host', 'installReport': {'pass': 5}})
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
+    assert "AGENT_IMAGE='crawler_platform_agent:1.0.48'" in env_resp.text
+    assert "AGENT_AGENT_VERSION='1.0.48'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
     server = next(row for row in servers if row['serverCode'] == 'join-srv-01')
     assert server['labels']['region'] == 'cn'
     assert server['capabilities']['docker'] is True
     second = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host'})
     assert second.status_code == 401
+
+
+
+def test_agent_runtime_defaults_do_not_hide_missing_control_plane_url() -> None:
+    config_text = Path(__file__).resolve().parents[2].joinpath('agent/crawler_agent/config.py').read_text(encoding='utf-8')
+    env_example = Path(__file__).resolve().parents[2].joinpath('agent/.env.example').read_text(encoding='utf-8')
+    assert 'control_plane_url: str = Field(default="")' in config_text
+    assert 'http://api:8000' not in config_text
+    assert 'AGENT_CONTROL_PLANE_URL=http://127.0.0.1:8000' not in env_example
 
 
 def test_project_release_deployment_to_multiple_agents() -> None:
