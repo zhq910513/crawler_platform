@@ -92,7 +92,7 @@ export function updateCredentialSubjectBinding(bindingId: number, payload: Crede
 export function listNotificationChannels() { return request<NotificationChannel[]>(http.get('/notification-channels')) }
 export function createNotificationChannel(payload: NotificationChannelCreateRequest) { return request<NotificationChannel>(http.post('/notification-channels', payload)) }
 export function testNotificationChannel(channelId: number, title: string, content: string) { return request<{ success: boolean; message: string }>(http.post(`/notification-channels/${channelId}/tests`, { title, content })) }
-export function listDashboardSummaries() { return request<DashboardSummary>(http.get('/dashboard-summaries')) }
+export function listDashboardSummaries(params?: { preflightSource?: 'AUTO' | 'MANUAL' | 'DEPLOY' | 'REDEPLOY' }) { return request<DashboardSummary>(http.get('/dashboard-summaries', { params })) }
 export function getRunningCenter(companyId?: number) { return request<RunningCenterSummary>(http.get('/running-center', { params: { companyId } })) }
 
 export function listAlertEvents() { return request<AlertEvent[]>(http.get('/alerts')) }

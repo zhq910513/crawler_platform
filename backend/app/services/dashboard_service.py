@@ -5,13 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.models import CrawlerProject, CrawlerServer, CrawlerTask, CrawlerTaskRun, SysUser
 from app.services.permissions import is_super_admin, require_super_admin, scoped_company_id
+from app.services.system_config_service import SystemConfigService
 
 
 class DashboardService:
     def __init__(self, db: Session):
         self.db = db
 
-    def summary(self, user: SysUser) -> dict:
+    def summary(self, user: SysUser, detected_base_url: str = "", preflight_source: str = "AUTO") -> dict:
         require_super_admin(user)
         company_id = None if is_super_admin(user) else scoped_company_id(user)
         def count(model, *conditions):
@@ -29,4 +30,5 @@ class DashboardService:
             "taskCount": count(CrawlerTask, *task_filters),
             "runningCount": count(CrawlerTaskRun, *run_filters, CrawlerTaskRun.run_status.in_(["ASSIGNED", "STARTING", "RUNNING"])),
             "waitingCount": count(CrawlerTaskRun, *run_filters, CrawlerTaskRun.routing_status == "WAITING_RESOURCE"),
+            "platformPreflight": SystemConfigService(self.db).get_system_settings(detected_base_url, check_source=preflight_source).get("controlPlanePreflight"),
         }

@@ -63,27 +63,13 @@
       <div v-if="controlPreflight" class="preflight-panel" :class="`preflight-${controlPreflight.status.toLowerCase()}`">
         <div class="preflight-header">
           <div>
-            <div class="preflight-title">控制端接入预检</div>
-            <div class="muted">{{ controlPreflight.summary }}</div>
+            <div class="preflight-title">接入前检查</div>
+            <div class="muted">平台自检：阻断 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
           </div>
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
-        <div v-if="controlPreflight.requiredPorts?.length" class="port-list">
-          <div v-for="item in controlPreflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="port-item">
-            <strong>{{ item.name }}</strong>：{{ item.host }}:{{ item.port }}/{{ item.protocol }}
-            <span>{{ item.reason }}</span>
-          </div>
-        </div>
-        <div class="preflight-checks">
-          <div v-for="item in controlPreflight.checks" :key="item.key" class="preflight-check">
-            <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
-            <div>
-              <div class="check-label">{{ item.label }}</div>
-              <div class="muted">{{ item.message }}</div>
-              <div v-if="item.suggestion && item.status !== 'PASS'" class="check-suggestion">{{ item.suggestion }}</div>
-            </div>
-          </div>
-        </div>
+        <div v-if="controlPreflight.nextAction" class="check-suggestion">下一步：{{ controlPreflight.nextAction }}</div>
+        <el-button size="small" @click="goDashboardPreflight">查看运行总览平台自检</el-button>
       </div>
 
       <el-form label-position="top" class="onboarding-form">
@@ -149,11 +135,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createAgentJoinToken, createServer, deleteServer, getSystemSettings, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
 const route = useRoute()
+const router = useRouter()
 const rows = ref<ServerNode[]>([])
 const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
@@ -168,7 +155,8 @@ function boolText(value?: boolean | null) { if (value === null || value === unde
 function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '提醒' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '需确认' }
+function goDashboardPreflight() { router.push('/dashboard?focus=platformPreflight') }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
 const configuredControlPlaneUrl = ref('')
 const controlPreflight = ref<ControlPlanePreflight | null>(null)
@@ -196,7 +184,7 @@ const addressWarning = computed(() => {
   if (!baseUrl) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
   try { new URL(baseUrl) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
   if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(baseUrl)) return '远程节点不能使用本机地址，请到系统设置改成节点可访问的地址。'
-  if (joinForm.installTarget === 'REMOTE' && controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '控制端接入预检未通过，请先修复阻断项。'
+  if (joinForm.installTarget === 'REMOTE' && controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '平台自检未通过，请先修复阻断项。'
   return ''
 })
 function applyAutoCodes() {

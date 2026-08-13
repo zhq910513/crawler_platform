@@ -143,17 +143,13 @@
       <div v-if="controlPreflight" class="preflight-panel" :class="`preflight-${controlPreflight.status.toLowerCase()}`">
         <div class="preflight-header">
           <div>
-            <div class="preflight-title">控制端接入预检</div>
-            <div class="muted">{{ controlPreflight.summary }}</div>
+            <div class="preflight-title">接入前检查</div>
+            <div class="muted">平台自检：阻断 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
           </div>
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
-        <div v-if="controlPreflight.requiredPorts?.length" class="port-list">
-          <div v-for="item in controlPreflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="port-item">
-            <strong>{{ item.name }}</strong>：{{ item.host }}:{{ item.port }}/{{ item.protocol }}
-            <span>{{ item.reason }}</span>
-          </div>
-        </div>
+        <div v-if="controlPreflight.nextAction" class="check-suggestion">下一步：{{ controlPreflight.nextAction }}</div>
+        <el-button size="small" @click="router.push('/dashboard?focus=platformPreflight')">查看运行总览平台自检</el-button>
       </div>
       <el-form label-position="top" class="drawer-form">
         <el-form-item label="所属公司"><el-input :model-value="selectedCompanyName" disabled /></el-form-item>
@@ -273,7 +269,7 @@ const joinWarning = computed(() => {
   if (!joinForm.serverName.trim()) return '请填写节点名称。'
   if (!controlBaseUrl.value) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
   try { new URL(controlBaseUrl.value) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
-  if (controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '控制端接入预检未通过，请先修复阻断项。'
+  if (controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '平台自检未通过，请先修复阻断项。'
   return ''
 })
 
@@ -297,7 +293,7 @@ function resolveControlBaseUrl(value?: string) {
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '提醒' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '需确认' }
 function serverBlockReason(server: ServerNode) {
   if (server.manageStatus !== 'ENABLED') return '已停用'
   if (!['HEALTHY', 'DEGRADED'].includes(server.healthStatus)) return server.healthStatus === 'OFFLINE' ? '离线' : '健康异常'

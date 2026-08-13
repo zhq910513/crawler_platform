@@ -1078,8 +1078,20 @@ def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> 
     assert isinstance(preflight.get('requiredPorts'), list) and preflight['requiredPorts']
     assert any(item['name'] == '平台访问入口' for item in preflight['requiredPorts'])
     assert any(item['key'] == 'agent_image' and item['status'] == 'FAIL' for item in preflight['checks'])
+    assert any(item.get('action') for item in preflight['checks'] if item['status'] != 'PASS')
+    assert any(item.get('impact') for item in preflight['checks'])
+    assert any(item.get('actionLabel') for item in preflight['checks'] if item['status'] != 'PASS')
+    assert any(item.get('verifyCommand') for item in preflight['requiredPorts'])
+    assert all(item.get('impact') for item in preflight['requiredPorts'])
+    assert preflight.get('checkedAt')
+    assert preflight.get('checkSourceLabel')
+    assert preflight.get('nextAction')
     assert preflight['readyForRemoteAgent'] is False
     assert preflight['blockingCount'] >= 1
+    dashboard = client.get('/api/v1/dashboard-summaries?preflightSource=MANUAL', headers=headers).json()['data']
+    assert 'platformPreflight' in dashboard
+    assert dashboard['platformPreflight']['summary'] == preflight['summary']
+    assert dashboard['platformPreflight']['checkSourceLabel'] == '手动检测'
 
 
 def test_agent_join_token_bootstrap_and_install_script() -> None:
@@ -1096,7 +1108,8 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     })
     assert remote_preflight.status_code == 400
     assert remote_preflight.json()['code'] == 40075
-    assert '控制端' in remote_preflight.json()['message']
+    assert '平台自检' in remote_preflight.json()['message']
+    assert 'Agent 镜像地址' in remote_preflight.json()['message']
     token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-01',

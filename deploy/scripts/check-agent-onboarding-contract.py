@@ -15,6 +15,7 @@ api = (ROOT / "backend/app/api/agent_bootstrap.py").read_text(encoding="utf-8")
 installer = ROOT / "backend/app/templates/install-agent.sh"
 frontend = (ROOT / "frontend/src/views/ServersPage.vue").read_text(encoding="utf-8")
 settings_page = (ROOT / "frontend/src/views/SettingsPage.vue").read_text(encoding="utf-8")
+dashboard_page = (ROOT / "frontend/src/views/DashboardPage.vue").read_text(encoding="utf-8")
 system_config_service = (ROOT / "backend/app/services/system_config_service.py").read_text(encoding="utf-8")
 companies = (ROOT / "frontend/src/views/CompaniesPage.vue").read_text(encoding="utf-8")
 
@@ -44,10 +45,15 @@ if "inspect_control_plane_preflight" not in service or "readyForRemoteAgent" not
     errors.append("后端生成远程接入命令前未强制执行控制端接入预检，直接调用 API 仍可能绕过前端阻断")
 if "Agent 镜像仓库" not in system_config_service or "/api/v1/agent-installers/linux.sh" not in system_config_service:
     errors.append("控制端预检未覆盖 Agent 镜像仓库或安装脚本地址")
-if "controlPreflight" not in frontend or "控制端接入预检" not in frontend:
+if "controlPreflight" not in frontend or "接入前检查" not in frontend or "查看运行总览平台自检" not in frontend:
     errors.append("执行节点接入前端未展示控制端接入预检")
-if "controlPlanePreflight" not in settings_page or "控制端对外接入预检" not in settings_page:
-    errors.append("系统设置页未展示控制端对外接入预检")
+if "完整平台自检已移到运行总览" not in settings_page:
+    errors.append("系统设置页应只保留控制端地址配置，并提示到运行总览查看完整平台自检")
+
+if "platformPreflight" not in dashboard_page or "平台自检" not in dashboard_page or "重新检测" not in dashboard_page or "平台自检详情" not in dashboard_page or "本次检测变化" not in dashboard_page:
+    errors.append("运行总览未作为平台自检主入口展示摘要、详情抽屉和手动重新检测变化")
+if "impact" not in system_config_service or "verifyCommand" not in system_config_service or "checkSourceLabel" not in system_config_service:
+    errors.append("控制端预检缺少影响范围、验证命令或检测来源")
 if 'label="控制端公网回调地址"' in frontend:
     errors.append("执行节点接入前端不应在新增执行节点表单展示控制端公网回调地址输入项")
 legacy_token_text = "生成" + "接入" + "凭证"

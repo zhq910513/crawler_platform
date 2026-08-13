@@ -383,6 +383,7 @@ export interface DashboardSummary {
   taskCount: number
   runningCount: number
   waitingCount: number
+  platformPreflight?: ControlPlanePreflight
 }
 
 
@@ -685,6 +686,13 @@ export interface ControlPlanePreflightCheck {
   message: string
   blocking: boolean
   suggestion: string
+  action?: string
+  verifyCommand?: string
+  impact?: string
+  route?: string
+  actionLabel?: string
+  category?: string
+  canIgnore?: boolean
   details?: Record<string, unknown>
 }
 
@@ -694,6 +702,10 @@ export interface ControlPlaneRequiredPort {
   port: number
   protocol: string
   reason: string
+  action?: string
+  impact?: string
+  actionLabel?: string
+  verifyCommand?: string
 }
 
 export interface ControlPlanePreflight {
@@ -705,6 +717,10 @@ export interface ControlPlanePreflight {
   checks: ControlPlanePreflightCheck[]
   requiredPorts: ControlPlaneRequiredPort[]
   agentImage: string
+  checkedAt?: string
+  checkSource?: string
+  checkSourceLabel?: string
+  nextAction?: string
 }
 
 export interface SystemSettings {

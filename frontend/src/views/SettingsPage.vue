@@ -9,31 +9,7 @@
         </el-form-item>
         <div class="base-status"><el-tag :type="settings?.controlPlanePublicBaseUrlConfigured ? 'success' : 'warning'" effect="light">{{ settings?.controlPlanePublicBaseUrlConfigured ? '已配置' : '未配置' }}</el-tag><span class="muted">来源：{{ settings?.controlPlanePublicBaseUrlSource || '-' }}</span></div>
         <el-alert v-if="settings?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="settings.controlPlanePublicBaseUrlWarnings.join('；')" />
-        <div v-if="settings?.controlPlanePreflight" class="preflight-panel" :class="`preflight-${settings.controlPlanePreflight.status.toLowerCase()}`">
-          <div class="preflight-header">
-            <div>
-              <div class="preflight-title">控制端对外接入预检</div>
-              <div class="muted">{{ settings.controlPlanePreflight.summary }}</div>
-            </div>
-            <el-tag :type="preflightTag(settings.controlPlanePreflight.status)" effect="light">{{ preflightLabel(settings.controlPlanePreflight.status) }}</el-tag>
-          </div>
-          <div v-if="settings.controlPlanePreflight.requiredPorts?.length" class="port-list">
-            <div v-for="item in settings.controlPlanePreflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="port-item">
-              <strong>{{ item.name }}</strong>：{{ item.host }}:{{ item.port }}/{{ item.protocol }}
-              <span>{{ item.reason }}</span>
-            </div>
-          </div>
-          <div class="preflight-checks">
-            <div v-for="item in settings.controlPlanePreflight.checks" :key="item.key" class="preflight-check">
-              <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
-              <div>
-                <div class="check-label">{{ item.label }}</div>
-                <div class="muted">{{ item.message }}</div>
-                <div v-if="item.suggestion && item.status !== 'PASS'" class="check-suggestion">{{ item.suggestion }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <el-alert class="preflight-link" type="info" show-icon :closable="false" title="完整平台自检已移到运行总览。修改公网地址后，请到运行总览点击重新检测，确认端口、安装脚本和节点镜像仓库是否就绪。" />
         <div v-if="baseForm.controlPlanePublicBaseUrl" class="command-preview">连通性验证：curl -fsSL {{ baseForm.controlPlanePublicBaseUrl }}/health && echo</div>
       </el-form>
     </div>
@@ -92,8 +68,6 @@ const rows = ref<NotificationChannel[]>([]); const alerts = ref<AlertEvent[]>([]
 const settings = ref<SystemSettings | null>(null)
 const baseForm = reactive({ controlPlanePublicBaseUrl: '' })
 const form = reactive<NotificationChannelCreateRequest>({ scopeType: 'SYSTEM', channelName: '', channelType: 'FEISHU', channelStatus: 'DISABLED', p0Only: true, cooldownSeconds: 1800, config: {} })
-function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '提醒' }
 async function load() { settings.value = await getSystemSettings(); baseForm.controlPlanePublicBaseUrl = settings.value.controlPlanePublicBaseUrl || ''; rows.value = await listNotificationChannels(); alerts.value = await listAlertEvents() }
 async function saveBaseSettings() { savingBase.value = true; try { settings.value = await updateSystemSettings({ controlPlanePublicBaseUrl: baseForm.controlPlanePublicBaseUrl }); ElMessage.success('基础配置已保存') } finally { savingBase.value = false } }
 async function save() { await createNotificationChannel({ ...form, config: webhookUrl.value ? { webhook: webhookUrl.value } : {} }); dialogVisible.value = false; webhookUrl.value = ''; await load() }
