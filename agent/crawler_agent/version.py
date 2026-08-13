@@ -37,7 +37,8 @@ def release_metadata() -> dict[str, str]:
         or str(file_data.get("version") or "").strip()
     )
     if not version:
-        for candidate in (Path("/opt/crawler-agent/VERSION"), Path("VERSION")):
+        repo_root_version = Path(__file__).resolve().parents[2] / "VERSION"
+        for candidate in (Path("/opt/crawler-agent/VERSION"), Path("VERSION"), repo_root_version):
             try:
                 if candidate.exists():
                     version = candidate.read_text(encoding="utf-8").strip()

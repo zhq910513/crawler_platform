@@ -1,4 +1,4 @@
-# Agent 镜像下发、更新与不中断运行规范（crawler_platform 1.0.48）
+# Agent 镜像下发、更新与不中断运行规范（crawler_platform 1.0.49）
 
 ## 目标
 

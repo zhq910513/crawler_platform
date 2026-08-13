@@ -1106,10 +1106,12 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
         'installTarget': 'LOCAL',
     }).json()['data']
     assert '127.0.0.1:8080' in local_token['installCommand']
+    release_version = Path(__file__).resolve().parents[2].joinpath('VERSION').read_text(encoding='utf-8').strip()
     script = client.get('/api/v1/agent-installers/linux.sh')
     assert script.status_code == 200
     assert '控制端连通' in script.text and 'Docker' in script.text
-    assert 'crawler_platform_agent:1.0.48' in script.text
+    assert 'AGENT_IMAGE' in script.text
+    assert 'requested_agent_image' in script.text
     assert 'crawler_platform_agent:1.0.44' not in script.text
     assert '__CRAWLER_AGENT_IMAGE__' not in script.text
     assert 'Agent 镜像拉取失败且本机不存在' in script.text
@@ -1117,8 +1119,8 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert "AGENT_IMAGE='crawler_platform_agent:1.0.48'" in env_resp.text
-    assert "AGENT_AGENT_VERSION='1.0.48'" in env_resp.text
+    assert f"AGENT_IMAGE='crawler_platform_agent:{release_version}'" in env_resp.text
+    assert f"AGENT_AGENT_VERSION='{release_version}'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
     server = next(row for row in servers if row['serverCode'] == 'join-srv-01')
     assert server['labels']['region'] == 'cn'
