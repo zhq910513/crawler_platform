@@ -5,10 +5,22 @@ import shlex
 from datetime import timedelta
 from urllib.parse import urlparse
 from fastapi import status
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import CrawlerAgent, CrawlerAgentJoinToken, CrawlerServer, SysUser
+from app.models import (
+    CrawlerAgent,
+    CrawlerAgentJoinToken,
+    CrawlerDiscoveredProjectServer,
+    CrawlerOfflineRunSnapshot,
+    CrawlerProjectDeploymentTarget,
+    CrawlerProjectServer,
+    CrawlerRunContainerSnapshot,
+    CrawlerServer,
+    CrawlerTaskRun,
+    SysUser,
+)
 from app.repositories.platform import AgentRepository, CompanyRepository, ServerRepository
 from app.schemas import AgentBootstrapEnvRequest, AgentJoinTokenCreate, AgentRegistration, ServerCreate, ServerUpdate
 from app.security import hash_password
@@ -26,7 +38,7 @@ class ServerService:
         self.agents = AgentRepository(db)
         self.companies = CompanyRepository(db)
 
-    def list_servers(self, user: SysUser, company_id: int | None = None) -> list[CrawlerServer]:
+    def list_servers(self, user: SysUser, company_id: int | None = None) -> list[dict]:
         scoped = scoped_company_id(user, company_id)
         servers = self.servers.list_servers(scoped)
         offline_before = utcnow() - timedelta(seconds=max(30, settings.agent_lease_seconds * 2))
@@ -43,7 +55,24 @@ class ServerService:
                     changed = True
         if changed:
             self.db.commit()
-        return servers
+        return [self._server_payload(server) for server in servers]
+
+    def _server_payload(self, server: CrawlerServer) -> dict:
+        agent = server.agent
+        metrics = dict(server.metrics or {})
+        if agent:
+            metrics.setdefault("lastHeartbeatAt", agent.last_heartbeat_at)
+            metrics.setdefault("lastError", agent.last_error or metrics.get("lastError") or "")
+        return {
+            **{c.name: getattr(server, c.name) for c in server.__table__.columns},
+            "agent_code": agent.agent_code if agent else "",
+            "agent_name": agent.agent_name if agent else "",
+            "agent_connection_status": agent.connection_status if agent else "UNREGISTERED",
+            "agent_version": agent.agent_version if agent else "",
+            "agent_last_heartbeat_at": agent.last_heartbeat_at if agent else None,
+            "agent_last_error": agent.last_error if agent else "",
+            "metrics": metrics,
+        }
 
     def create_server(self, user: SysUser, payload: ServerCreate) -> CrawlerServer:
         company_id = writable_company_id(user, payload.company_id)
@@ -73,6 +102,56 @@ class ServerService:
         write_operation_log(self.db, user, None, operation_type="UPDATE_SERVER", resource_type="server", resource_id=str(server.server_id), before_data=before, after_data=after)
         self.db.commit()
         return server
+
+    def delete_server(self, user: SysUser, server_id: int) -> dict:
+        server = self.servers.get(server_id)
+        if not server:
+            raise AppError("资源不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_company_scope(user, server.company_id)
+        agent = server.agent
+        active_statuses = {"QUEUED", "ROUTED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
+        active_scope = CrawlerTaskRun.server_id == server.server_id
+        if agent:
+            active_scope = or_(active_scope, CrawlerTaskRun.agent_id == agent.agent_id)
+        active_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.run_status.in_(active_statuses), active_scope)) or 0)
+        if active_count:
+            raise AppError("节点存在运行中任务，不能清理，请等待任务结束后再操作", code=40074, http_status=status.HTTP_400_BAD_REQUEST)
+
+        before = self._server_payload(server)
+        agent_id = agent.agent_id if agent else None
+        cleanup_counts: dict[str, int] = {}
+
+        def bulk_delete(model, *criteria) -> int:
+            count = int(self.db.query(model).filter(*criteria).delete(synchronize_session=False) or 0)
+            cleanup_counts[model.__tablename__] = cleanup_counts.get(model.__tablename__, 0) + count
+            return count
+
+        bulk_delete(CrawlerProjectServer, CrawlerProjectServer.server_id == server.server_id)
+        bulk_delete(CrawlerDiscoveredProjectServer, CrawlerDiscoveredProjectServer.server_id == server.server_id)
+        bulk_delete(CrawlerProjectDeploymentTarget, CrawlerProjectDeploymentTarget.server_id == server.server_id)
+        bulk_delete(CrawlerOfflineRunSnapshot, CrawlerOfflineRunSnapshot.server_id == server.server_id)
+
+        run_query = self.db.query(CrawlerTaskRun).filter(CrawlerTaskRun.server_id == server.server_id)
+        cleanup_counts["crawler_task_run_server_unlinked"] = int(run_query.update({CrawlerTaskRun.server_id: None}, synchronize_session=False) or 0)
+        snapshot_query = self.db.query(CrawlerRunContainerSnapshot).filter(CrawlerRunContainerSnapshot.server_id == server.server_id)
+        cleanup_counts["crawler_run_container_snapshot_server_unlinked"] = int(snapshot_query.update({CrawlerRunContainerSnapshot.server_id: None}, synchronize_session=False) or 0)
+        if agent_id:
+            agent_run_query = self.db.query(CrawlerTaskRun).filter(CrawlerTaskRun.agent_id == agent_id)
+            cleanup_counts["crawler_task_run_agent_unlinked"] = int(agent_run_query.update({CrawlerTaskRun.agent_id: None}, synchronize_session=False) or 0)
+            agent_snapshot_query = self.db.query(CrawlerRunContainerSnapshot).filter(CrawlerRunContainerSnapshot.agent_id == agent_id)
+            cleanup_counts["crawler_run_container_snapshot_agent_unlinked"] = int(agent_snapshot_query.update({CrawlerRunContainerSnapshot.agent_id: None}, synchronize_session=False) or 0)
+            self.db.delete(agent)
+            cleanup_counts["crawler_agent"] = cleanup_counts.get("crawler_agent", 0) + 1
+
+        bulk_delete(CrawlerAgentJoinToken, CrawlerAgentJoinToken.server_code == server.server_code)
+        if agent:
+            bulk_delete(CrawlerAgentJoinToken, CrawlerAgentJoinToken.agent_code == agent.agent_code)
+
+        self.db.delete(server)
+        cleanup_counts["crawler_server"] = cleanup_counts.get("crawler_server", 0) + 1
+        write_operation_log(self.db, user, None, operation_type="DELETE_SERVER", resource_type="server", resource_id=str(server_id), before_data=before, after_data={"deleted": True, "cleanupCounts": cleanup_counts})
+        self.db.commit()
+        return {"server_id": server_id, "deleted": True, "cleanup_counts": cleanup_counts}
 
     def create_agent_join_token(self, user: SysUser, payload: AgentJoinTokenCreate, detected_base_url: str = "") -> dict:
         company_id = writable_company_id(user, payload.company_id)

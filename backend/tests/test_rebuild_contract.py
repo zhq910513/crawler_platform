@@ -1129,6 +1129,53 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert second.status_code == 401
 
 
+def test_unhealthy_agent_can_be_cleaned_and_rejoined() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'cleanupco', 'companyName': '清理公司'}).json()['data']
+    token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'cleanup-node-01',
+        'serverName': '异常节点01',
+        'agentCode': 'cleanup-agent-01',
+        'agentName': '异常Agent01',
+        'maxContainerSlots': 2,
+        'workDir': '/tmp/crawler-agent-cleanup',
+        'controlPlaneUrl': 'http://10.1.0.20:8080',
+        'installTarget': 'REMOTE',
+    }).json()['data']
+    env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'cleanup-host', 'installReport': {'docker': 'pull_failed'}})
+    assert env_resp.status_code == 200
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    node = next(row for row in servers if row['serverCode'] == 'cleanup-node-01')
+    assert node['agentCode'] == 'cleanup-agent-01'
+    assert node['agentConnectionStatus'] == 'UNREGISTERED'
+
+    duplicate = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'cleanup-node-01', 'serverName': '重复节点'})
+    assert duplicate.status_code == 400
+
+    cleanup = client.delete(f"/api/v1/servers/{node['serverId']}", headers=headers)
+    assert cleanup.status_code == 200
+    cleanup_body = cleanup.json()['data']
+    assert cleanup_body['deleted'] is True
+    assert cleanup_body['cleanupCounts']['crawlerServer'] == 1
+    assert cleanup_body['cleanupCounts']['crawlerAgent'] == 1
+
+    recreated = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'cleanup-node-01', 'serverName': '重新新增节点'}).json()['data']
+    assert recreated['serverCode'] == 'cleanup-node-01'
+    rejoin = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'cleanup-node-01',
+        'serverName': '重新接入节点',
+        'agentCode': 'cleanup-agent-01',
+        'agentName': '重新接入Agent',
+        'controlPlaneUrl': 'http://10.1.0.20:8080',
+        'installTarget': 'REMOTE',
+    })
+    assert rejoin.status_code == 200
+    assert rejoin.json()['data']['serverCode'] == 'cleanup-node-01'
+
 
 def test_agent_runtime_defaults_do_not_hide_missing_control_plane_url() -> None:
     config_text = Path(__file__).resolve().parents[2].joinpath('agent/crawler_agent/config.py').read_text(encoding='utf-8')

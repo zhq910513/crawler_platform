@@ -36,6 +36,11 @@ def update_server(server_id: int, payload: ServerUpdate, user: SysUser = Depends
     return ok(ServerService(db).update_server(user, server_id, payload))
 
 
+@router.delete("/{server_id}")
+def delete_server(server_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).delete_server(user, server_id))
+
+
 @router.post("/agent-join-tokens")
 def create_agent_join_token(payload: AgentJoinTokenCreate, request: Request, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ServerService(db).create_agent_join_token(user, payload, _detected_base_url(request)))

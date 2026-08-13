@@ -103,6 +103,12 @@ export interface ServerNode {
   healthStatus: string
   capacityStatus: string
   metrics: AgentMetrics
+  agentCode?: string
+  agentName?: string
+  agentConnectionStatus?: string
+  agentVersion?: string
+  agentLastHeartbeatAt?: string | null
+  agentLastError?: string
   labels?: Record<string, unknown>
   capabilities?: Record<string, unknown>
   registryCredentialRef?: string

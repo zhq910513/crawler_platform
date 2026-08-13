@@ -42,6 +42,7 @@ export function resetUserPassword(userId: number, payload: UserPasswordResetRequ
 
 export function listServers(companyId?: number) { return request<ServerNode[]>(http.get('/servers', { params: { companyId } })) }
 export function createServer(payload: ServerCreateRequest) { return request<ServerNode>(http.post('/servers', payload)) }
+export function deleteServer(serverId: number) { return request<{ serverId: number; deleted: boolean; cleanupCounts: Record<string, number> }>(http.delete(`/servers/${serverId}`)) }
 export function registerAgent(payload: AgentRegistrationRequest) { return request<{ agentToken: string }>(http.post('/agents', payload)) }
 
 export function createAgentJoinToken(payload: AgentJoinTokenCreateRequest) { return request<AgentJoinTokenResult>(http.post('/servers/agent-join-tokens', payload)) }

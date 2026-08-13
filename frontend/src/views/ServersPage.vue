@@ -42,7 +42,13 @@
         </template>
       </el-table-column>
       <el-table-column label="最后心跳" min-width="170"><template #default="s">{{ formatTime(s.row.metrics?.lastHeartbeatAt) }}</template></el-table-column>
-      <el-table-column label="最近异常" min-width="220"><template #default="s">{{ s.row.metrics?.lastError || '-' }}</template></el-table-column>
+      <el-table-column label="最近异常" min-width="220"><template #default="s">{{ s.row.metrics?.lastError || s.row.agentLastError || '-' }}</template></el-table-column>
+      <el-table-column label="操作" width="190" fixed="right">
+        <template #default="s">
+          <el-button link type="primary" @click="rejoinNode(s.row)">重新接入</el-button>
+          <el-button link type="danger" @click="cleanupNode(s.row)">清理</el-button>
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-dialog v-model="onboardingVisible" title="接入执行节点" width="860px" class="onboarding-dialog">
@@ -114,8 +120,8 @@
 </template>
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { createAgentJoinToken, createServer, getSystemSettings, listCompanies, listServers } from '../api/platform'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { createAgentJoinToken, createServer, deleteServer, getSystemSettings, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
 import { useRoute } from 'vue-router'
 import type { AgentJoinTokenResult, Company, ServerNode } from '../types/api'
@@ -179,6 +185,29 @@ function openOnboarding() {
   if (!joinForm.serverName) joinForm.serverName = '上海执行节点01'
   applyAutoCodes()
   applyInstallTarget()
+}
+function rejoinNode(row: ServerNode) {
+  joinResult.value = null
+  joinForm.companyId = row.companyId
+  joinForm.serverCode = row.serverCode
+  joinForm.serverName = row.serverName
+  joinForm.agentCode = row.agentCode || `${row.serverCode}-executor`
+  joinForm.agentName = row.agentName || row.serverName
+  joinForm.maxContainerSlots = row.maxContainerSlots || 2
+  joinForm.workDir = row.workDir || '/var/lib/crawler-agent'
+  joinForm.installTarget = 'REMOTE'
+  applyInstallTarget()
+  onboardingVisible.value = true
+}
+async function cleanupNode(row: ServerNode) {
+  try {
+    await ElMessageBox.confirm(`清理后会删除节点 ${row.serverName} 的接入记录，并释放节点标识，确认继续？`, '清理执行节点', { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' })
+  } catch {
+    return
+  }
+  await deleteServer(row.serverId)
+  ElMessage.success('节点接入记录已清理，可以重新接入')
+  await load()
 }
 async function load() {
   await loadSystemSettings()
