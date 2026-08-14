@@ -1,4 +1,4 @@
-# 账号状态上报规范（crawler_platform 1.0.54）
+# 账号状态上报规范（crawler_platform 1.0.57）
 
 ## 目标
 

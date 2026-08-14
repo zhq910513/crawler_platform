@@ -67,4 +67,14 @@ if ! printf '%s' "$version_json" | grep -Eq '"gitCommit"[[:space:]]*:[[:space:]]
   cp_warn "/version.json gitCommit 与当前 Git commit 不一致；请确认 web 镜像是否完成重建。"
 fi
 
+if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
+  cp_info "部署后自动准备 Agent 镜像分发。"
+  if ! bash deploy/scripts/prepare-agent-image.sh --version "$RELEASE_VERSION"; then
+    if [ "${STRICT_AGENT_IMAGE_PREPARE:-0}" = "1" ]; then
+      cp_die "Agent 镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断发布升级。"
+    fi
+    cp_warn "Agent 镜像自动准备未完成；请到运行总览查看平台自检并按提示处理。"
+  fi
+fi
+
 cp_info "发布升级完成：RELEASE_UPGRADE=PASS version=${RELEASE_VERSION}"

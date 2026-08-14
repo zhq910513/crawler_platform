@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from urllib.error import HTTPError, URLError
+import json
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
 
@@ -81,6 +82,9 @@ class SystemConfigService:
             action_label: str = "去处理",
             category: str = "平台接入",
             can_ignore: bool = False,
+            automation_type: str = "MANUAL",
+            handler: str = "操作员",
+            auto_action_command: str = "",
         ) -> None:
             checks.append({
                 "key": key,
@@ -96,6 +100,9 @@ class SystemConfigService:
                 "actionLabel": action_label,
                 "category": category,
                 "canIgnore": bool(can_ignore),
+                "automationType": automation_type,
+                "handler": handler,
+                "autoActionCommand": auto_action_command,
                 "details": details or {},
             })
 
@@ -145,6 +152,8 @@ class SystemConfigService:
                 "action": f"在云防火墙/安全组放行 {port}/TCP，来源建议限制为执行节点公网 IP；处理后点击运行总览的重新检测。",
                 "actionLabel": "放行平台入口端口",
                 "verifyCommand": health_command,
+                "automationType": "CLOUD_CONSOLE",
+                "handler": "云控制台",
             })
             if host in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}:
                 add_check(
@@ -223,11 +232,14 @@ class SystemConfigService:
                 "未配置 Agent 镜像地址，执行节点无法拉取 Agent 容器。",
                 True,
                 "配置 CRAWLER_AGENT_IMAGE 后重启 API/Scheduler/Maintenance，再回到运行总览点击重新检测。",
-                action="操作员在平台 .env 中配置 CRAWLER_AGENT_IMAGE=可访问仓库/crawler_platform_agent:版本，然后重启后端服务。",
-                impact="远程执行节点无法拉取 Agent 容器，新增节点无法启动。",
-                route="/settings",
-                action_label="配置 Agent 镜像",
+                action="平台可自动处理：在平台服务器执行 bash deploy/scripts/prepare-agent-image.sh，脚本会构建 Agent 镜像、推送到内置 registry、写入 CRAWLER_AGENT_IMAGE 并重启后端服务。",
+                impact="远程执行节点无法拉取 Agent 容器，新增节点无法启动；已在线节点不受影响。",
+                route="/dashboard?focus=platformPreflight",
+                action_label="准备 Agent 镜像",
                 category="Agent 镜像分发",
+                automation_type="PLATFORM_SCRIPT",
+                handler="平台部署脚本",
+                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
             )
         elif not self._image_has_registry_prefix(image):
             add_check(
@@ -238,11 +250,14 @@ class SystemConfigService:
                 True,
                 "将 CRAWLER_AGENT_IMAGE 改成执行节点可访问的完整镜像地址，例如 42.193.226.138:5000/crawler_platform_agent:版本。",
                 {"image": image},
-                action="操作员把 Agent 镜像推送到私有仓库，并在平台 .env 中配置 CRAWLER_AGENT_IMAGE=仓库地址/镜像名:版本。",
+                action="平台可自动处理：在平台服务器执行 bash deploy/scripts/prepare-agent-image.sh，脚本会自动构建、tag、push Agent 镜像，写入 CRAWLER_AGENT_IMAGE=公网IP:5000/crawler_platform_agent:版本 并重启后端服务。",
                 impact="远程节点会默认去 Docker Hub 拉你的私有镜像，通常会拉取失败；已在线节点不受影响。",
-                route="/settings",
-                action_label="改成私有仓库镜像",
+                route="/dashboard?focus=platformPreflight",
+                action_label="自动准备镜像分发",
                 category="Agent 镜像分发",
+                automation_type="PLATFORM_SCRIPT",
+                handler="平台部署脚本",
+                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
             )
         else:
             registry = image.split('/', 1)[0]
@@ -261,6 +276,8 @@ class SystemConfigService:
                 "action": f"在镜像仓库所在服务器放行 {registry_port}/TCP，来源建议限制为执行节点公网 IP；HTTP registry 还要在执行节点 Docker 配置 insecure-registries。",
                 "actionLabel": "放行镜像仓库端口",
                 "verifyCommand": registry_command,
+                "automationType": "CLOUD_CONSOLE",
+                "handler": "云控制台",
             })
             registry_probe = self._registry_probe(registry)
             add_check(
@@ -271,12 +288,34 @@ class SystemConfigService:
                 False,
                 "在执行节点验证镜像仓库 /v2/ 和 docker pull；如果失败，放行仓库端口，HTTP registry 需要配置 insecure-registries。",
                 {**registry_probe, "image": image, "registry": registry},
-                action=f"操作员在执行节点执行：{registry_command}；通过后再执行：{pull_command}。失败时放行 {registry_port}/TCP 并配置 Docker insecure-registries。",
+                action=f"操作员先在云安全组放行 {registry_port}/TCP；执行节点安装脚本可在授权后自动配置 Docker insecure-registries，安装命令追加 --auto-configure-docker-registry。",
                 verify_command=registry_command,
                 impact="镜像仓库不可达时，远程执行节点无法启动 Agent 容器；已在线节点不受影响。",
-                action_label="在节点验证镜像仓库",
+                action_label="验证镜像仓库",
                 category="Agent 镜像分发",
                 can_ignore=True,
+                automation_type="NODE_INSTALLER_AUTHORIZED",
+                handler="执行节点安装脚本",
+                auto_action_command="在执行节点安装命令后追加 --auto-configure-docker-registry",
+            )
+            tag_probe = self._registry_tag_probe(image)
+            add_check(
+                "agent_image_tag",
+                "Agent 镜像版本",
+                "PASS" if tag_probe["ok"] else "WARN",
+                f"Agent 镜像 tag 可查询：{image}" if tag_probe["ok"] else f"控制端本机未能确认 Agent 镜像 tag 已推送：{tag_probe['message']}。请在执行节点或平台服务器验证 docker pull。",
+                False,
+                "使用平台脚本准备镜像，或在执行节点执行 docker pull 验证镜像是否可拉取。",
+                tag_probe,
+                action=f"平台可自动处理：执行 bash deploy/scripts/prepare-agent-image.sh；处理后验证：{pull_command}",
+                verify_command=pull_command,
+                impact="镜像仓库存在但 tag 未推送时，执行节点仍会在拉取 Agent 镜像阶段失败。",
+                action_label="准备 Agent 镜像 tag",
+                category="Agent 镜像分发",
+                can_ignore=True,
+                automation_type="PLATFORM_SCRIPT",
+                handler="平台部署脚本",
+                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
             )
 
         blocking_count = sum(1 for item in checks if item["blocking"] and item["status"] == "FAIL")
@@ -305,7 +344,25 @@ class SystemConfigService:
             "checkSource": source_key,
             "checkSourceLabel": source_label,
             "nextAction": next_action,
+            "automationSummary": self._automation_summary(checks),
         }
+
+    @staticmethod
+    def _automation_summary(checks: list[dict]) -> dict:
+        summary = {"platformScript": 0, "nodeInstallerAuthorized": 0, "cloudConsole": 0, "manual": 0}
+        for item in checks:
+            if item.get("status") == "PASS":
+                continue
+            kind = str(item.get("automationType") or "MANUAL")
+            if kind == "PLATFORM_SCRIPT":
+                summary["platformScript"] += 1
+            elif kind == "NODE_INSTALLER_AUTHORIZED":
+                summary["nodeInstallerAuthorized"] += 1
+            elif kind == "CLOUD_CONSOLE":
+                summary["cloudConsole"] += 1
+            else:
+                summary["manual"] += 1
+        return summary
 
     def inspect_control_plane_public_base_url(self, detected_base_url: str = "") -> dict:
         detected = (detected_base_url or "").strip().rstrip("/")
@@ -390,6 +447,26 @@ class SystemConfigService:
         except Exception as exc:  # pragma: no cover - defensive probe guard
             return {"ok": False, "statusCode": 0, "url": url, "message": str(exc)}
 
+    @staticmethod
+    def _http_text_probe(url: str, timeout: float = 1.0) -> dict:
+        try:
+            req = UrlRequest(url, headers={"User-Agent": "crawler-platform-preflight/1.0"})
+            with urlopen(req, timeout=timeout) as resp:
+                status_code = int(getattr(resp, "status", 0) or 0)
+                body = resp.read(65536).decode("utf-8", errors="replace")
+                return {"ok": 200 <= status_code < 500, "statusCode": status_code, "url": url, "message": f"HTTP {status_code}", "body": body}
+        except HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read(65536).decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            return {"ok": exc.code < 500, "statusCode": exc.code, "url": url, "message": f"HTTP {exc.code}", "body": body}
+        except URLError as exc:
+            return {"ok": False, "statusCode": 0, "url": url, "message": str(getattr(exc, "reason", exc)), "body": ""}
+        except Exception as exc:  # pragma: no cover
+            return {"ok": False, "statusCode": 0, "url": url, "message": str(exc), "body": ""}
+
     def _registry_probe(self, registry: str) -> dict:
         host = registry.rsplit(':', 1)[0] if ':' in registry else registry
         port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
@@ -401,6 +478,34 @@ class SystemConfigService:
             if probe["ok"]:
                 return {**probe, "attempts": attempts}
         return {"ok": False, "statusCode": 0, "url": attempts[-1]["url"] if attempts else "", "message": "; ".join(item["message"] for item in attempts) or "无法访问镜像仓库", "attempts": attempts}
+
+    def _registry_tag_probe(self, image: str) -> dict:
+        try:
+            registry, rest = image.split('/', 1)
+            if ':' in rest.rsplit('/', 1)[-1]:
+                repo, tag = rest.rsplit(':', 1)
+            else:
+                repo, tag = rest, 'latest'
+        except ValueError:
+            return {"ok": False, "message": "镜像地址缺少仓库前缀", "image": image}
+        host = registry.rsplit(':', 1)[0] if ':' in registry else registry
+        port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
+        schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
+        attempts = []
+        for scheme in schemes:
+            url = f"{scheme}://{registry}/v2/{repo}/tags/list"
+            probe = self._http_text_probe(url, timeout=1.0)
+            attempts.append(probe)
+            if probe["ok"]:
+                try:
+                    payload = json.loads(str(probe.get("body") or "{}"))
+                except json.JSONDecodeError:
+                    payload = {}
+                tags = payload.get("tags") if isinstance(payload, dict) else None
+                if isinstance(tags, list) and tag in tags:
+                    return {**probe, "image": image, "registry": registry, "repository": repo, "tag": tag, "tags": tags, "attempts": attempts}
+                return {**probe, "ok": False, "message": f"仓库可访问，但未找到 tag {tag}", "image": image, "registry": registry, "repository": repo, "tag": tag, "tags": tags or [], "attempts": attempts}
+        return {"ok": False, "message": "; ".join(item["message"] for item in attempts) or "无法查询镜像 tag", "image": image, "registry": registry, "attempts": attempts}
 
     @staticmethod
     def _image_has_registry_prefix(image: str) -> bool:

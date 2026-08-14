@@ -41,6 +41,11 @@
           <div class="section-title-small">下一步动作</div>
           <p>{{ preflight.nextAction || '暂无必须处理项。' }}</p>
           <div class="muted">开通端口、修改镜像地址或重启服务后，点击“重新检测”刷新状态。</div>
+          <div v-if="preflight.automationSummary" class="automation-pills">
+            <el-tag v-if="preflight.automationSummary.platformScript" size="small" type="success" effect="light">平台脚本可处理 {{ preflight.automationSummary.platformScript }}</el-tag>
+            <el-tag v-if="preflight.automationSummary.nodeInstallerAuthorized" size="small" type="warning" effect="light">节点授权可处理 {{ preflight.automationSummary.nodeInstallerAuthorized }}</el-tag>
+            <el-tag v-if="preflight.automationSummary.cloudConsole" size="small" type="danger" effect="light">需云控制台 {{ preflight.automationSummary.cloudConsole }}</el-tag>
+          </div>
         </div>
         <div class="problem-summary">
           <div class="section-title-small">当前重点事项</div>
@@ -80,6 +85,7 @@
             <div v-for="item in preflight.requiredPorts" :key="`${item.name}-${item.host}-${item.port}`" class="drawer-item">
               <div class="drawer-item-title">{{ item.name }}：{{ item.host }}:{{ item.port }}/{{ item.protocol }}</div>
               <div class="field-block"><strong>影响：</strong>{{ item.impact || item.reason }}</div>
+              <div v-if="item.handler" class="field-block"><strong>处理方式：</strong>{{ item.handler }}</div>
               <div class="field-block"><strong>处理：</strong>{{ item.action }}</div>
               <div v-if="item.verifyCommand" class="command-row"><span>验证命令</span><el-button size="small" @click="copyText(item.verifyCommand || '')">复制</el-button></div>
               <pre v-if="item.verifyCommand" class="verify-command">{{ item.verifyCommand }}</pre>
@@ -101,7 +107,10 @@
               </div>
               <div class="field-block"><strong>结果：</strong>{{ item.message }}</div>
               <div class="field-block"><strong>影响：</strong>{{ item.impact }}</div>
+              <div v-if="item.handler" class="field-block"><strong>处理方式：</strong>{{ item.handler }}</div>
               <div v-if="item.status !== 'PASS'" class="field-block action-field"><strong>处理：</strong>{{ item.action || item.suggestion }}</div>
+              <div v-if="item.autoActionCommand" class="command-row"><span>自动化命令</span><el-button size="small" @click="copyText(item.autoActionCommand || '')">复制</el-button></div>
+              <pre v-if="item.autoActionCommand" class="verify-command">{{ item.autoActionCommand }}</pre>
               <div v-if="item.verifyCommand" class="command-row"><span>验证命令</span><el-button size="small" @click="copyText(item.verifyCommand || '')">复制</el-button></div>
               <pre v-if="item.verifyCommand" class="verify-command">{{ item.verifyCommand }}</pre>
               <el-button v-if="item.route && item.status !== 'PASS'" class="route-button" type="primary" plain size="small" @click="goRoute(item.route)">{{ item.actionLabel || '去处理' }}</el-button>
@@ -212,6 +221,7 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .platform-check-summary { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 16px; padding: 18px 22px 22px; }
 .next-action-card, .problem-summary, .change-card { border: 1px solid #e2e8f0; border-radius: 16px; background: rgba(255, 255, 255, 0.78); padding: 14px; box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04); }
 .next-action-card p { margin: 6px 0 8px; color: #0f172a; font-weight: 700; line-height: 1.6; }
+.automation-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .section-title-small { margin-bottom: 10px; color: #0f172a; font-weight: 800; }
 .mini-check-list { display: grid; gap: 10px; }
 .mini-check-row { display: grid; grid-template-columns: 58px 1fr; gap: 10px; align-items: flex-start; }

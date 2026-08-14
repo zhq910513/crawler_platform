@@ -693,6 +693,9 @@ export interface ControlPlanePreflightCheck {
   actionLabel?: string
   category?: string
   canIgnore?: boolean
+  automationType?: string
+  handler?: string
+  autoActionCommand?: string
   details?: Record<string, unknown>
 }
 
@@ -706,6 +709,8 @@ export interface ControlPlaneRequiredPort {
   impact?: string
   actionLabel?: string
   verifyCommand?: string
+  automationType?: string
+  handler?: string
 }
 
 export interface ControlPlanePreflight {
@@ -721,6 +726,7 @@ export interface ControlPlanePreflight {
   checkSource?: string
   checkSourceLabel?: string
   nextAction?: string
+  automationSummary?: { platformScript: number; nodeInstallerAuthorized: number; cloudConsole: number; manual: number }
 }
 
 export interface SystemSettings {

@@ -213,6 +213,7 @@ class ServerService:
             "warnings": [
                 *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
                 *self._agent_image_warnings(),
+                "安装命令包含自动化授权参数：必要时会配置 Docker HTTP 镜像仓库，并在重新接入时替换已有 Agent 容器。请只交给可信运维人员执行。",
             ],
             "controlPlanePreflight": control_preflight,
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
@@ -302,7 +303,10 @@ class ServerService:
 
     def _install_command(self, token: str, base: str) -> str:
         public_base = base.rstrip("/")
-        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)}"
+        # 接入命令默认带授权式自动化参数：
+        # - --auto-configure-docker-registry：仅在 HTTP 私有仓库需要时备份并合并 Docker insecure-registries；
+        # - --replace-existing-agent：重新接入时允许替换已有 crawler-agent 容器，避免旧失败容器阻塞接入。
+        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)} --auto-configure-docker-registry --replace-existing-agent"
 
     def _resolve_control_plane_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
         base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")

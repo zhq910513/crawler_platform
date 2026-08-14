@@ -1,4 +1,4 @@
-# Agent 镜像下发、更新与不中断运行规范（crawler_platform 1.0.54）
+# Agent 镜像下发、更新与不中断运行规范（crawler_platform 1.0.57）
 
 ## 目标
 
@@ -68,3 +68,30 @@
 - `WARMING`：Agent 已领取任务或正在预热镜像。
 - `READY`：Agent 已完成 digest 拉取和校验。
 - `FAILED`：Agent 拉取或校验失败，后续心跳会继续提示可重试。
+
+## 1.0.57 自动化准备 Agent 镜像
+
+从 1.0.57 开始，平台侧不再默认要求操作员手工执行 build/tag/push/修改 .env/重启 API。推荐在平台服务器执行：
+
+```bash
+bash deploy/scripts/prepare-agent-image.sh
+```
+
+该脚本会自动完成：
+
+1. 构建 `crawler_platform_agent:<版本>`；
+2. 启动或复用内置 registry；
+3. 推送 `localhost:5000/crawler_platform_agent:<版本>`；
+4. 根据 `CRAWLER_CONTROL_PUBLIC_BASE_URL` 推导执行节点可访问的镜像地址；
+5. 写入 `.env` 的 `CRAWLER_AGENT_IMAGE=<公网IP>:5000/crawler_platform_agent:<版本>`；
+6. 重启 `api/scheduler/maintenance` 并重新检查健康状态。
+
+仍需人工处理的边界：云安全组/防火墙放行 5000/TCP。建议来源限制为执行节点公网 IP，不要全网开放未鉴权 registry。
+
+执行节点如果使用 HTTP registry，安装命令可追加：
+
+```bash
+--auto-configure-docker-registry
+```
+
+脚本会在授权后备份并合并 `/etc/docker/daemon.json`，写入 `insecure-registries`，重启 Docker 后继续拉取 Agent 镜像。

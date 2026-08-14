@@ -1081,6 +1081,14 @@ def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> 
     assert any(item.get('action') for item in preflight['checks'] if item['status'] != 'PASS')
     assert any(item.get('impact') for item in preflight['checks'])
     assert any(item.get('actionLabel') for item in preflight['checks'] if item['status'] != 'PASS')
+    assert any(item.get('automationType') == 'PLATFORM_SCRIPT' for item in preflight['checks'] if item['status'] != 'PASS')
+    assert any('prepare-agent-image.sh' in (item.get('autoActionCommand') or '') for item in preflight['checks'])
+    prepare_script = Path(__file__).resolve().parents[2].joinpath('deploy/scripts/prepare-agent-image.sh').read_text(encoding='utf-8')
+    assert 'STRICT_AGENT_IMAGE_PREPARE' not in prepare_script
+    assert '本机 registry 中未发现 crawler_platform_agent' in prepare_script
+    assert '.env.tmp_prepare_agent_image' in prepare_script
+    assert 'sed -i "s#^${key}' not in prepare_script
+    assert preflight.get('automationSummary', {}).get('platformScript', 0) >= 1
     assert any(item.get('verifyCommand') for item in preflight['requiredPorts'])
     assert all(item.get('impact') for item in preflight['requiredPorts'])
     assert preflight.get('checkedAt')
@@ -1124,6 +1132,8 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     }).json()['data']
     assert token_body['joinToken']
     assert '--join-token' in token_body['installCommand']
+    assert '--auto-configure-docker-registry' in token_body['installCommand']
+    assert '--replace-existing-agent' in token_body['installCommand']
     assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
     assert any('Agent 镜像未配置私有仓库前缀' in item for item in token_body.get('warnings') or [])
@@ -1155,6 +1165,13 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert 'crawler_platform_agent:1.0.44' not in script.text
     assert '__CRAWLER_AGENT_IMAGE__' not in script.text
     assert 'Agent 镜像拉取失败且本机不存在' in script.text
+    assert '--auto-configure-docker-registry' in script.text
+    assert '--replace-existing-agent' in script.text
+    assert 'CURRENT_STAGE' in script.text
+    assert '启动 Agent 容器' in script.text
+    assert 'insecure-registries' in script.text
+    assert 'grep -F "\\"$reg\\""' in script.text
+    assert 'grep -F '"'"'"$reg"'"'"'' not in script.text
     env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host', 'installReport': {'pass': 5}})
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text

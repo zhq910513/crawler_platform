@@ -54,6 +54,26 @@ if "platformPreflight" not in dashboard_page or "平台自检" not in dashboard_
     errors.append("运行总览未作为平台自检主入口展示摘要、详情抽屉和手动重新检测变化")
 if "impact" not in system_config_service or "verifyCommand" not in system_config_service or "checkSourceLabel" not in system_config_service:
     errors.append("控制端预检缺少影响范围、验证命令或检测来源")
+if "automationType" not in system_config_service or "autoActionCommand" not in system_config_service or "prepare-agent-image.sh" not in system_config_service:
+    errors.append("控制端预检未区分可自动处理项，或未给出 Agent 镜像自动准备脚本")
+if "--auto-configure-docker-registry" not in text or "insecure-registries" not in text:
+    errors.append("Agent 安装脚本缺少授权自动配置 Docker HTTP 私有仓库能力")
+if "grep -F '"'"'"$reg"'"'"'" in text or 'grep -F "\\"$reg\\""' not in text:
+    errors.append("Agent 安装脚本 Docker insecure-registries 检测必须检查真实 registry 值，不能误查字面量 $reg")
+if "--replace-existing-agent" not in text or "CURRENT_STAGE" not in text or "启动 Agent 容器" not in text:
+    errors.append("Agent 安装脚本缺少失败阶段标识或已有 Agent 容器替换授权保护")
+if "--auto-configure-docker-registry --replace-existing-agent" not in service:
+    errors.append("后端生成的执行节点接入命令未默认携带授权式自动化参数")
+prepare_script = (ROOT / "deploy/scripts/prepare-agent-image.sh").read_text(encoding="utf-8") if (ROOT / "deploy/scripts/prepare-agent-image.sh").exists() else ""
+if ".env.tmp_prepare_agent_image" not in prepare_script or "本机 registry 中未发现 crawler_platform_agent" not in prepare_script:
+    errors.append("Agent 镜像准备脚本缺少安全 .env 写入或精确 tag 验证")
+if not (ROOT / "deploy/scripts/prepare-agent-image.sh").exists():
+    errors.append("缺少平台侧 Agent 镜像自动准备脚本 deploy/scripts/prepare-agent-image.sh")
+
+for deploy_name in ["deploy.sh", "release-upgrade.sh", "deploy-single-server.sh"]:
+    deploy_text = (ROOT / "deploy/scripts" / deploy_name).read_text(encoding="utf-8")
+    if "STRICT_AGENT_IMAGE_PREPARE" not in deploy_text:
+        errors.append(f"{deploy_name} 缺少 STRICT_AGENT_IMAGE_PREPARE 强门禁开关")
 if 'label="控制端公网回调地址"' in frontend:
     errors.append("执行节点接入前端不应在新增执行节点表单展示控制端公网回调地址输入项")
 legacy_token_text = "生成" + "接入" + "凭证"
