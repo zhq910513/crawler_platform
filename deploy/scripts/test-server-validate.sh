@@ -26,23 +26,23 @@ if [ "$YES" != "1" ]; then
 fi
 
 cp_fix_project_permissions
-./deploy/scripts/doctor.sh
+bash deploy/scripts/doctor.sh
 cp_require_docker
 cp_warn_cn_mirrors
 
 if [ "$SKIP_RESET" != "1" ]; then
   if [ "$AUTO_MIRRORS" = "1" ]; then
-    ./deploy/scripts/reset-test-server.sh --yes --prepare-cn-mirrors
+    bash deploy/scripts/reset-test-server.sh --yes --prepare-cn-mirrors
   else
-    ./deploy/scripts/reset-test-server.sh --yes
+    bash deploy/scripts/reset-test-server.sh --yes
   fi
 else
-  ./deploy/scripts/check-env.sh .env
+  bash deploy/scripts/check-env.sh .env
   cp_compose config >/dev/null
   WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"
   cp_wait_http "http://127.0.0.1:${WEB_PORT_VALUE}/health" 30 2
 fi
 
-./deploy/scripts/smoke-test.sh --build-smoke-image --start-agent
+bash deploy/scripts/smoke-test.sh --build-smoke-image --start-agent
 
 echo "✅ 零数据测试服核心验收通过。建议继续执行压测、告警渠道测试和备份恢复演练。"

@@ -73,3 +73,27 @@ def test_ci_and_docs_do_not_use_test_prefixed_server_secrets() -> None:
     workflow = (ROOT / '.github/workflows/deploy-test-server.yml').read_text(encoding='utf-8')
     for secret in ['SERVER_HOST', 'SERVER_USER', 'SERVER_SSH_KEY', 'SERVER_PORT', 'SERVER_PROJECT_DIR']:
         assert f'secrets.{secret}' in workflow
+
+
+def test_remote_auto_deploy_recovers_mode_only_changes_without_reset_hard() -> None:
+    host = (ROOT / 'deploy/scripts/lib/host.sh').read_text(encoding='utf-8')
+    remote = (ROOT / 'deploy/scripts/remote-auto-deploy.sh').read_text(encoding='utf-8')
+    contract = (ROOT / 'deploy/scripts/check-deploy-worktree-contract.py').read_text(encoding='utf-8')
+
+    assert 'cp_git_restore_mode_only_changes()' in host
+    assert 'core.fileMode=false' in host
+    assert 'git reset -q HEAD -- .' in host
+    assert 'git checkout -q -- .' in host
+    assert 'git reset --hard' not in host
+    assert 'chmod +x deploy/scripts/*.sh' not in host
+    assert 'chmod +x agent/install-linux.sh' not in host
+    assert 'cp_git_restore_mode_only_changes' in remote
+    assert '真实未提交改动' in remote
+    gate = (ROOT / 'deploy/scripts/commercial-release-gate.sh').read_text(encoding='utf-8')
+    workflow = (ROOT / '.github/workflows/deploy-test-server.yml').read_text(encoding='utf-8')
+    assert 'check-deploy-worktree-contract.py' in gate
+    assert 'CI/CD 工作区权限位自愈契约检查' in gate
+    assert '内部部署脚本调用应使用 bash' in contract
+    assert '检测到仅 Git 文件权限位变化' in workflow
+    assert 'core.fileMode=false' in workflow
+    assert '[ ! -f deploy/scripts/remote-auto-deploy.sh ]' in workflow

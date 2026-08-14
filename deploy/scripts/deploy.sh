@@ -4,14 +4,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 . "$ROOT_DIR/deploy/scripts/lib/host.sh"
 cd "$ROOT_DIR"
 cp_trap_diagnostics
-./deploy/scripts/doctor.sh
-./deploy/scripts/prepare.sh
+bash deploy/scripts/doctor.sh
+bash deploy/scripts/prepare.sh
 cp_require_docker
 cp_warn_cn_mirrors
 
 MYSQL_ID=$(cp_compose ps -q mysql 2>/dev/null || true)
 if [ -n "$MYSQL_ID" ] && [ "$(docker inspect -f '{{.State.Running}}' "$MYSQL_ID" 2>/dev/null || true)" = "true" ] && [ "${SKIP_BACKUP:-0}" != "1" ]; then
-  ./deploy/scripts/backup.sh
+  bash deploy/scripts/backup.sh
 fi
 
 if [ "${NO_CACHE:-0}" = "1" ]; then
@@ -26,14 +26,14 @@ cp_compose up -d --force-recreate api scheduler maintenance web
 PORT="$(cp_env_value .env WEB_PORT)"; PORT="${PORT:-80}"
 if cp_wait_http "http://127.0.0.1:${PORT}/health" 120 2; then
   if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
-    if ! ./deploy/scripts/prepare-agent-image.sh; then
+    if ! bash deploy/scripts/prepare-agent-image.sh; then
       if [ "${STRICT_AGENT_IMAGE_PREPARE:-0}" = "1" ]; then
         cp_die "Agent 镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断部署。"
       fi
       cp_warn "Agent 镜像自动准备未完成；请到运行总览查看平台自检并按提示处理。"
     fi
   fi
-  ./deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true
+  bash deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true
   cp_compose ps
   echo "crawler_platform 部署完成：http://服务器IP:${PORT}"
   exit 0

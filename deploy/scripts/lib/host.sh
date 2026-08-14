@@ -172,9 +172,39 @@ cp_check_crlf() {
 }
 
 cp_fix_project_permissions() {
-  find deploy agent cicd -type f \( -name '*.sh' -o -name '*.py' \) -exec sed -i 's/\r$//' {} \; 2>/dev/null || true
-  chmod +x deploy/scripts/*.sh 2>/dev/null || true
-  chmod +x agent/install-linux.sh 2>/dev/null || true
+  # 部署脚本不再修改 Git 管理文件的执行权限，避免 CI/CD 后把工作区变脏。
+  # 内部脚本调用统一使用 `bash deploy/scripts/xxx.sh`，因此无需 chmod +x。
+  if ! cp_check_crlf deploy >/dev/null 2>&1; then
+    cp_warn "检测到脚本存在 CRLF 换行，请在代码仓库中修正后再发布；部署脚本不会自动改写 Git 管理文件。"
+  fi
+}
+
+cp_git_restore_mode_only_changes() {
+  # 仅自动恢复“文件权限位变化”；真实内容改动、删除、未跟踪文件仍阻断部署。
+  # 适用于历史部署脚本曾 chmod Git 管理脚本导致的 old mode/new mode 漂移。
+  [ -d .git ] || return 0
+  local status
+  status="$(git status --porcelain 2>/dev/null || true)"
+  [ -n "$status" ] || return 0
+
+  if printf '%s\n' "$status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}'; then
+    return 1
+  fi
+  if printf '%s\n' "$status" | awk 'substr($0,1,2)=="!!" {found=1} END{exit found?0:1}'; then
+    return 1
+  fi
+
+  if git -c core.fileMode=false diff --quiet --ignore-submodules --     && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
+    cp_warn "检测到仅 Git 文件权限位变化，自动恢复后继续部署。"
+    git status --short >&2 || true
+    git reset -q HEAD -- . || return 1
+    git checkout -q -- . || return 1
+    if [ -z "$(git status --porcelain 2>/dev/null || true)" ]; then
+      cp_info "Git 文件权限位漂移已自动恢复。"
+      return 0
+    fi
+  fi
+  return 1
 }
 
 cp_has_docker_mirror() {
@@ -183,7 +213,7 @@ cp_has_docker_mirror() {
 
 cp_warn_cn_mirrors() {
   if ! cp_has_docker_mirror; then
-    cp_warn "未检测到 Docker registry-mirrors。国内服务器可能拉取镜像极慢或失败；可执行：./deploy/scripts/prepare-cn-mirrors.sh --yes"
+    cp_warn "未检测到 Docker registry-mirrors。国内服务器可能拉取镜像极慢或失败；可执行：bash deploy/scripts/prepare-cn-mirrors.sh --yes"
   fi
 }
 

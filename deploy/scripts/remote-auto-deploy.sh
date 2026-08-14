@@ -16,9 +16,9 @@ if [ ! -d .git ]; then
   exit 1
 fi
 
-if [ -n "$(git status --porcelain)" ]; then
+if ! cp_git_restore_mode_only_changes; then
   git status --short >&2 || true
-  cp_die "工作区存在未提交改动，自动部署已停止。请提交、清理或人工确认后重试。"
+  cp_die "工作区存在真实未提交改动，自动部署已停止。仅文件权限位变化会自动恢复；内容改动、删除或未跟踪文件需要提交、清理或人工确认。"
   exit 1
 fi
 

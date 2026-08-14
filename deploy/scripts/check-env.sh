@@ -21,8 +21,8 @@ if [ "$app_version" != "$tag_version" ]; then
   echo "❌ APP_VERSION 与 PLATFORM_IMAGE_TAG 不一致：$app_version / $tag_version" >&2
   exit 1
 fi
-if [ "$app_version" != "1.0.63" ]; then
-  echo "⚠️  当前 APP_VERSION=$app_version；本次发布应统一为 1.0.63。" >&2
+if [ "$app_version" != "1.0.64" ]; then
+  echo "⚠️  当前 APP_VERSION=$app_version；本次发布应统一为 1.0.64。" >&2
 fi
 
 if grep -qE 'ReplaceWith|change-this|Admin@123456' "$ENV_FILE"; then
@@ -31,7 +31,7 @@ if grep -qE 'ReplaceWith|change-this|Admin@123456' "$ENV_FILE"; then
 fi
 
 if ! grep -q '^DOCKER_REGISTRY_MIRRORS=' "$ENV_FILE"; then
-  echo "⚠️  .env 未配置 DOCKER_REGISTRY_MIRRORS。国内服务器建议执行 ./deploy/scripts/prepare-cn-mirrors.sh --yes" >&2
+  echo "⚠️  .env 未配置 DOCKER_REGISTRY_MIRRORS。国内服务器建议执行 bash deploy/scripts/prepare-cn-mirrors.sh --yes" >&2
 fi
 
 echo "✅ .env 基础配置检查通过：$ENV_FILE"

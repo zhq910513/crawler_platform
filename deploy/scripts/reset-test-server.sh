@@ -31,7 +31,7 @@ cp_require_docker
 cp_require_min_docker
 cp_warn_cn_mirrors
 if [ "$AUTO_MIRRORS" = "1" ]; then
-  ./deploy/scripts/prepare-cn-mirrors.sh --yes || cp_warn "国内镜像源自动配置未完成，请检查权限。"
+  bash deploy/scripts/prepare-cn-mirrors.sh --yes || cp_warn "国内镜像源自动配置未完成，请检查权限。"
 fi
 
 random_secret() {
@@ -55,7 +55,7 @@ if grep -qE 'ReplaceWith|change-this|Admin@123456' .env; then
 fi
 chmod 0600 .env || true
 
-./deploy/scripts/check-env.sh .env
+bash deploy/scripts/check-env.sh .env
 cp_python_tool deploy/scripts/check-mysql-identifiers.py
 
 WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"

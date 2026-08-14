@@ -19,19 +19,19 @@
 
 所有命令均为单行。宿主机最小依赖为 Docker + Docker Compose；Python/npm 等复杂能力优先通过工具容器或平台容器执行。
 
-环境体检：`./deploy/scripts/doctor.sh`
+环境体检：`bash deploy/scripts/doctor.sh`
 
-容器化 Python 编译检查：`./deploy/scripts/container-compile-check.sh`
+容器化 Python 编译检查：`bash deploy/scripts/container-compile-check.sh`
 
-商业发布门禁：`./deploy/scripts/commercial-release-gate.sh`
+商业发布门禁：`bash deploy/scripts/commercial-release-gate.sh`
 
-国内镜像源配置：`./deploy/scripts/prepare-cn-mirrors.sh --yes`
+国内镜像源配置：`bash deploy/scripts/prepare-cn-mirrors.sh --yes`
 
-零数据测试服验收：`./deploy/scripts/test-server-validate.sh --yes --prepare-cn-mirrors`
+零数据测试服验收：`bash deploy/scripts/test-server-validate.sh --yes --prepare-cn-mirrors`
 
-只跑 smoke-test：`./deploy/scripts/test-server-validate.sh --yes --skip-reset`
+只跑 smoke-test：`bash deploy/scripts/test-server-validate.sh --yes --skip-reset`
 
-生产部署：`./deploy/scripts/deploy.sh`
+生产部署：`bash deploy/scripts/deploy.sh`
 
 查看容器：`docker compose ps`
 
@@ -106,13 +106,13 @@
 一键重置并执行核心链路验收：
 
 ```bash
-./deploy/scripts/test-server-validate.sh --yes
+bash deploy/scripts/test-server-validate.sh --yes
 ```
 
 只执行 smoke-test，不清空已有测试服数据：
 
 ```bash
-./deploy/scripts/test-server-validate.sh --yes --skip-reset
+bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 ```
 
 详细步骤见：`docs/部署工程化核心要点.md`。
@@ -123,7 +123,7 @@
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.63`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.63`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.64`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.64`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -142,15 +142,15 @@
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
 
-## 1.0.63 Agent 镜像下发与运行版本说明
+## 1.0.64 Agent 镜像下发与运行版本说明
 
 CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。
 
-## 1.0.63 账号状态上报规范
+## 1.0.64 账号状态上报规范
 
-1.0.63 继续保留账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。
+1.0.64 继续保留账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。
 
-## Agent 镜像分发自动化（1.0.63）
+## Agent 镜像分发自动化（1.0.64）
 
 平台部署或升级后，推荐执行：
 
