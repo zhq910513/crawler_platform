@@ -1100,6 +1100,10 @@ def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> 
     assert 'platformPreflight' in dashboard
     assert dashboard['platformPreflight']['summary'] == preflight['summary']
     assert dashboard['platformPreflight']['checkSourceLabel'] == '手动检测'
+    assert any(item.get('actionEndpoint') == '/platform-actions/agent-image-preparations' for item in preflight['checks'])
+    unavailable = client.post('/api/v1/platform-actions/agent-image-preparations', headers=headers).json()['data']
+    assert unavailable['status'] == 'UNAVAILABLE'
+    assert 'bash deploy/scripts/prepare-agent-image.sh' in unavailable['manualCommand']
 
 
 def test_agent_join_token_bootstrap_and_install_script() -> None:
@@ -1117,7 +1121,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert remote_preflight.status_code == 400
     assert remote_preflight.json()['code'] == 40075
     assert '平台自检' in remote_preflight.json()['message']
-    assert 'Agent 镜像地址' in remote_preflight.json()['message']
+    assert '执行组件镜像地址' in remote_preflight.json()['message']
     token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-01',
@@ -1133,11 +1137,20 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert token_body['joinToken']
     assert '--join-token' in token_body['installCommand']
     assert '--auto-configure-docker-registry' in token_body['installCommand']
-    assert '--replace-existing-agent' in token_body['installCommand']
+    assert '--replace-existing-agent' not in token_body['installCommand']
     assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
-    assert any('Agent 镜像未配置私有仓库前缀' in item for item in token_body.get('warnings') or [])
+    assert any('执行组件镜像未配置私有仓库前缀' in item for item in token_body.get('warnings') or [])
     assert 'controlPlanePreflight' in token_body
+    rejoin_token = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-srv-rejoin',
+        'serverName': '重新接入节点',
+        'agentCode': 'join-agent-rejoin',
+        'installTarget': 'LOCAL',
+        'replaceExistingAgent': True,
+    }).json()['data']
+    assert '--replace-existing-agent' in rejoin_token['installCommand']
     bad_remote = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-loopback',
@@ -1164,7 +1177,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert 'requested_agent_image' in script.text
     assert 'crawler_platform_agent:1.0.44' not in script.text
     assert '__CRAWLER_AGENT_IMAGE__' not in script.text
-    assert 'Agent 镜像拉取失败且本机不存在' in script.text
+    assert '执行组件镜像拉取失败且本机不存在' in script.text
     assert '--auto-configure-docker-registry' in script.text
     assert '--replace-existing-agent' in script.text
     assert 'CURRENT_STAGE' in script.text

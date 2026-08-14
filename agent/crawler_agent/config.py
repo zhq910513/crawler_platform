@@ -18,6 +18,8 @@ class AgentConfig(BaseSettings):
     agent_code: str = Field(default="")
     server_code: str = Field(default="")
     agent_version: str = Field(default_factory=default_version)
+    image: str = Field(default="")
+    expected_image_digest: str = Field(default="")
     git_commit: str = Field(default_factory=default_git_commit)
     build_time: str = Field(default_factory=default_build_time)
     protocol_version: str = Field(default="1.0")

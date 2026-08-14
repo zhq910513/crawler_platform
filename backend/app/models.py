@@ -89,6 +89,27 @@ class SysConfig(Base, TimestampMixin):
     description: Mapped[str] = mapped_column(String(500), default="", nullable=False)
 
 
+
+
+class PlatformPreflightSnapshot(Base):
+    __tablename__ = "platform_preflight_snapshot"
+    snapshot_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(20), default="UNKNOWN", index=True, nullable=False)
+    blocking_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    warning_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    check_source: Mapped[str] = mapped_column(String(30), default="AUTO", index=True, nullable=False)
+    check_source_label: Mapped[str] = mapped_column(String(80), default="页面自动检测", nullable=False)
+    control_plane_url: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    agent_image: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    agent_image_digest: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    change_summary: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    result_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    triggered_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"), index=True)
+    checked_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
 class SysSecret(Base, TimestampMixin):
     __tablename__ = "sys_secret"
     secret_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
@@ -142,6 +163,9 @@ class CrawlerAgent(Base, TimestampMixin):
     agent_name: Mapped[str] = mapped_column(String(100), default="", nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     agent_version: Mapped[str] = mapped_column(String(50), default="", nullable=False)
+    agent_image: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    agent_image_digest: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    agent_image_actual_digest: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     protocol_version: Mapped[str] = mapped_column(String(30), default="3.0", nullable=False)
     agent_instance_id: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
     connection_status: Mapped[str] = mapped_column(String(20), default="UNREGISTERED", index=True, nullable=False)
@@ -170,6 +194,11 @@ class CrawlerAgentJoinToken(Base, TimestampMixin):
     registry_credential_ref: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     install_mode: Mapped[str] = mapped_column(String(30), default="AUTO", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE", index=True, nullable=False)
+    invitation_status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True, nullable=False)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    failure_stage: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     used_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_preflight_report: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)

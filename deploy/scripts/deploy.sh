@@ -33,6 +33,7 @@ if cp_wait_http "http://127.0.0.1:${PORT}/health" 120 2; then
       cp_warn "Agent 镜像自动准备未完成；请到运行总览查看平台自检并按提示处理。"
     fi
   fi
+  ./deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true
   cp_compose ps
   echo "crawler_platform 部署完成：http://服务器IP:${PORT}"
   exit 0

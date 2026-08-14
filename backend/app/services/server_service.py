@@ -22,7 +22,7 @@ from app.models import (
     SysUser,
 )
 from app.repositories.platform import AgentRepository, CompanyRepository, ServerRepository
-from app.schemas import AgentBootstrapEnvRequest, AgentJoinTokenCreate, AgentRegistration, ServerCreate, ServerUpdate
+from app.schemas import AgentBootstrapEnvRequest, AgentBootstrapFailureReport, AgentJoinTokenCreate, AgentRegistration, ServerCreate, ServerUpdate
 from app.security import hash_password
 from app.services.permissions import require_company_scope, scoped_company_id, writable_company_id
 from app.services.audit import write_operation_log
@@ -194,13 +194,15 @@ class ServerService:
         )
         self.db.add(token)
         self.db.flush()
-        command = self._install_command(raw_token, control_plane_url)
+        command = self._install_command(raw_token, control_plane_url, payload.replace_existing_agent)
         connectivity_command = f"curl -fsSL {control_plane_url.rstrip('/')}/health && echo"
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
         self.db.commit()
         return {
             "tokenId": token.token_id,
             "companyId": token.company_id,
+            "invitationStatus": token.invitation_status,
+            "invitationStatusLabel": self._invitation_status_label(token.invitation_status),
             "agentCode": token.agent_code,
             "serverCode": token.server_code,
             "expiresAt": token.expires_at,
@@ -213,7 +215,8 @@ class ServerService:
             "warnings": [
                 *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
                 *self._agent_image_warnings(),
-                "安装命令包含自动化授权参数：必要时会配置 Docker HTTP 镜像仓库，并在重新接入时替换已有 Agent 容器。请只交给可信运维人员执行。",
+                ("安装命令已授权替换已有 Agent 容器，仅用于重新接入或修复失败接入。" if payload.replace_existing_agent else "安装命令不会静默替换已有 Agent 容器；如脚本发现已有容器，会阻断并提示使用重新接入。"),
+                "安装命令包含授权式 Docker 镜像仓库配置参数；必要时会备份并合并 Docker HTTP 私有仓库配置。请只交给可信运维人员执行。",
             ],
             "controlPlanePreflight": control_preflight,
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
@@ -227,6 +230,21 @@ class ServerService:
             stmt = stmt.where(CrawlerAgentJoinToken.company_id == scoped)
         rows = list(self.db.scalars(stmt).all())
         return [{**{c.name: getattr(row, c.name) for c in row.__table__.columns}, "tokenHash": "***"} for row in rows]
+
+
+    def report_agent_join_failure(self, payload: AgentBootstrapFailureReport) -> dict:
+        token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(payload.join_token)))
+        if not token:
+            # 安装脚本失败上报不应泄漏 token 是否存在，返回 accepted=false 便于脚本继续显示本地错误。
+            return {"accepted": False, "message": "接入邀请未找到或已失效"}
+        token.invitation_status = "FAILED"
+        token.failure_stage = (payload.failure_stage or "UNKNOWN")[:120]
+        token.failure_reason = (payload.failure_reason or "")[:1000]
+        token.failed_at = utcnow()
+        previous_report = dict(token.last_preflight_report or {})
+        token.last_preflight_report = {**previous_report, **(payload.install_report or {}), "failureStage": token.failure_stage, "failureReason": token.failure_reason}
+        self.db.commit()
+        return {"accepted": True, "invitationStatus": token.invitation_status, "failureStage": token.failure_stage}
 
     def consume_agent_join_token(self, payload: AgentBootstrapEnvRequest, detected_base_url: str = "") -> str:
         from sqlalchemy import select
@@ -281,6 +299,7 @@ class ServerService:
             agent.agent_name = token.agent_name or agent.agent_name
             agent.capabilities = token.capabilities or agent.capabilities or {}
         token.status = "USED"
+        token.invitation_status = "CONFIG_ISSUED"
         token.used_at = utcnow()
         previous_report = dict(token.last_preflight_report or {})
         control_plane_url = str(previous_report.get("controlPlaneUrl") or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "")
@@ -296,17 +315,31 @@ class ServerService:
             "AGENT_RUN_ROOT": token.work_dir.rstrip("/") + "/runs",
             "AGENT_SPOOL_DIR": token.work_dir.rstrip("/") + "/spool",
             "AGENT_IMAGE": settings.crawler_agent_image,
+            "AGENT_EXPECTED_IMAGE_DIGEST": settings.crawler_agent_image_digest,
             "AGENT_AGENT_VERSION": settings.crawler_agent_version,
             "AGENT_CAPABILITIES_JSON": __import__('json').dumps(token.capabilities or {}, ensure_ascii=False),
         }
         return "\n".join(f"{k}={self._quote_env(v)}" for k, v in lines.items()) + "\n"
 
-    def _install_command(self, token: str, base: str) -> str:
+    @staticmethod
+    def _invitation_status_label(status: str) -> str:
+        return {
+            "PENDING": "待接入",
+            "CONFIG_ISSUED": "接入中",
+            "ACTIVATED": "已接入",
+            "FAILED": "接入失败",
+            "EXPIRED": "已过期",
+            "CANCELLED": "已取消",
+        }.get(status or "", status or "未知")
+
+    def _install_command(self, token: str, base: str, replace_existing_agent: bool = False) -> str:
         public_base = base.rstrip("/")
-        # 接入命令默认带授权式自动化参数：
-        # - --auto-configure-docker-registry：仅在 HTTP 私有仓库需要时备份并合并 Docker insecure-registries；
-        # - --replace-existing-agent：重新接入时允许替换已有 crawler-agent 容器，避免旧失败容器阻塞接入。
-        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)} --auto-configure-docker-registry --replace-existing-agent"
+        # 接入命令默认只授权 Docker HTTP registry 自动配置。
+        # 替换已有 Agent 容器属于高风险动作，只有重新接入/修复失败接入时才显式追加 --replace-existing-agent。
+        flags = "--auto-configure-docker-registry"
+        if replace_existing_agent:
+            flags += " --replace-existing-agent"
+        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)} {flags}"
 
     def _resolve_control_plane_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
         base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")
@@ -351,9 +384,9 @@ class ServerService:
     def _agent_image_warnings(self) -> list[str]:
         image = str(settings.crawler_agent_image or "").strip()
         if not image:
-            return ["Agent 镜像地址为空，请先配置 CRAWLER_AGENT_IMAGE。"]
+            return ["执行组件镜像地址为空，请先配置 CRAWLER_AGENT_IMAGE。"]
         if not self._image_has_registry_prefix(image):
-            return [f"Agent 镜像未配置私有仓库前缀：{image}。远程执行节点会默认从 Docker Hub 拉取；生产环境建议配置 CRAWLER_AGENT_IMAGE 为执行节点可访问的私有仓库镜像。"]
+            return [f"执行组件镜像未配置私有仓库前缀：{image}。远程执行节点会默认从 Docker Hub 拉取；生产环境建议配置 CRAWLER_AGENT_IMAGE 为执行节点可访问的私有仓库镜像。"]
         return []
 
     @staticmethod

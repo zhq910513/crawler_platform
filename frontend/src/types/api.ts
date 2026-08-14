@@ -384,6 +384,7 @@ export interface DashboardSummary {
   runningCount: number
   waitingCount: number
   platformPreflight?: ControlPlanePreflight
+  platformPreflightHistory?: PlatformPreflightSnapshot[]
 }
 
 
@@ -503,8 +504,8 @@ export interface RunLogChunk { chunkId: number; runId: number; stream: string; s
 export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: boolean; chunks: RunLogChunk[] }
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
 
-export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number }
-export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; controlPlanePreflight?: ControlPlanePreflight; note: string }
+export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number; replaceExistingAgent?: boolean }
+export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; invitationStatus?: string; invitationStatusLabel?: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; controlPlanePreflight?: ControlPlanePreflight; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
 
 export interface ProjectPublishPipelineRequest { companyId: number; serverIds: number[]; repositoryUrl: string; refName?: string }
@@ -696,6 +697,8 @@ export interface ControlPlanePreflightCheck {
   automationType?: string
   handler?: string
   autoActionCommand?: string
+  actionEndpoint?: string
+  actionButtonLabel?: string
   details?: Record<string, unknown>
 }
 
@@ -722,11 +725,46 @@ export interface ControlPlanePreflight {
   checks: ControlPlanePreflightCheck[]
   requiredPorts: ControlPlaneRequiredPort[]
   agentImage: string
+  agentImageDigest?: string
+  controlPlaneUrl?: string
+  changes?: string[]
+  latestSnapshot?: PlatformPreflightSnapshot
   checkedAt?: string
   checkSource?: string
   checkSourceLabel?: string
   nextAction?: string
   automationSummary?: { platformScript: number; nodeInstallerAuthorized: number; cloudConsole: number; manual: number }
+}
+
+export interface PlatformPreflightSnapshot {
+  snapshotId: number
+  status: 'PASS' | 'WARN' | 'FAIL' | string
+  blockingCount: number
+  warningCount: number
+  checkSource: string
+  checkSourceLabel: string
+  controlPlaneUrl: string
+  agentImage: string
+  agentImageDigest?: string
+  summary: string
+  changes: string[]
+  checkedAt?: string
+  createdAt?: string
+  triggeredBy?: number | null
+}
+
+export interface PlatformActionResult {
+  actionKey: string
+  status: 'IDLE' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'UNAVAILABLE' | string
+  stage?: string
+  message?: string
+  logs?: string[]
+  manualCommand?: string
+  startedAt?: string
+  finishedAt?: string
+  executable?: boolean
+  running?: boolean
+  triggeredBy?: string
 }
 
 export interface SystemSettings {

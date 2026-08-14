@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError
-from app.models import CrawlerAgent, CrawlerProject, CrawlerProjectDeploymentTarget, CrawlerProjectRelease, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
+from app.models import CrawlerAgent, CrawlerAgentJoinToken, CrawlerProject, CrawlerProjectDeploymentTarget, CrawlerProjectRelease, CrawlerProjectServer, CrawlerRunEvent, CrawlerRunLog, CrawlerServer, CrawlerTask, CrawlerTaskRun
 from app.schemas import AgentCommandResult, AgentContainerCleanupResult, AgentHeartbeat, AgentImagePullResult, AgentRunClaim, AgentRunHeartbeat, AgentRunResult
 from app.services.routing_service import RoutingService
 from app.services.container_cleanup_service import ContainerCleanupService
@@ -33,6 +33,9 @@ class AgentService:
             self._mark_agent_runs_lost(agent, "Agent 实例已被新进程替代", keep_run_ids=current_run_ids)
         agent.agent_instance_id = payload.agent_instance_id
         agent.agent_version = payload.agent_version
+        agent.agent_image = payload.agent_image or agent.agent_image
+        agent.agent_image_digest = payload.agent_image_digest or agent.agent_image_digest
+        agent.agent_image_actual_digest = payload.agent_image_actual_digest or agent.agent_image_actual_digest
         agent.protocol_version = payload.protocol_version
         agent.connection_status = "ONLINE"
         agent.last_heartbeat_at = utcnow()
@@ -41,6 +44,12 @@ class AgentService:
         agent.last_error = payload.last_error
         self._update_server_health_capacity(server, payload)
         self._sync_project_server_scheduling(server)
+        token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.agent_code == agent.agent_code).order_by(CrawlerAgentJoinToken.created_at.desc()).limit(1))
+        if token and token.invitation_status in {"PENDING", "CONFIG_ISSUED", "FAILED"}:
+            token.invitation_status = "ACTIVATED"
+            token.activated_at = utcnow()
+            token.failure_stage = ""
+            token.failure_reason = ""
         self.db.flush()
         RoutingService(self.db).reroute_or_wait_unclaimed(commit=False)
         pending_agent_commands = AgentCommandService(self.db).pending_for_server(server)

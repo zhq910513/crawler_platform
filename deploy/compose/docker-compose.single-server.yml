@@ -2,7 +2,7 @@
 # 生产多服务器场景可只部署 platform compose，再在每台执行节点安装 Agent。
 services:
   agent:
-    image: ${AGENT_IMAGE:-crawler_platform_agent:1.0.57}
+    image: ${AGENT_IMAGE:-crawler_platform_agent:1.0.63}
     container_name: ${AGENT_CONTAINER_NAME:-crawler-agent}
     restart: always
     network_mode: host

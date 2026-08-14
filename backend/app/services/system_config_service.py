@@ -6,12 +6,12 @@ from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError
-from app.models import SysConfig, SysUser
+from app.models import PlatformPreflightSnapshot, SysConfig, SysUser
 from app.schemas import SystemSettingsUpdate
 from app.services.audit import write_operation_log
 from app.services.permissions import require_super_admin
@@ -24,10 +24,13 @@ class SystemConfigService:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_system_settings(self, detected_base_url: str = "", check_source: str = "AUTO") -> dict:
+    def get_system_settings(self, detected_base_url: str = "", check_source: str = "AUTO", user: SysUser | None = None, persist_snapshot: bool = False) -> dict:
         resolved = self.inspect_control_plane_public_base_url(detected_base_url)
         value = resolved["controlPlanePublicBaseUrl"]
         preflight = self.inspect_control_plane_preflight(value, detected_base_url, check_source=check_source)
+        if persist_snapshot:
+            snapshot = self.save_preflight_snapshot(preflight, user)
+            preflight["latestSnapshot"] = snapshot
         return {
             "controlPlanePublicBaseUrl": value,
             "controlPlanePublicBaseUrlSource": resolved["source"],
@@ -85,6 +88,8 @@ class SystemConfigService:
             automation_type: str = "MANUAL",
             handler: str = "操作员",
             auto_action_command: str = "",
+            action_endpoint: str = "",
+            action_button_label: str = "",
         ) -> None:
             checks.append({
                 "key": key,
@@ -103,6 +108,8 @@ class SystemConfigService:
                 "automationType": automation_type,
                 "handler": handler,
                 "autoActionCommand": auto_action_command,
+                "actionEndpoint": action_endpoint,
+                "actionButtonLabel": action_button_label,
                 "details": details or {},
             })
 
@@ -227,37 +234,41 @@ class SystemConfigService:
         if not image:
             add_check(
                 "agent_image",
-                "Agent 镜像地址",
+                "执行组件镜像地址",
                 "FAIL",
-                "未配置 Agent 镜像地址，执行节点无法拉取 Agent 容器。",
+                "未配置 执行组件镜像地址，执行节点无法拉取 Agent 容器。",
                 True,
                 "配置 CRAWLER_AGENT_IMAGE 后重启 API/Scheduler/Maintenance，再回到运行总览点击重新检测。",
-                action="平台可自动处理：在平台服务器执行 bash deploy/scripts/prepare-agent-image.sh，脚本会构建 Agent 镜像、推送到内置 registry、写入 CRAWLER_AGENT_IMAGE 并重启后端服务。",
+                action="平台可自动处理：点击运行总览里的“自动准备执行组件镜像”。平台会通过白名单动作构建、推送、写入 CRAWLER_AGENT_IMAGE 并重启后端服务；若当前部署未启用一键动作，再按兜底命令在平台服务器执行。",
                 impact="远程执行节点无法拉取 Agent 容器，新增节点无法启动；已在线节点不受影响。",
                 route="/dashboard?focus=platformPreflight",
-                action_label="准备 Agent 镜像",
-                category="Agent 镜像分发",
+                action_label="准备执行组件镜像",
+                category="执行组件镜像分发",
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
                 auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
+                action_endpoint="/platform-actions/agent-image-preparations",
+                action_button_label="自动准备执行组件镜像",
             )
         elif not self._image_has_registry_prefix(image):
             add_check(
                 "agent_image",
-                "Agent 镜像地址",
+                "执行组件镜像地址",
                 "FAIL",
-                f"Agent 镜像未配置私有仓库前缀：{image}。远程节点会默认从 Docker Hub 拉取，通常无法拉到你的私有镜像。",
+                f"执行组件镜像未配置私有仓库前缀：{image}。远程节点会默认从 Docker Hub 拉取，通常无法拉到你的私有镜像。",
                 True,
                 "将 CRAWLER_AGENT_IMAGE 改成执行节点可访问的完整镜像地址，例如 42.193.226.138:5000/crawler_platform_agent:版本。",
                 {"image": image},
-                action="平台可自动处理：在平台服务器执行 bash deploy/scripts/prepare-agent-image.sh，脚本会自动构建、tag、push Agent 镜像，写入 CRAWLER_AGENT_IMAGE=公网IP:5000/crawler_platform_agent:版本 并重启后端服务。",
+                action="平台可自动处理：点击运行总览里的“自动准备执行组件镜像”。平台会通过白名单动作构建、tag、push 执行组件镜像，写入 CRAWLER_AGENT_IMAGE=公网IP:5000/crawler_platform_agent:版本 并重启后端服务；若当前部署未启用一键动作，再按兜底命令在平台服务器执行。",
                 impact="远程节点会默认去 Docker Hub 拉你的私有镜像，通常会拉取失败；已在线节点不受影响。",
                 route="/dashboard?focus=platformPreflight",
                 action_label="自动准备镜像分发",
-                category="Agent 镜像分发",
+                category="执行组件镜像分发",
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
                 auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
+                action_endpoint="/platform-actions/agent-image-preparations",
+                action_button_label="自动准备执行组件镜像",
             )
         else:
             registry = image.split('/', 1)[0]
@@ -267,12 +278,12 @@ class SystemConfigService:
             registry_command = f"curl -i {scheme_hint}://{registry}/v2/"
             pull_command = f"docker pull {image}"
             required_ports.append({
-                "name": "Agent 镜像仓库",
+                "name": "执行组件镜像仓库",
                 "host": registry_host,
                 "port": registry_port,
                 "protocol": "TCP",
                 "reason": "执行节点需要从这里拉取 crawler_platform_agent 镜像。",
-                "impact": "远程执行节点需要访问该仓库拉取 Agent 镜像。",
+                "impact": "远程执行节点需要访问该仓库拉取 执行组件镜像。",
                 "action": f"在镜像仓库所在服务器放行 {registry_port}/TCP，来源建议限制为执行节点公网 IP；HTTP registry 还要在执行节点 Docker 配置 insecure-registries。",
                 "actionLabel": "放行镜像仓库端口",
                 "verifyCommand": registry_command,
@@ -282,9 +293,9 @@ class SystemConfigService:
             registry_probe = self._registry_probe(registry)
             add_check(
                 "agent_registry",
-                "Agent 镜像仓库",
+                "执行组件镜像仓库",
                 "PASS" if registry_probe["ok"] else "WARN",
-                f"Agent 镜像仓库可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认 Agent 镜像仓库可访问：{registry_probe['message']}。请在执行节点验证仓库端口和镜像拉取。",
+                f"执行组件镜像仓库可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认 执行组件镜像仓库可访问：{registry_probe['message']}。请在执行节点验证仓库端口和镜像拉取。",
                 False,
                 "在执行节点验证镜像仓库 /v2/ 和 docker pull；如果失败，放行仓库端口，HTTP registry 需要配置 insecure-registries。",
                 {**registry_probe, "image": image, "registry": registry},
@@ -292,7 +303,7 @@ class SystemConfigService:
                 verify_command=registry_command,
                 impact="镜像仓库不可达时，远程执行节点无法启动 Agent 容器；已在线节点不受影响。",
                 action_label="验证镜像仓库",
-                category="Agent 镜像分发",
+                category="执行组件镜像分发",
                 can_ignore=True,
                 automation_type="NODE_INSTALLER_AUTHORIZED",
                 handler="执行节点安装脚本",
@@ -301,21 +312,62 @@ class SystemConfigService:
             tag_probe = self._registry_tag_probe(image)
             add_check(
                 "agent_image_tag",
-                "Agent 镜像版本",
+                "执行组件镜像版本",
                 "PASS" if tag_probe["ok"] else "WARN",
-                f"Agent 镜像 tag 可查询：{image}" if tag_probe["ok"] else f"控制端本机未能确认 Agent 镜像 tag 已推送：{tag_probe['message']}。请在执行节点或平台服务器验证 docker pull。",
+                f"执行组件镜像 tag 可查询：{image}" if tag_probe["ok"] else f"控制端本机未能确认 执行组件镜像 tag 已推送：{tag_probe['message']}。请在执行节点或平台服务器验证 docker pull。",
                 False,
                 "使用平台脚本准备镜像，或在执行节点执行 docker pull 验证镜像是否可拉取。",
                 tag_probe,
-                action=f"平台可自动处理：执行 bash deploy/scripts/prepare-agent-image.sh；处理后验证：{pull_command}",
+                action=f"平台可自动处理：点击运行总览里的“自动准备执行组件镜像”；处理后验证：{pull_command}",
                 verify_command=pull_command,
-                impact="镜像仓库存在但 tag 未推送时，执行节点仍会在拉取 Agent 镜像阶段失败。",
-                action_label="准备 Agent 镜像 tag",
-                category="Agent 镜像分发",
+                impact="镜像仓库存在但 tag 未推送时，执行节点仍会在拉取 执行组件镜像阶段失败。",
+                action_label="准备执行组件镜像 tag",
+                category="执行组件镜像分发",
                 can_ignore=True,
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
                 auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
+                action_endpoint="/platform-actions/agent-image-preparations",
+                action_button_label="自动准备执行组件镜像",
+            )
+            digest_probe = self._registry_digest_probe(image)
+            add_check(
+                "agent_image_digest",
+                "执行组件镜像校验值",
+                "PASS" if digest_probe["ok"] else "WARN",
+                f"执行组件镜像校验值 已记录：{digest_probe.get('digest')}" if digest_probe["ok"] else f"未能确认 执行组件镜像校验值：{digest_probe['message']}。请用平台脚本重新准备镜像或在执行节点 docker pull 后上报 digest。",
+                False,
+                "重新准备执行组件镜像后平台会读取 registry manifest digest；执行节点心跳也会上报实际 digest。",
+                digest_probe,
+                action="平台可自动处理：点击运行总览里的“自动准备执行组件镜像”，构建并推送后自动记录 digest。",
+                verify_command=pull_command,
+                impact="digest 未确认时仍可接入，但无法证明 tag 内容和当前发布版本完全一致。",
+                action_label="刷新 执行组件镜像校验值",
+                category="执行组件镜像分发",
+                can_ignore=True,
+                automation_type="PLATFORM_SCRIPT",
+                handler="平台部署脚本",
+                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
+                action_endpoint="/platform-actions/agent-image-preparations",
+                action_button_label="自动准备执行组件镜像",
+            )
+            security = self._registry_security_posture(registry, registry_port, scheme_hint)
+            add_check(
+                "agent_registry_security",
+                "内置镜像仓库安全",
+                security["status"],
+                security["message"],
+                False,
+                security["suggestion"],
+                security,
+                action=security["action"],
+                verify_command=security.get("verifyCommand", ""),
+                impact="内置 registry 若未鉴权且对公网全开放，可能被未授权拉取或污染镜像。",
+                action_label="收紧镜像仓库访问",
+                category="执行组件镜像分发",
+                can_ignore=True,
+                automation_type="CLOUD_CONSOLE" if not security.get("authEnabled") else "MANUAL",
+                handler="云控制台" if not security.get("authEnabled") else "平台配置",
             )
 
         blocking_count = sum(1 for item in checks if item["blocking"] and item["status"] == "FAIL")
@@ -339,13 +391,22 @@ class SystemConfigService:
             "warningCount": warning_count,
             "checks": checks,
             "requiredPorts": required_ports,
+            "controlPlaneUrl": base,
             "agentImage": image,
+            "agentImageDigest": settings.crawler_agent_image_digest or self._agent_image_digest_from_checks(checks),
             "checkedAt": checked_at,
             "checkSource": source_key,
             "checkSourceLabel": source_label,
             "nextAction": next_action,
             "automationSummary": self._automation_summary(checks),
         }
+
+    @staticmethod
+    def _agent_image_digest_from_checks(checks: list[dict]) -> str:
+        for item in checks:
+            if item.get("key") == "agent_image_digest":
+                return str((item.get("details") or {}).get("digest") or "")
+        return ""
 
     @staticmethod
     def _automation_summary(checks: list[dict]) -> dict:
@@ -363,6 +424,80 @@ class SystemConfigService:
             else:
                 summary["manual"] += 1
         return summary
+
+
+    def save_preflight_snapshot(self, preflight: dict, user: SysUser | None = None) -> dict:
+        previous = self.latest_preflight_snapshot()
+        changes = self._snapshot_changes(previous, preflight)
+        snapshot = PlatformPreflightSnapshot(
+            status=str(preflight.get("status") or "UNKNOWN"),
+            blocking_count=int(preflight.get("blockingCount") or 0),
+            warning_count=int(preflight.get("warningCount") or 0),
+            check_source=str(preflight.get("checkSource") or "AUTO"),
+            check_source_label=str(preflight.get("checkSourceLabel") or ""),
+            control_plane_url=str(preflight.get("controlPlaneUrl") or ""),
+            agent_image=str(preflight.get("agentImage") or ""),
+            agent_image_digest=str(preflight.get("agentImageDigest") or ""),
+            summary=str(preflight.get("summary") or "")[:500],
+            change_summary=changes,
+            result_json=preflight,
+            triggered_by=user.user_id if user else None,
+            checked_at=utcnow(),
+            created_at=utcnow(),
+        )
+        self.db.add(snapshot)
+        self.db.flush()
+        preflight["changes"] = changes
+        keep_ids = list(self.db.scalars(select(PlatformPreflightSnapshot.snapshot_id).order_by(PlatformPreflightSnapshot.checked_at.desc()).limit(50)).all())
+        if keep_ids:
+            self.db.execute(delete(PlatformPreflightSnapshot).where(PlatformPreflightSnapshot.snapshot_id.not_in(keep_ids)))
+        self.db.commit()
+        return self._snapshot_payload(snapshot)
+
+    def latest_preflight_snapshot(self) -> dict | None:
+        row = self.db.scalar(select(PlatformPreflightSnapshot).order_by(PlatformPreflightSnapshot.checked_at.desc()).limit(1))
+        return self._snapshot_payload(row) if row else None
+
+    def list_preflight_snapshots(self, limit: int = 10) -> list[dict]:
+        rows = list(self.db.scalars(select(PlatformPreflightSnapshot).order_by(PlatformPreflightSnapshot.checked_at.desc()).limit(max(1, min(int(limit or 10), 50)))).all())
+        return [self._snapshot_payload(row) for row in rows]
+
+    @staticmethod
+    def _snapshot_payload(row: PlatformPreflightSnapshot) -> dict:
+        return {
+            "snapshotId": row.snapshot_id,
+            "status": row.status,
+            "blockingCount": row.blocking_count,
+            "warningCount": row.warning_count,
+            "checkSource": row.check_source,
+            "checkSourceLabel": row.check_source_label,
+            "controlPlaneUrl": row.control_plane_url,
+            "agentImage": row.agent_image,
+            "agentImageDigest": row.agent_image_digest,
+            "summary": row.summary,
+            "changes": row.change_summary or [],
+            "checkedAt": row.checked_at,
+            "createdAt": row.created_at,
+            "triggeredBy": row.triggered_by,
+        }
+
+    @staticmethod
+    def _snapshot_changes(previous: dict | None, current: dict) -> list[str]:
+        if not previous:
+            return ["首次保存平台自检快照"]
+        changes: list[str] = []
+        status_label = {"PASS": "通过", "WARN": "需确认", "FAIL": "阻断"}
+        if previous.get("status") != current.get("status"):
+            changes.append(f"总体状态：{status_label.get(str(previous.get('status')), previous.get('status'))} -> {status_label.get(str(current.get('status')), current.get('status'))}")
+        if int(previous.get("blockingCount") or 0) != int(current.get("blockingCount") or 0):
+            changes.append(f"阻断项：{previous.get('blockingCount', 0)} -> {current.get('blockingCount', 0)}")
+        if int(previous.get("warningCount") or 0) != int(current.get("warningCount") or 0):
+            changes.append(f"需确认项：{previous.get('warningCount', 0)} -> {current.get('warningCount', 0)}")
+        if str(previous.get("agentImage") or "") != str(current.get("agentImage") or ""):
+            changes.append("执行组件镜像地址已变化")
+        if str(previous.get("agentImageDigest") or "") != str(current.get("agentImageDigest") or ""):
+            changes.append("执行组件镜像校验值 已变化")
+        return changes[:8] or ["状态无变化"]
 
     def inspect_control_plane_public_base_url(self, detected_base_url: str = "") -> dict:
         detected = (detected_base_url or "").strip().rstrip("/")
@@ -506,6 +641,50 @@ class SystemConfigService:
                     return {**probe, "image": image, "registry": registry, "repository": repo, "tag": tag, "tags": tags, "attempts": attempts}
                 return {**probe, "ok": False, "message": f"仓库可访问，但未找到 tag {tag}", "image": image, "registry": registry, "repository": repo, "tag": tag, "tags": tags or [], "attempts": attempts}
         return {"ok": False, "message": "; ".join(item["message"] for item in attempts) or "无法查询镜像 tag", "image": image, "registry": registry, "attempts": attempts}
+
+    def _registry_digest_probe(self, image: str) -> dict:
+        try:
+            registry, rest = image.split('/', 1)
+            if ':' in rest.rsplit('/', 1)[-1]:
+                repo, tag = rest.rsplit(':', 1)
+            else:
+                repo, tag = rest, 'latest'
+        except ValueError:
+            return {"ok": False, "message": "镜像地址缺少仓库前缀", "image": image}
+        host = registry.rsplit(':', 1)[0] if ':' in registry else registry
+        port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
+        schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
+        attempts = []
+        accept = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"
+        for scheme in schemes:
+            url = f"{scheme}://{registry}/v2/{repo}/manifests/{tag}"
+            try:
+                req = UrlRequest(url, headers={"User-Agent": "crawler-platform-preflight/1.0", "Accept": accept})
+                with urlopen(req, timeout=1.0) as resp:
+                    digest = str(resp.headers.get("Docker-Content-Digest") or "")
+                    status_code = int(getattr(resp, "status", 0) or 0)
+                    result = {"ok": bool(digest.startswith("sha256:")), "statusCode": status_code, "url": url, "message": f"HTTP {status_code}", "digest": digest, "image": image, "registry": registry, "repository": repo, "tag": tag}
+                    attempts.append(result)
+                    if result["ok"]:
+                        return {**result, "attempts": attempts}
+            except HTTPError as exc:
+                attempts.append({"ok": False, "statusCode": exc.code, "url": url, "message": f"HTTP {exc.code}", "digest": ""})
+            except URLError as exc:
+                attempts.append({"ok": False, "statusCode": 0, "url": url, "message": str(getattr(exc, "reason", exc)), "digest": ""})
+            except Exception as exc:  # pragma: no cover
+                attempts.append({"ok": False, "statusCode": 0, "url": url, "message": str(exc), "digest": ""})
+        return {"ok": False, "message": "; ".join(item.get("message", "") for item in attempts) or "无法读取镜像 digest", "image": image, "registry": registry, "attempts": attempts, "digest": ""}
+
+    @staticmethod
+    def _registry_security_posture(registry: str, registry_port: int, scheme_hint: str) -> dict:
+        auth_enabled = bool(settings.crawler_agent_registry_auth_enabled)
+        tls_enabled = bool(settings.crawler_agent_registry_tls_enabled) or scheme_hint == "https"
+        is_builtin_http = registry_port == int(settings.crawler_agent_registry_port or 5000) and not tls_enabled
+        if auth_enabled and tls_enabled:
+            return {"status": "PASS", "message": "镜像仓库已声明启用认证和 HTTPS。", "suggestion": "保持镜像仓库凭据和证书有效，并限制执行节点访问来源。", "action": "定期轮换镜像仓库凭据和证书。", "authEnabled": True, "tlsEnabled": True}
+        if is_builtin_http and not auth_enabled:
+            return {"status": "WARN", "message": "内置 registry 使用 HTTP 且未声明启用认证，请不要对全部公网开放 5000/TCP。", "suggestion": "在云防火墙/安全组中仅允许执行节点公网 IP 访问 5000/TCP；成熟环境建议切换到 HTTPS/带认证的镜像仓库。", "action": "操作员到云控制台收紧 5000/TCP 来源；需要更高安全级别时配置 CRAWLER_AGENT_REGISTRY_AUTH_ENABLED=1 或使用云厂商镜像仓库。", "verifyCommand": f"curl -i http://{registry}/v2/", "authEnabled": False, "tlsEnabled": False}
+        return {"status": "WARN" if not auth_enabled else "PASS", "message": "镜像仓库认证状态未完全确认。" if not auth_enabled else "镜像仓库已声明启用认证。", "suggestion": "确认镜像仓库访问来源、认证和 TLS 策略符合生产要求。", "action": "操作员检查镜像仓库权限策略；如果是公网 registry，建议启用认证和 HTTPS。", "authEnabled": auth_enabled, "tlsEnabled": tls_enabled}
 
     @staticmethod
     def _image_has_registry_prefix(image: str) -> bool:

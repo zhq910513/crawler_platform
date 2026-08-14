@@ -14,7 +14,7 @@ if cp_has_sudo; then
 else
   mkdir -p /var/lib/crawler-agent/runs /data/crawler-platform/projects 2>/dev/null || cp_die "无法创建 Agent 数据目录，请使用 root/sudo。"
 fi
-APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.57}"
+APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.63}"
 WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"
 if [ ! -f agent/.env.local ]; then
   cat > agent/.env.local <<AGENT_ENV
@@ -59,4 +59,5 @@ fi
 fi
 docker rm -f "${AGENT_CONTAINER_NAME:-crawler-agent}" >/dev/null 2>&1 || true
 docker run -d --name "${AGENT_CONTAINER_NAME:-crawler-agent}" --restart=always --network host --env-file agent/.env.local -v /var/run/docker.sock:/var/run/docker.sock -v /var/lib/crawler-agent:/var/lib/crawler-agent -v /data/crawler-platform/projects:/data/crawler-platform/projects "${AGENT_IMAGE:-crawler_platform_agent:${APP_VERSION_VALUE}}"
+./deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true
 echo "✅ 单机部署完成：平台 http://127.0.0.1:${WEB_PORT_VALUE}，Agent 容器 ${AGENT_CONTAINER_NAME:-crawler-agent} 已启动"

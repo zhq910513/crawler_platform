@@ -1,4 +1,4 @@
-# Agent 镜像下发、更新与不中断运行规范（crawler_platform 1.0.57）
+# Agent 镜像下发、更新与不中断运行规范（crawler_platform 1.0.63）
 
 ## 目标
 
@@ -69,9 +69,9 @@
 - `READY`：Agent 已完成 digest 拉取和校验。
 - `FAILED`：Agent 拉取或校验失败，后续心跳会继续提示可重试。
 
-## 1.0.57 自动化准备 Agent 镜像
+## 1.0.63 自动化准备 Agent 镜像
 
-从 1.0.57 开始，平台侧不再默认要求操作员手工执行 build/tag/push/修改 .env/重启 API。推荐在平台服务器执行：
+从 1.0.63 开始，平台侧不再默认要求操作员手工执行 build/tag/push/修改 .env/重启 API。推荐在平台服务器执行：
 
 ```bash
 bash deploy/scripts/prepare-agent-image.sh

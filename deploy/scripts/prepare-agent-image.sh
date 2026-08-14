@@ -128,6 +128,16 @@ else
   cp_die "本机 registry tag 验证失败：http://127.0.0.1:${REGISTRY_PORT}/v2/crawler_platform_agent/tags/list"
 fi
 
+AGENT_IMAGE_DIGEST=""
+if docker image inspect "$LOCAL_REGISTRY_IMAGE" >/dev/null 2>&1; then
+  AGENT_IMAGE_DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$LOCAL_REGISTRY_IMAGE" 2>/dev/null | grep -m1 '@sha256:' | sed 's#^.*@##' || true)"
+fi
+if [ -n "$AGENT_IMAGE_DIGEST" ]; then
+  cp_info "Agent 镜像 digest：$AGENT_IMAGE_DIGEST"
+else
+  cp_warn "未能从本机镜像读取 RepoDigest；平台自检会继续尝试通过 registry manifest 读取 digest。"
+fi
+
 set_env_value() {
   key="$1"; value="$2"
   tmp=".env.tmp_prepare_agent_image.$$"
@@ -144,8 +154,28 @@ set_env_value() {
 backup=".env.bak_prepare_agent_image_$(date +%Y%m%d_%H%M%S)"
 cp .env "$backup"
 set_env_value CRAWLER_AGENT_IMAGE "$PUBLIC_AGENT_IMAGE"
+set_env_value CRAWLER_AGENT_IMAGE_DIGEST "$AGENT_IMAGE_DIGEST"
 set_env_value CRAWLER_AGENT_REGISTRY_PUBLIC_HOST "$REGISTRY_PUBLIC_HOST"
 set_env_value CRAWLER_AGENT_REGISTRY_PORT "$REGISTRY_PORT"
+preserve_env_bool() {
+  key="$1"
+  current="$(cp_env_value .env "$key")"
+  if [ -n "$current" ]; then
+    printf '%s
+' "$current"
+    return 0
+  fi
+  eval "env_value=\${$key:-}"
+  if [ -n "${env_value:-}" ]; then
+    printf '%s
+' "$env_value"
+    return 0
+  fi
+  printf '0
+'
+}
+set_env_value CRAWLER_AGENT_REGISTRY_AUTH_ENABLED "$(preserve_env_bool CRAWLER_AGENT_REGISTRY_AUTH_ENABLED)"
+set_env_value CRAWLER_AGENT_REGISTRY_TLS_ENABLED "$(preserve_env_bool CRAWLER_AGENT_REGISTRY_TLS_ENABLED)"
 set_env_value CRAWLER_AGENT_IMAGE_PREPARED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cp_info ".env 已更新：CRAWLER_AGENT_IMAGE=${PUBLIC_AGENT_IMAGE}（备份：${backup}）"
 

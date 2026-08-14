@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     control_plane_public_base_url: str = Field(default_factory=lambda: os.getenv("CRAWLER_CONTROL_PUBLIC_BASE_URL", os.getenv("CONTROL_PLANE_PUBLIC_BASE_URL", "")))
     crawler_agent_version: str = Field(default_factory=default_agent_version)
     crawler_agent_image: str = Field(default_factory=default_agent_image)
+    crawler_agent_image_digest: str = Field(default_factory=lambda: os.getenv("CRAWLER_AGENT_IMAGE_DIGEST", ""))
+    crawler_agent_registry_public_host: str = Field(default_factory=lambda: os.getenv("CRAWLER_AGENT_REGISTRY_PUBLIC_HOST", ""))
+    crawler_agent_registry_port: int = int(os.getenv("CRAWLER_AGENT_REGISTRY_PORT", "5000"))
+    crawler_agent_registry_auth_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_AGENT_REGISTRY_AUTH_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_agent_registry_tls_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_AGENT_REGISTRY_TLS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"})
 
     database_url: str = Field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite+pysqlite:///./crawler_platform_dev.db" if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
     redis_url: str = Field(default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0" if os.getenv("APP_ENV", "production").lower() not in {"production", "prod"} else ""))
@@ -70,6 +75,10 @@ class Settings(BaseSettings):
 
     cors_origins: str = ""
     enable_api_docs: bool = False
+
+    platform_action_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PLATFORM_ACTIONS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"})
+    platform_action_root: str = Field(default_factory=lambda: os.getenv("CRAWLER_PLATFORM_ACTION_ROOT", "/data/projects/crawler_platform"))
+    platform_action_timeout_seconds: int = int(os.getenv("CRAWLER_PLATFORM_ACTION_TIMEOUT_SECONDS", "1800"))
 
     @property
     def cors_origin_list(self) -> list[str]:

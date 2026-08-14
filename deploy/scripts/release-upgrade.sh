@@ -77,4 +77,5 @@ if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
   fi
 fi
 
+bash deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true
 cp_info "发布升级完成：RELEASE_UPGRADE=PASS version=${RELEASE_VERSION}"

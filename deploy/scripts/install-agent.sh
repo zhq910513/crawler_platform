@@ -4,7 +4,7 @@ set -Eeuo pipefail
 CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
 JOIN_TOKEN="${JOIN_TOKEN:-}"
 AGENT_IMAGE_FROM_ARGS="0"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.57}"
+AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.63}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
 FORCE="${FORCE:-0}"
 HEALTH_PORT="${AGENT_LOCAL_HEALTH_PORT:-18080}"
@@ -24,12 +24,26 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-PASS_COUNT=0; WARN_COUNT=0; FAIL_COUNT=0
+PASS_COUNT=0; WARN_COUNT=0; FAIL_COUNT=0; LAST_FAILURE_REASON=""
 stage(){ CURRENT_STAGE="$1"; echo "[STEP] $CURRENT_STAGE"; }
 pass(){ echo "[PASS] $*"; PASS_COUNT=$((PASS_COUNT+1)); }
 warn(){ echo "[WARN] $*"; WARN_COUNT=$((WARN_COUNT+1)); }
-fail(){ echo "[FAIL][$CURRENT_STAGE] $*"; FAIL_COUNT=$((FAIL_COUNT+1)); }
+fail(){ LAST_FAILURE_REASON="$*"; echo "[FAIL][$CURRENT_STAGE] $*"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 has_cmd(){ command -v "$1" >/dev/null 2>&1; }
+json_escape(){
+  printf '%s' "$1" | sed 's/["\]//g'
+}
+report_join_failure(){
+  rc="$?"
+  if [ "$rc" != "0" ] && [ -n "${CONTROL_PLANE_URL:-}" ] && [ -n "${JOIN_TOKEN:-}" ] && has_cmd curl; then
+    stage_json="$(json_escape "${CURRENT_STAGE:-UNKNOWN}")"
+    reason_json="$(json_escape "${LAST_FAILURE_REASON:-安装脚本异常退出}")"
+    token_json="$(json_escape "$JOIN_TOKEN")"
+    body="{\"joinToken\":\"$token_json\",\"failureStage\":\"$stage_json\",\"failureReason\":\"$reason_json\",\"installReport\":{\"pass\":$PASS_COUNT,\"warn\":$WARN_COUNT,\"fail\":$FAIL_COUNT}}"
+    curl -fsSL -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/failures" -H 'Content-Type: application/json' --data "$body" >/dev/null 2>&1 || true
+  fi
+}
+trap report_join_failure EXIT
 run_privileged(){
   if [ "$(id -u 2>/dev/null || echo 1)" = "0" ]; then "$@"; return $?; fi
   if has_cmd sudo; then sudo "$@"; return $?; fi
@@ -85,7 +99,7 @@ PYMERGE
 configure_insecure_registry(){
   reg="$1"
   docker_insecure_registry_configured "$reg" && { pass "Docker 已允许 HTTP 私有仓库：$reg"; return 0; }
-  [ "$AUTO_CONFIGURE_DOCKER_REGISTRY" = "1" ] || { warn "Agent 镜像仓库 $reg 可能是 HTTP registry；如果 docker pull 失败，请追加 --auto-configure-docker-registry 授权脚本自动备份并配置 Docker insecure-registries。"; return 0; }
+  [ "$AUTO_CONFIGURE_DOCKER_REGISTRY" = "1" ] || { warn "执行组件镜像仓库 $reg 可能是 HTTP registry；如果 docker pull 失败，请追加 --auto-configure-docker-registry 授权脚本自动备份并配置 Docker insecure-registries。"; return 0; }
   run_privileged mkdir -p /etc/docker || { fail "无法创建 /etc/docker，请使用 root 或 sudo 后重试。"; exit 1; }
   if [ -e /etc/docker/daemon.json ]; then
     backup="/etc/docker/daemon.json.bak_crawler_agent_$(date +%Y%m%d_%H%M%S)"
@@ -192,7 +206,7 @@ if curl -fsSL -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/env" -H 'Conten
   . "$ENV_FILE"
   set +a
   if [ "$AGENT_IMAGE_FROM_ARGS" = "1" ]; then AGENT_IMAGE="$requested_agent_image"; fi
-  if [ -z "${AGENT_IMAGE:-}" ]; then fail "控制端未下发 Agent 镜像地址"; exit 1; fi
+  if [ -z "${AGENT_IMAGE:-}" ]; then fail "控制端未下发 执行组件镜像地址"; exit 1; fi
   pass "已从控制端换取执行节点配置：$ENV_FILE"
 else
   rm -f "$ENV_FILE.tmp"
@@ -201,25 +215,25 @@ else
 fi
 
 
-stage "Agent 镜像仓库检查"
+stage "执行组件镜像仓库检查"
 agent_image_first_component="$(image_registry_component "$AGENT_IMAGE")"
 if ! image_has_registry_prefix "$AGENT_IMAGE"; then
-  warn "Agent 镜像未配置私有仓库前缀，远程节点会默认从 Docker Hub 拉取：$AGENT_IMAGE。生产环境建议配置 CRAWLER_AGENT_IMAGE 为可访问的私有仓库镜像。"
+  warn "执行组件镜像未配置私有仓库前缀，远程节点会默认从 Docker Hub 拉取：$AGENT_IMAGE。生产环境建议配置 CRAWLER_AGENT_IMAGE 为可访问的私有仓库镜像。"
 elif registry_likely_http "$agent_image_first_component"; then
   configure_insecure_registry "$agent_image_first_component"
 fi
 
-stage "Agent 镜像拉取"
+stage "执行组件镜像拉取"
 if docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
-  pass "Agent 镜像本地已存在：$AGENT_IMAGE"
+  pass "执行组件镜像本地已存在：$AGENT_IMAGE"
 else
   if docker pull "$AGENT_IMAGE" >/dev/null 2>&1; then
-    pass "Agent 镜像拉取成功：$AGENT_IMAGE"
+    pass "执行组件镜像拉取成功：$AGENT_IMAGE"
   else
     if image_has_registry_prefix "$AGENT_IMAGE" && registry_likely_http "$agent_image_first_component" && ! docker_insecure_registry_configured "$agent_image_first_component"; then
-      fail "Agent 镜像拉取失败且 Docker 未允许 HTTP 私有仓库：$agent_image_first_component。请追加 --auto-configure-docker-registry 授权脚本自动配置，或手动配置 insecure-registries 后重试。"
+      fail "执行组件镜像拉取失败且 Docker 未允许 HTTP 私有仓库：$agent_image_first_component。请追加 --auto-configure-docker-registry 授权脚本自动配置，或手动配置 insecure-registries 后重试。"
     else
-      fail "Agent 镜像拉取失败且本机不存在：$AGENT_IMAGE。请先配置 CRAWLER_AGENT_IMAGE 为执行节点可访问的私有仓库镜像，或在本机预先构建/加载该镜像后重试。"
+      fail "执行组件镜像拉取失败且本机不存在：$AGENT_IMAGE。请先配置 CRAWLER_AGENT_IMAGE 为执行节点可访问的私有仓库镜像，或在本机预先构建/加载该镜像后重试。"
     fi
     exit 1
   fi

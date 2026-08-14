@@ -31,6 +31,7 @@
           </div>
         </div>
         <div class="platform-check-actions">
+          <el-button v-if="autoFixCandidate" type="success" :loading="actionRunning" @click="runAutoFix()">{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
           <el-button type="primary" :loading="loading" @click="load('MANUAL')">重新检测</el-button>
           <el-button @click="detailVisible = true">查看详情</el-button>
         </div>
@@ -39,8 +40,23 @@
       <div class="platform-check-summary">
         <div class="next-action-card">
           <div class="section-title-small">下一步动作</div>
-          <p>{{ preflight.nextAction || '暂无必须处理项。' }}</p>
-          <div class="muted">开通端口、修改镜像地址或重启服务后，点击“重新检测”刷新状态。</div>
+          <p>{{ autoFixCandidate ? `${autoFixCandidate.label}：${autoFixCandidate.impact || autoFixCandidate.message}` : (preflight.nextAction || '暂无必须处理项。') }}</p>
+          <div v-if="autoFixCandidate" class="auto-action-box">
+            <div><strong>推荐操作：</strong>{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</div>
+            <div class="muted">平台会执行受控白名单动作；该动作可能构建镜像、写入配置并短暂重启后端服务。失败时会展示阶段日志和手动兜底命令。</div>
+            <div class="auto-buttons">
+              <el-button type="success" :loading="actionRunning" @click="runAutoFix()">{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
+              <el-button v-if="autoFixCandidate.autoActionCommand" @click="copyText(autoFixCandidate.autoActionCommand || '')">复制兜底命令</el-button>
+            </div>
+          </div>
+          <div v-else class="muted">处理完成后点击“重新检测”刷新状态。</div>
+          <div v-if="actionResult" class="action-result" :class="`result-${String(actionResult.status || '').toLowerCase()}`">
+            <div><strong>{{ actionResult.status === 'SUCCESS' ? '自动处理完成' : (actionResult.status === 'UNAVAILABLE' ? '当前不能一键处理' : '自动处理结果') }}</strong>：{{ actionResult.message || actionResult.stage }}</div>
+            <div v-if="actionResult.stage" class="muted">阶段：{{ actionResult.stage }}</div>
+            <pre v-if="actionResult.logs?.length" class="mini-log">{{ actionResult.logs.slice(-12).join('\n') }}</pre>
+            <div v-if="actionResult.manualCommand" class="command-row"><span>手动兜底命令</span><el-button size="small" @click="copyText(actionResult.manualCommand || '')">复制</el-button></div>
+            <pre v-if="actionResult.manualCommand" class="verify-command">{{ actionResult.manualCommand }}</pre>
+          </div>
           <div v-if="preflight.automationSummary" class="automation-pills">
             <el-tag v-if="preflight.automationSummary.platformScript" size="small" type="success" effect="light">平台脚本可处理 {{ preflight.automationSummary.platformScript }}</el-tag>
             <el-tag v-if="preflight.automationSummary.nodeInstallerAuthorized" size="small" type="warning" effect="light">节点授权可处理 {{ preflight.automationSummary.nodeInstallerAuthorized }}</el-tag>
@@ -68,6 +84,20 @@
       </div>
     </div>
 
+    <div v-if="preflightHistory.length" class="page-card preflight-history-card">
+      <div class="section-title-small">平台自检记录</div>
+      <div class="history-list">
+        <div v-for="item in preflightHistory" :key="item.snapshotId" class="history-row">
+          <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
+          <div class="history-main">
+            <div><strong>{{ item.checkSourceLabel }}</strong> · {{ formatTime(item.checkedAt || item.createdAt || '') }}</div>
+            <div class="muted">阻断 {{ item.blockingCount }} · 需确认 {{ item.warningCount }} · {{ item.summary }}</div>
+            <div v-if="item.changes?.length" class="history-changes">{{ item.changes.slice(0, 3).join('；') }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <el-drawer v-model="detailVisible" title="平台自检详情" size="620px" class="preflight-drawer">
       <template v-if="preflight">
         <div class="drawer-overview" :class="`drawer-${preflight.status.toLowerCase()}`">
@@ -77,6 +107,12 @@
             <p>{{ preflight.summary }}</p>
           </div>
           <el-tag :type="preflightTag(preflight.status)" effect="light">{{ preflightLabel(preflight.status) }}</el-tag>
+        </div>
+
+        <div v-if="preflight.agentImageDigest || preflight.changes?.length" class="drawer-section">
+          <div class="section-title-small">最近检测变化</div>
+          <div v-if="preflight.agentImageDigest" class="field-block"><strong>执行组件镜像校验值：</strong>{{ preflight.agentImageDigest }}</div>
+          <div v-for="item in preflight.changes || []" :key="item" class="change-row">{{ item }}</div>
         </div>
 
         <div class="drawer-section">
@@ -113,7 +149,10 @@
               <pre v-if="item.autoActionCommand" class="verify-command">{{ item.autoActionCommand }}</pre>
               <div v-if="item.verifyCommand" class="command-row"><span>验证命令</span><el-button size="small" @click="copyText(item.verifyCommand || '')">复制</el-button></div>
               <pre v-if="item.verifyCommand" class="verify-command">{{ item.verifyCommand }}</pre>
-              <el-button v-if="item.route && item.status !== 'PASS'" class="route-button" type="primary" plain size="small" @click="goRoute(item.route)">{{ item.actionLabel || '去处理' }}</el-button>
+              <div class="drawer-actions">
+                <el-button v-if="item.actionEndpoint && item.status !== 'PASS'" type="success" size="small" :loading="actionRunning" @click="runAutoFix(item)">{{ item.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
+                <el-button v-if="item.route && item.status !== 'PASS'" class="route-button" type="primary" plain size="small" @click="goRoute(item.route)">{{ item.actionLabel || '去处理' }}</el-button>
+              </div>
             </div>
           </div>
         </div>
@@ -124,9 +163,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { listDashboardSummaries } from '../api/platform'
-import type { ControlPlanePreflight, ControlPlanePreflightCheck, DashboardSummary } from '../types/api'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { listDashboardSummaries, prepareAgentImageAction } from '../api/platform'
+import type { ControlPlanePreflight, ControlPlanePreflightCheck, DashboardSummary, PlatformActionResult } from '../types/api'
 import { formatTime } from '../utils/dictionaries'
 
 const router = useRouter()
@@ -134,8 +173,11 @@ const route = useRoute()
 const loading = ref(false)
 const detailVisible = ref(false)
 const lastChanges = ref<string[]>([])
+const actionRunning = ref(false)
+const actionResult = ref<PlatformActionResult | null>(null)
 const summary = ref<DashboardSummary>({ projectCount: 0, serverCount: 0, taskCount: 0, runningCount: 0, waitingCount: 0 })
 const preflight = computed<ControlPlanePreflight | undefined>(() => summary.value.platformPreflight)
+const preflightHistory = computed(() => summary.value.platformPreflightHistory || [])
 const cards = computed(() => [
   { title: '项目数量', value: summary.value.projectCount },
   { title: '执行节点', value: summary.value.serverCount },
@@ -145,6 +187,7 @@ const cards = computed(() => [
 ])
 const problemChecks = computed<ControlPlanePreflightCheck[]>(() => (preflight.value?.checks || []).filter((item) => item.status !== 'PASS'))
 const topProblems = computed(() => [...problemChecks.value].sort((a, b) => statusWeight(a.status) - statusWeight(b.status)).slice(0, 3))
+const autoFixCandidate = computed(() => problemChecks.value.find((item) => item.actionEndpoint && item.automationType === 'PLATFORM_SCRIPT'))
 const preflightTitle = computed(() => {
   if (!preflight.value) return '等待检测'
   if (preflight.value.status === 'FAIL') return '平台还有必须处理项'
@@ -197,6 +240,35 @@ async function copyText(text: string) {
   }
   ElMessage.success('已复制')
 }
+
+async function runAutoFix(item?: ControlPlanePreflightCheck) {
+  const target = item || autoFixCandidate.value
+  if (!target) return
+  try {
+    await ElMessageBox.confirm('平台将执行受控白名单动作准备执行组件镜像，可能会构建镜像、写入 .env 并短暂重启后端服务。确认继续？', target.actionButtonLabel || '自动准备执行组件镜像', { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' })
+  } catch {
+    return
+  }
+  actionRunning.value = true
+  try {
+    const result = await prepareAgentImageAction()
+    actionResult.value = result
+    if (result.status === 'SUCCESS') {
+      ElMessage.success(result.message || '自动处理完成，正在重新检测')
+      await load('MANUAL')
+    } else if (result.status === 'UNAVAILABLE') {
+      ElMessage.warning(result.message || '当前部署暂不支持页面一键处理，请使用兜底命令')
+    } else {
+      ElMessage.warning(result.message || '自动处理未完成，请查看阶段日志')
+    }
+  } catch (error: any) {
+    const data = error?.response?.data?.data
+    if (data) actionResult.value = data
+    ElMessage.error(error?.response?.data?.message || '自动处理失败')
+  } finally {
+    actionRunning.value = false
+  }
+}
 onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.value = true; load('AUTO') })
 </script>
 <style scoped>
@@ -222,6 +294,13 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .next-action-card, .problem-summary, .change-card { border: 1px solid #e2e8f0; border-radius: 16px; background: rgba(255, 255, 255, 0.78); padding: 14px; box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04); }
 .next-action-card p { margin: 6px 0 8px; color: #0f172a; font-weight: 700; line-height: 1.6; }
 .automation-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.auto-action-box { margin-top: 10px; padding: 12px; border: 1px solid #bbf7d0; border-radius: 14px; background: #f0fdf4; }
+.auto-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.action-result { margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid #e2e8f0; background: #f8fafc; }
+.result-success { border-color: #bbf7d0; background: #f0fdf4; }
+.result-unavailable, .result-failed { border-color: #fed7aa; background: #fff7ed; }
+.mini-log { margin: 8px 0 0; max-height: 180px; overflow: auto; padding: 8px; border-radius: 10px; background: #111827; color: #e5e7eb; font-size: 12px; white-space: pre-wrap; }
+.drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .section-title-small { margin-bottom: 10px; color: #0f172a; font-weight: 800; }
 .mini-check-list { display: grid; gap: 10px; }
 .mini-check-row { display: grid; grid-template-columns: 58px 1fr; gap: 10px; align-items: flex-start; }
@@ -247,4 +326,9 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .verify-command { margin-top: 8px; padding: 9px 10px; border-radius: 10px; background: #111827; color: #e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .route-button { margin-top: 10px; }
 @media (max-width: 980px) { .platform-check-hero, .platform-check-summary { grid-template-columns: 1fr; } .platform-check-actions { justify-content: flex-start; } .status-orb { width: 52px; height: 52px; border-radius: 18px; } }
+.preflight-history-card { border: 1px solid #e5e7eb; }
+.history-list { display: grid; gap: 10px; margin-top: 10px; }
+.history-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border: 1px solid #eef2f7; border-radius: 12px; background: #fff; }
+.history-main { display: grid; gap: 4px; }
+.history-changes { color: #2563eb; font-size: 12px; }
 </style>

@@ -70,6 +70,19 @@ class AgentApp:
             return len(self.futures)
 
 
+    def current_agent_image_actual_digest(self) -> str:
+        if not config.image:
+            return ""
+        try:
+            image = self.docker_client.images.get(config.image)
+            repo_digests = image.attrs.get("RepoDigests") or []
+            for item in repo_digests:
+                if "@sha256:" in str(item):
+                    return str(item).split("@", 1)[1]
+        except Exception:
+            return ""
+        return ""
+
     def heartbeat_payload(self) -> dict[str, Any]:
         running = self.active_count()
         docker_run_ids = self.executor.running_platform_run_ids()
@@ -88,6 +101,9 @@ class AgentApp:
         return {
             "agentInstanceId": config.instance_id,
             "agentVersion": config.agent_version,
+            "agentImage": config.image,
+            "agentImageDigest": config.expected_image_digest,
+            "agentImageActualDigest": self.current_agent_image_actual_digest(),
             "protocolVersion": config.protocol_version,
             "healthStatus": health_status,
             "capacityStatus": capacity_status,

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.schemas import AgentBootstrapEnvRequest
+from app.schemas import AgentBootstrapEnvRequest, AgentBootstrapFailureReport
 from app.services.server_service import ServerService
 from app.services.system_config_service import SystemConfigService
 
@@ -38,6 +38,13 @@ def create_agent_bootstrap_env(payload: AgentBootstrapEnvRequest, request: Reque
     detected = SystemConfigService.detected_base_url_from_request(request)
     content = ServerService(db).consume_agent_join_token(payload, detected)
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+
+
+
+@router.post("/agent-bootstrap/failures")
+def report_agent_bootstrap_failure(payload: AgentBootstrapFailureReport, db: Session = Depends(get_db)):
+    return ServerService(db).report_agent_join_failure(payload)
 
 
 @router.get("/agent-bootstrap/ping")

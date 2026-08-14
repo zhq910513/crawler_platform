@@ -51,6 +51,24 @@
       </el-table-column>
     </el-table>
 
+
+
+    <div class="join-invitations-card">
+      <div class="section-header">
+        <div>
+          <h4>接入记录</h4>
+          <p class="muted">展示待接入、接入中和接入失败的节点邀请，便于定位失败阶段并重新接入。</p>
+        </div>
+      </div>
+      <el-table :data="joinInvitations.slice(0, 8)" size="small" stripe>
+        <el-table-column label="节点" min-width="180"><template #default="s">{{ s.row.server_name || s.row.serverName || '-' }}</template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="s"><el-tag effect="light">{{ s.row.invitation_status || s.row.invitationStatus || '-' }}</el-tag></template></el-table-column>
+        <el-table-column label="失败阶段" min-width="140"><template #default="s">{{ s.row.failure_stage || s.row.failureStage || '-' }}</template></el-table-column>
+        <el-table-column label="失败原因" min-width="220"><template #default="s">{{ s.row.failure_reason || s.row.failureReason || '-' }}</template></el-table-column>
+        <el-table-column label="更新时间" min-width="170"><template #default="s">{{ formatTime(s.row.updated_at || s.row.updatedAt || s.row.created_at || s.row.createdAt) }}</template></el-table-column>
+      </el-table>
+    </div>
+
     <el-dialog v-model="onboardingVisible" title="接入执行节点" width="860px" class="onboarding-dialog">
       <el-steps :active="joinResult ? 2 : 1" simple class="wizard-steps">
         <el-step title="填写节点信息" />
@@ -133,7 +151,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createAgentJoinToken, createServer, deleteServer, getSystemSettings, listCompanies, listServers } from '../api/platform'
+import { createAgentJoinToken, createServer, deleteServer, getSystemSettings, listAgentJoinTokens, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
 import { useRoute, useRouter } from 'vue-router'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ServerNode } from '../types/api'
@@ -142,11 +160,12 @@ import { formatTime, zh } from '../utils/dictionaries'
 const route = useRoute()
 const router = useRouter()
 const rows = ref<ServerNode[]>([])
+const joinInvitations = ref<Array<Record<string, any>>>([])
 const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
 const onboardingVisible = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
-const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '' })
+const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: false })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
 
@@ -198,6 +217,7 @@ function applyInstallTarget() {
 }
 function openOnboarding() {
   joinResult.value = null
+  joinForm.replaceExistingAgent = false
   onboardingVisible.value = true
   if (!joinForm.companyId) joinForm.companyId = form.companyId
   if (!joinForm.serverName) joinForm.serverName = '上海执行节点01'
@@ -214,6 +234,7 @@ function rejoinNode(row: ServerNode) {
   joinForm.maxContainerSlots = row.maxContainerSlots || 2
   joinForm.workDir = row.workDir || '/var/lib/crawler-agent'
   joinForm.installTarget = 'REMOTE'
+  joinForm.replaceExistingAgent = true
   applyInstallTarget()
   onboardingVisible.value = true
 }
@@ -233,6 +254,7 @@ async function load() {
   if (!form.companyId) form.companyId = sessionState.user?.companyId || companies.value[0]?.companyId || 0
   if (!joinForm.companyId) joinForm.companyId = form.companyId
   rows.value = await listServers(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
+  joinInvitations.value = await listAgentJoinTokens(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
 }
 async function createJoin() {
   if (addressWarning.value) { ElMessage.warning(addressWarning.value); return }
@@ -290,4 +312,8 @@ watch(() => route.query.openOnboarding, (value) => { if (value === '1') openOnbo
 .preflight-check { display: grid; grid-template-columns: 54px 1fr; gap: 8px; align-items: flex-start; }
 .check-label { font-weight: 700; color: #1f2937; margin-bottom: 2px; }
 .check-suggestion { margin-top: 4px; color: #b45309; font-size: 12px; }
+
+.join-invitations-card { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--el-border-color-light); }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.section-header h4 { margin: 0; }
 </style>

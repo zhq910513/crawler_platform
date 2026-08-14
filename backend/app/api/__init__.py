@@ -1,6 +1,7 @@
-from app.api import running_center, account_status, agent_bootstrap, agents, alerts, cicd, companies, company_resources, cron_previews, dashboard, operations, projects, releases, runs, sessions, servers, system_settings, task_schedule_panels, tasks, users
+from app.api import platform_actions, running_center, account_status, agent_bootstrap, agents, alerts, cicd, companies, company_resources, cron_previews, dashboard, operations, projects, releases, runs, sessions, servers, system_settings, task_schedule_panels, tasks, users
 
 routers = [
+    platform_actions.router,
     sessions.router,
     users.router,
     companies.router,

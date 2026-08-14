@@ -24,11 +24,14 @@ class DashboardService:
         server_filters = [] if company_id is None else [CrawlerServer.company_id == company_id]
         task_filters = [] if company_id is None else [CrawlerTask.company_id == company_id]
         run_filters = [] if company_id is None else [CrawlerTaskRun.company_id == company_id]
+        system_service = SystemConfigService(self.db)
+        settings_payload = system_service.get_system_settings(detected_base_url, check_source=preflight_source, user=user, persist_snapshot=True)
         return {
             "projectCount": count(CrawlerProject, *filters),
             "serverCount": count(CrawlerServer, *server_filters),
             "taskCount": count(CrawlerTask, *task_filters),
             "runningCount": count(CrawlerTaskRun, *run_filters, CrawlerTaskRun.run_status.in_(["ASSIGNED", "STARTING", "RUNNING"])),
             "waitingCount": count(CrawlerTaskRun, *run_filters, CrawlerTaskRun.routing_status == "WAITING_RESOURCE"),
-            "platformPreflight": SystemConfigService(self.db).get_system_settings(detected_base_url, check_source=preflight_source).get("controlPlanePreflight"),
+            "platformPreflight": settings_payload.get("controlPlanePreflight"),
+            "platformPreflightHistory": system_service.list_preflight_snapshots(8),
         }
