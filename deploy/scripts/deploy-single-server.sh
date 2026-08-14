@@ -14,7 +14,7 @@ if cp_has_sudo; then
 else
   mkdir -p /var/lib/crawler-agent/runs /data/crawler-platform/projects 2>/dev/null || cp_die "无法创建 Agent 数据目录，请使用 root/sudo。"
 fi
-APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.64}"
+APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.65}"
 WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"
 if [ ! -f agent/.env.local ]; then
   cat > agent/.env.local <<AGENT_ENV
@@ -52,9 +52,9 @@ cp_compose up -d --force-recreate api scheduler maintenance web
 if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
   if ! bash deploy/scripts/prepare-agent-image.sh --version "$APP_VERSION_VALUE"; then
   if [ "${STRICT_AGENT_IMAGE_PREPARE:-0}" = "1" ]; then
-    cp_die "Agent 镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断单机部署。"
+    cp_die "执行组件镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断单机部署。"
   fi
-  cp_warn "Agent 镜像自动准备未完成；单机本地 Agent 仍可使用本地构建镜像。"
+  cp_warn "执行组件镜像自动准备未完成；单机本地执行组件仍可使用本地构建镜像。"
 fi
 fi
 docker rm -f "${AGENT_CONTAINER_NAME:-crawler-agent}" >/dev/null 2>&1 || true

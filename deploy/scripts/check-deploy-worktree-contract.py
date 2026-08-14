@@ -55,6 +55,8 @@ def scan_workflow_bootstrap() -> None:
         "git reset -q HEAD -- .",
         "git checkout -q -- .",
         "[ ! -f deploy/scripts/remote-auto-deploy.sh ]",
+        "CP_DEPLOY_PUBLIC_HOST",
+        "STRICT_AGENT_IMAGE_PREPARE=\"1\"",
     ]:
         if snippet not in text:
             fail(f"GitHub Actions SSH 入口缺少首次升级自愈逻辑：{snippet}")

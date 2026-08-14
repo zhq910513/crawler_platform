@@ -24,7 +24,7 @@
           <p>{{ preflight.summary }}</p>
           <div class="check-meta">
             <el-tag :type="preflightTag(preflight.status)" effect="light">{{ preflightLabel(preflight.status) }}</el-tag>
-            <span>阻断 {{ preflight.blockingCount }}</span>
+            <span>必须处理 {{ preflight.blockingCount }}</span>
             <span>需确认 {{ preflight.warningCount }}</span>
             <span>检测来源：{{ preflight.checkSourceLabel || '页面自动检测' }}</span>
             <span v-if="preflight.checkedAt">检测时间：{{ formatTime(preflight.checkedAt) }}</span>
@@ -40,16 +40,19 @@
       <div class="platform-check-summary">
         <div class="next-action-card">
           <div class="section-title-small">下一步动作</div>
-          <p>{{ autoFixCandidate ? `${autoFixCandidate.label}：${autoFixCandidate.impact || autoFixCandidate.message}` : (preflight.nextAction || '暂无必须处理项。') }}</p>
-          <div v-if="autoFixCandidate" class="auto-action-box">
-            <div><strong>推荐操作：</strong>{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</div>
-            <div class="muted">平台会执行受控白名单动作；该动作可能构建镜像、写入配置并短暂重启后端服务。失败时会展示阶段日志和手动兜底命令。</div>
-            <div class="auto-buttons">
-              <el-button type="success" :loading="actionRunning" @click="runAutoFix()">{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
-              <el-button v-if="autoFixCandidate.autoActionCommand" @click="copyText(autoFixCandidate.autoActionCommand || '')">复制兜底命令</el-button>
+          <template v-if="autoFixCandidate">
+            <div class="action-problem-title">{{ autoFixCandidate.label }}</div>
+            <div class="action-problem-line"><strong>影响：</strong>{{ autoFixCandidate.impact || autoFixCandidate.message }}</div>
+            <div class="auto-action-box">
+              <div><strong>推荐动作：</strong>{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</div>
+              <div class="muted">平台会执行受控白名单动作；可能构建镜像、写入配置并短暂重启后端服务。失败时展示阶段日志和兜底命令。</div>
+              <div class="auto-buttons">
+                <el-button type="success" :loading="actionRunning" @click="runAutoFix()">{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
+                <el-button v-if="autoFixCandidate.autoActionCommand" @click="copyText(autoFixCandidate.autoActionCommand || '')">复制兜底命令</el-button>
+              </div>
             </div>
-          </div>
-          <div v-else class="muted">处理完成后点击“重新检测”刷新状态。</div>
+          </template>
+          <div v-else class="muted">{{ preflight.nextAction || '暂无必须处理项。' }}</div>
           <div v-if="actionResult" class="action-result" :class="`result-${String(actionResult.status || '').toLowerCase()}`">
             <div><strong>{{ actionResult.status === 'SUCCESS' ? '自动处理完成' : (actionResult.status === 'UNAVAILABLE' ? '当前不能一键处理' : '自动处理结果') }}</strong>：{{ actionResult.message || actionResult.stage }}</div>
             <div v-if="actionResult.stage" class="muted">阶段：{{ actionResult.stage }}</div>
@@ -58,7 +61,7 @@
             <pre v-if="actionResult.manualCommand" class="verify-command">{{ actionResult.manualCommand }}</pre>
           </div>
           <div v-if="preflight.automationSummary" class="automation-pills">
-            <el-tag v-if="preflight.automationSummary.platformScript" size="small" type="success" effect="light">平台脚本可处理 {{ preflight.automationSummary.platformScript }}</el-tag>
+            <el-tag v-if="preflight.automationSummary.platformScript" size="small" type="success" effect="light">平台可一键处理 {{ preflight.automationSummary.platformScript }} 项</el-tag>
             <el-tag v-if="preflight.automationSummary.nodeInstallerAuthorized" size="small" type="warning" effect="light">节点授权可处理 {{ preflight.automationSummary.nodeInstallerAuthorized }}</el-tag>
             <el-tag v-if="preflight.automationSummary.cloudConsole" size="small" type="danger" effect="light">需云控制台 {{ preflight.automationSummary.cloudConsole }}</el-tag>
           </div>
@@ -91,7 +94,7 @@
           <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
           <div class="history-main">
             <div><strong>{{ item.checkSourceLabel }}</strong> · {{ formatTime(item.checkedAt || item.createdAt || '') }}</div>
-            <div class="muted">阻断 {{ item.blockingCount }} · 需确认 {{ item.warningCount }} · {{ item.summary }}</div>
+            <div class="muted">必须处理 {{ item.blockingCount }} · 需确认 {{ item.warningCount }} · {{ item.summary }}</div>
             <div v-if="item.changes?.length" class="history-changes">{{ item.changes.slice(0, 3).join('；') }}</div>
           </div>
         </div>
@@ -197,12 +200,12 @@ const preflightTitle = computed(() => {
 const preflightIcon = computed(() => preflight.value?.status === 'PASS' ? '✓' : (preflight.value?.status === 'FAIL' ? '!' : '?'))
 function statusWeight(status: string) { if (status === 'FAIL') return 0; if (status === 'WARN') return 1; return 2 }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '需确认' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '必须处理'; return '需确认' }
 function comparePreflight(before?: ControlPlanePreflight, after?: ControlPlanePreflight) {
   if (!before || !after) return []
   const changes: string[] = []
   if (before.status !== after.status) changes.push(`总体状态：${preflightLabel(before.status)} -> ${preflightLabel(after.status)}`)
-  if (before.blockingCount !== after.blockingCount) changes.push(`阻断项：${before.blockingCount} -> ${after.blockingCount}`)
+  if (before.blockingCount !== after.blockingCount) changes.push(`必须处理项：${before.blockingCount} -> ${after.blockingCount}`)
   if (before.warningCount !== after.warningCount) changes.push(`需确认项：${before.warningCount} -> ${after.warningCount}`)
   const previous = new Map((before.checks || []).map((item) => [item.key, item]))
   for (const item of after.checks || []) {
@@ -220,7 +223,7 @@ async function load(source: 'AUTO' | 'MANUAL' = 'AUTO') {
     if (source === 'MANUAL') {
       lastChanges.value = comparePreflight(before, next.platformPreflight)
       const status = next.platformPreflight
-      ElMessage.success(`检测完成：阻断 ${status?.blockingCount ?? 0}，需确认 ${status?.warningCount ?? 0}${lastChanges.value.length ? '，状态有变化' : '，状态无变化'}`)
+      ElMessage.success(`检测完成：必须处理 ${status?.blockingCount ?? 0}，需确认 ${status?.warningCount ?? 0}${lastChanges.value.length ? '，状态有变化' : '，状态无变化'}`)
     }
   } finally {
     loading.value = false
@@ -293,8 +296,11 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .platform-check-summary { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 16px; padding: 18px 22px 22px; }
 .next-action-card, .problem-summary, .change-card { border: 1px solid #e2e8f0; border-radius: 16px; background: rgba(255, 255, 255, 0.78); padding: 14px; box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04); }
 .next-action-card p { margin: 6px 0 8px; color: #0f172a; font-weight: 700; line-height: 1.6; }
+.action-problem-title { margin: 4px 0 6px; color: #0f172a; font-size: 16px; font-weight: 900; }
+.action-problem-line { color: #475569; line-height: 1.7; }
+.action-problem-line strong { color: #111827; }
 .automation-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.auto-action-box { margin-top: 10px; padding: 12px; border: 1px solid #bbf7d0; border-radius: 14px; background: #f0fdf4; }
+.auto-action-box { margin-top: 12px; padding: 13px; border: 1px solid #bbf7d0; border-radius: 14px; background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); }
 .auto-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .action-result { margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid #e2e8f0; background: #f8fafc; }
 .result-success { border-color: #bbf7d0; background: #f0fdf4; }

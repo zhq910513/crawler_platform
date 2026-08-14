@@ -75,6 +75,12 @@ if ".env.tmp_prepare_agent_image" not in prepare_script or "本机 registry 中�
 if not (ROOT / "deploy/scripts/prepare-agent-image.sh").exists():
     errors.append("缺少平台侧 执行组件镜像自动准备脚本 deploy/scripts/prepare-agent-image.sh")
 
+workflow_text = (ROOT / ".github/workflows/deploy-test-server.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/deploy-test-server.yml").exists() else ""
+if "CP_DEPLOY_PUBLIC_HOST" not in workflow_text or "STRICT_AGENT_IMAGE_PREPARE" not in workflow_text:
+    errors.append("CI/CD 部署入口必须自动传入公网主机并开启执行组件镜像准备强门禁，避免部署成功后运行总览仍残留镜像地址阻断项")
+if "CP_DEPLOY_PUBLIC_HOST" not in prepare_script or "CRAWLER_AGENT_REGISTRY_PUBLIC_HOST" not in prepare_script:
+    errors.append("执行组件镜像准备脚本必须支持 CI/CD 公网主机兜底和 .env 显式 registry 主机配置")
+
 for deploy_name in ["deploy.sh", "release-upgrade.sh", "deploy-single-server.sh"]:
     deploy_text = (ROOT / "deploy/scripts" / deploy_name).read_text(encoding="utf-8")
     if "STRICT_AGENT_IMAGE_PREPARE" not in deploy_text:

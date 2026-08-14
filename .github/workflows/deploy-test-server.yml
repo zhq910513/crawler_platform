@@ -59,4 +59,4 @@ jobs:
               git checkout main
               git pull --ff-only origin main
             fi
-            CP_DEPLOY_BRANCH="main" CP_DEPLOY_COMMIT="${{ github.sha }}" bash deploy/scripts/remote-auto-deploy.sh
+            CP_DEPLOY_BRANCH="main" CP_DEPLOY_COMMIT="${{ github.sha }}" CP_DEPLOY_PUBLIC_HOST="${{ secrets.SERVER_HOST }}" STRICT_AGENT_IMAGE_PREPARE="1" bash deploy/scripts/remote-auto-deploy.sh

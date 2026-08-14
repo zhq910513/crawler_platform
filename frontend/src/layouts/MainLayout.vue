@@ -14,8 +14,10 @@
           <span>{{ item.title }}</span>
         </el-menu-item>
       </el-menu>
-      <div class="version-card">
-        <span>v{{ frontendVersion.version }}</span>
+      <div class="version-card" :class="{ 'version-card-mismatch': versionMismatch }">
+        <div class="version-primary">当前版本 v{{ frontendVersion.version }}</div>
+        <div v-if="backendVersion" class="version-secondary">服务端 v{{ backendVersion.version }}</div>
+        <div v-if="versionMismatch" class="version-warning">版本不一致，请重新部署</div>
       </div>
     </el-aside>
     <el-container class="layout-main">
@@ -87,6 +89,7 @@ const passwordError = ref('')
 const passwordPolicyText = '新密码至少 8 位，必须包含大小写字母、数字和特殊字符，且不能与当前密码相同。'
 const frontendVersion = ref<SystemVersionInfo>(frontendBuildVersion)
 const backendVersion = ref<BackendHealthData | null>(null)
+const versionMismatch = computed(() => Boolean(backendVersion.value?.version && backendVersion.value.version !== frontendVersion.value.version))
 
 onMounted(() => {
   if (passwordRequired.value) passwordDialogVisible.value = true
@@ -147,20 +150,24 @@ async function logout() {
 </script>
 
 <style scoped>
-.layout-shell { min-height: 100vh; background: #f5f7fb; }
-.layout-aside { position: relative; display: flex; flex-direction: column; border-right: 1px solid #e5eaf2; background: #111827; box-shadow: 8px 0 24px rgba(15, 23, 42, 0.06); }
+.layout-shell { min-height: 100vh; height: 100vh; overflow: hidden; background: #f5f7fb; }
+.layout-aside { position: relative; display: flex; flex-direction: column; height: 100vh; overflow: hidden; border-right: 1px solid #e5eaf2; background: #111827; box-shadow: 8px 0 24px rgba(15, 23, 42, 0.06); }
 .brand-panel { display: flex; align-items: center; gap: 10px; height: 64px; padding: 0 16px; color: #fff; border-bottom: 1px solid rgba(148, 163, 184, 0.14); }
 .brand-mark { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #2563eb, #0ea5e9); font-size: 18px; font-weight: 800; box-shadow: 0 10px 24px rgba(37, 99, 235, 0.28); }
 .brand-copy { min-width: 0; }
 .brand-title { font-size: 16px; font-weight: 800; letter-spacing: 0.2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-subtitle { margin-top: 2px; color: #9ca3af; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.side-menu { flex: 1; padding: 10px 9px; border-right: none; background: transparent; overflow-y: auto; }
+.side-menu { flex: 1 1 auto; min-height: 0; padding: 10px 9px; border-right: none; background: transparent; overflow-y: auto; }
 .side-menu :deep(.el-menu-item) { height: 40px; margin: 3px 0; border-radius: 10px; color: #cbd5e1; font-size: 14px; }
 .side-menu :deep(.el-menu-item .el-icon) { margin-right: 10px; font-size: 16px; }
 .side-menu :deep(.el-menu-item:hover) { background: rgba(59, 130, 246, 0.12); color: #fff; }
 .side-menu :deep(.el-menu-item.is-active) { background: #2563eb; color: #fff; box-shadow: 0 10px 22px rgba(37, 99, 235, 0.24); }
-.version-card { margin: 10px 14px 14px; padding: 9px 12px; border: 1px solid rgba(148, 163, 184, 0.14); border-radius: 12px; background: rgba(15, 23, 42, 0.58); color: #bfdbfe; font-size: 12px; font-weight: 700; }
-.layout-main { min-width: 0; }
+.version-card { flex: 0 0 auto; margin: 10px 14px 14px; padding: 9px 12px; border: 1px solid rgba(148, 163, 184, 0.14); border-radius: 12px; background: rgba(15, 23, 42, 0.58); color: #bfdbfe; font-size: 12px; font-weight: 700; }
+.version-primary { line-height: 1.35; }
+.version-secondary { margin-top: 3px; color: #93c5fd; font-size: 11px; font-weight: 600; line-height: 1.35; }
+.version-warning { margin-top: 5px; color: #fbbf24; font-size: 11px; font-weight: 800; line-height: 1.35; }
+.version-card-mismatch { border-color: rgba(251, 191, 36, 0.42); background: rgba(69, 26, 3, 0.38); }
+.layout-main { min-width: 0; height: 100vh; overflow: hidden; }
 .topbar { display: flex; align-items: center; justify-content: space-between; height: 66px; padding: 0 24px; border-bottom: 1px solid #e6ebf2; background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(8px); }
 .page-heading { min-width: 0; }
 .page-title { color: #111827; font-size: 19px; font-weight: 800; }
@@ -169,7 +176,7 @@ async function logout() {
 .user-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .password-alert { margin-bottom: 14px; }
 .password-help { margin-top: -4px; color: #64748b; font-size: 12px; line-height: 1.6; }
-.content-wrap { padding: 18px 20px 24px; }
+.content-wrap { padding: 18px 20px 24px; overflow-y: auto; }
 .forced-password-panel { display: flex; align-items: center; justify-content: center; min-height: 360px; border: 1px dashed #f59e0b; border-radius: 14px; background: #fffbeb; color: #92400e; font-weight: 700; }
 @media (max-width: 980px) { .layout-aside { width: 218px !important; } .topbar { padding: 0 16px; } .content-wrap { padding: 14px; } .user-box { gap: 6px; } }
 </style>

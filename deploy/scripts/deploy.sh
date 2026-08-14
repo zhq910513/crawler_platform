@@ -28,9 +28,9 @@ if cp_wait_http "http://127.0.0.1:${PORT}/health" 120 2; then
   if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
     if ! bash deploy/scripts/prepare-agent-image.sh; then
       if [ "${STRICT_AGENT_IMAGE_PREPARE:-0}" = "1" ]; then
-        cp_die "Agent 镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断部署。"
+        cp_die "执行组件镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断部署。"
       fi
-      cp_warn "Agent 镜像自动准备未完成；请到运行总览查看平台自检并按提示处理。"
+      cp_warn "执行组件镜像自动准备未完成；请到运行总览查看平台自检并按提示处理。"
     fi
   fi
   bash deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true

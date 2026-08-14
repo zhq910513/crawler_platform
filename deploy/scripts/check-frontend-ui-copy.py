@@ -17,9 +17,14 @@ BAD_PATTERNS = [
 ATTR_RE = re.compile(r"(?:label|title|placeholder|content|description)=\"([^\"]*)\"")
 TEXT_RE = re.compile(r">([^<>]+)<")
 
+FORBIDDEN_PHRASES = ["阻断阻断", "平台脚本可处理"]
+
 errors: list[str] = []
 for path in sorted(SRC.rglob("*.vue")):
     raw = path.read_text(encoding="utf-8")
+    for phrase in FORBIDDEN_PHRASES:
+        if phrase in raw:
+            errors.append(f"{path.relative_to(ROOT)}: 可见文案存在未产品化表达: {phrase}")
     match = re.search(r"<template>(.*?)</template>", raw, flags=re.S)
     if not match:
         continue

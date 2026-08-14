@@ -17,11 +17,11 @@ usage() {
   cat <<USAGE
 Usage: bash deploy/scripts/prepare-agent-image.sh [options]
 
-自动准备执行节点 Agent 镜像：构建、推送到内置 registry、写入 .env 并重启后端服务。
+自动准备执行组件镜像：构建、推送到内置 registry、写入 .env 并重启后端服务。
 
 Options:
-  --version VERSION              Agent 镜像版本，默认读取 .env APP_VERSION 或 VERSION 文件
-  --registry-public-host HOST    执行节点访问 registry 使用的主机/IP，默认从 CRAWLER_AGENT_REGISTRY_PUBLIC_HOST 或 CRAWLER_CONTROL_PUBLIC_BASE_URL 推导
+  --version VERSION              执行组件镜像版本，默认读取 .env APP_VERSION 或 VERSION 文件
+  --registry-public-host HOST    执行节点访问 registry 使用的主机/IP，默认从 CRAWLER_AGENT_REGISTRY_PUBLIC_HOST、CRAWLER_CONTROL_PUBLIC_BASE_URL 或 CI/CD 注入的 CP_DEPLOY_PUBLIC_HOST 推导
   --registry-port PORT           registry 对外端口，默认读取 CRAWLER_AGENT_REGISTRY_PORT 或 5000
   --no-restart                   只写 .env，不重启 api/scheduler/maintenance
   --skip-build                   跳过 docker build，只使用本地已有 crawler_platform_agent:版本
@@ -48,7 +48,7 @@ cp_require_docker
 
 VERSION="${VERSION:-$(cp_env_value .env APP_VERSION)}"
 VERSION="${VERSION:-$(cat VERSION 2>/dev/null | tr -d '[:space:]')}"
-[ -n "$VERSION" ] || cp_die "无法确定 Agent 镜像版本，请配置 APP_VERSION 或传入 --version。"
+[ -n "$VERSION" ] || cp_die "无法确定 执行组件镜像版本，请配置 APP_VERSION 或传入 --version。"
 
 REGISTRY_PORT="${REGISTRY_PORT:-$(cp_env_value .env CRAWLER_AGENT_REGISTRY_PORT)}"
 REGISTRY_PORT="${REGISTRY_PORT:-5000}"
@@ -68,9 +68,12 @@ if [ -z "$REGISTRY_PUBLIC_HOST" ]; then
     REGISTRY_PUBLIC_HOST="$(extract_host_from_url "$public_base")"
   fi
 fi
+if [ -z "$REGISTRY_PUBLIC_HOST" ] && [ -n "${CP_DEPLOY_PUBLIC_HOST:-}" ]; then
+  REGISTRY_PUBLIC_HOST="$(extract_host_from_url "$CP_DEPLOY_PUBLIC_HOST")"
+fi
 
 if [ -z "$REGISTRY_PUBLIC_HOST" ] || [ "$REGISTRY_PUBLIC_HOST" = "127.0.0.1" ] || [ "$REGISTRY_PUBLIC_HOST" = "localhost" ] || [ "$REGISTRY_PUBLIC_HOST" = "0.0.0.0" ]; then
-  cp_die "无法自动确定执行节点可访问的 registry 主机。请先在 .env 配置 CRAWLER_CONTROL_PUBLIC_BASE_URL=公网地址，或传入 --registry-public-host 公网IP/域名。"
+  cp_die "无法自动确定执行节点可访问的 registry 主机。CI/CD 请传入 CP_DEPLOY_PUBLIC_HOST，或在 .env 配置 CRAWLER_CONTROL_PUBLIC_BASE_URL / CRAWLER_AGENT_REGISTRY_PUBLIC_HOST。"
 fi
 
 LOCAL_IMAGE="crawler_platform_agent:${VERSION}"
@@ -79,14 +82,14 @@ PUBLIC_REGISTRY="${REGISTRY_PUBLIC_HOST}:${REGISTRY_PORT}"
 LOCAL_REGISTRY_IMAGE="${LOCAL_REGISTRY}/crawler_platform_agent:${VERSION}"
 PUBLIC_AGENT_IMAGE="${PUBLIC_REGISTRY}/crawler_platform_agent:${VERSION}"
 
-cp_info "准备 Agent 镜像：version=${VERSION} publicImage=${PUBLIC_AGENT_IMAGE}"
+cp_info "准备 执行组件镜像：version=${VERSION} publicImage=${PUBLIC_AGENT_IMAGE}"
 
 if ! docker ps --format '{{.Names}} {{.Ports}}' | grep -Eq "(^| )${REGISTRY_CONTAINER_NAME}( |$)|0\.0\.0\.0:${REGISTRY_PORT}->5000/tcp|:::${REGISTRY_PORT}->5000/tcp"; then
   if docker ps -a --format '{{.Names}}' | grep -qx "$REGISTRY_CONTAINER_NAME"; then
     cp_info "启动已有内置 registry 容器：$REGISTRY_CONTAINER_NAME"
     docker start "$REGISTRY_CONTAINER_NAME" >/dev/null
   else
-    cp_info "启动内置 Agent 镜像仓库：0.0.0.0:${REGISTRY_PORT}->5000"
+    cp_info "启动内置 执行组件镜像仓库：0.0.0.0:${REGISTRY_PORT}->5000"
     docker run -d --restart=always --name "$REGISTRY_CONTAINER_NAME" -p "${REGISTRY_PORT}:5000" registry:2 >/dev/null
   fi
 else
@@ -94,7 +97,7 @@ else
 fi
 
 if [ "$SKIP_BUILD" != "1" ]; then
-  cp_info "构建 Agent 镜像：$LOCAL_IMAGE"
+  cp_info "构建 执行组件镜像：$LOCAL_IMAGE"
   docker build \
     --build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}" \
     --build-arg "APP_VERSION=${VERSION}" \
@@ -110,7 +113,7 @@ fi
 docker tag "$LOCAL_IMAGE" "$LOCAL_REGISTRY_IMAGE"
 
 if [ "$SKIP_PUSH" != "1" ]; then
-  cp_info "推送 Agent 镜像到内置 registry：$LOCAL_REGISTRY_IMAGE"
+  cp_info "推送 执行组件镜像到内置 registry：$LOCAL_REGISTRY_IMAGE"
   docker push "$LOCAL_REGISTRY_IMAGE"
 else
   cp_warn "已跳过 docker push；请确认 registry 中已有该 tag。"
@@ -133,7 +136,7 @@ if docker image inspect "$LOCAL_REGISTRY_IMAGE" >/dev/null 2>&1; then
   AGENT_IMAGE_DIGEST="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$LOCAL_REGISTRY_IMAGE" 2>/dev/null | grep -m1 '@sha256:' | sed 's#^.*@##' || true)"
 fi
 if [ -n "$AGENT_IMAGE_DIGEST" ]; then
-  cp_info "Agent 镜像 digest：$AGENT_IMAGE_DIGEST"
+  cp_info "执行组件镜像 digest：$AGENT_IMAGE_DIGEST"
 else
   cp_warn "未能从本机镜像读取 RepoDigest；平台自检会继续尝试通过 registry manifest 读取 digest。"
 fi
@@ -180,11 +183,11 @@ set_env_value CRAWLER_AGENT_IMAGE_PREPARED_AT "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cp_info ".env 已更新：CRAWLER_AGENT_IMAGE=${PUBLIC_AGENT_IMAGE}（备份：${backup}）"
 
 if [ "$RESTART_BACKEND" = "1" ]; then
-  cp_info "重启 API / scheduler / maintenance 使 Agent 镜像配置生效。"
+  cp_info "重启 API / scheduler / maintenance 使 执行组件镜像配置生效。"
   cp_compose up -d api scheduler maintenance
   web_port="$(cp_env_value .env WEB_PORT)"; web_port="${web_port:-80}"
   if cp_wait_http "http://127.0.0.1:${web_port}/health" 90 2; then
-    cp_info "后端健康检查通过，Agent 镜像配置已生效。"
+    cp_info "后端健康检查通过，执行组件镜像配置已生效。"
   else
     cp_warn "后端重启后健康检查未确认通过，请执行 docker compose logs --tail=100 api 排查。"
   fi
@@ -194,10 +197,10 @@ fi
 
 cat <<NEXT
 
-✅ Agent 镜像分发已准备完成。
+✅ 执行组件镜像分发已准备完成。
 
 平台已自动处理：
-- 构建 Agent 镜像
+- 构建 执行组件镜像
 - 推送到内置 registry
 - 更新 .env 中的 CRAWLER_AGENT_IMAGE
 - $( [ "$RESTART_BACKEND" = "1" ] && printf "重启后端服务使配置生效" || printf "未重启后端服务，请手动重启 api/scheduler/maintenance" )
