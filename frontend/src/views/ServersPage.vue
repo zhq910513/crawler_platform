@@ -82,7 +82,7 @@
         <div class="preflight-header">
           <div>
             <div class="preflight-title">接入前检查</div>
-            <div class="muted">平台自检：阻断 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
+            <div class="muted">平台自检：必须处理 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
           </div>
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
@@ -174,7 +174,7 @@ function boolText(value?: boolean | null) { if (value === null || value === unde
 function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '需确认' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '必须处理'; return '需确认' }
 function goDashboardPreflight() { router.push('/dashboard?focus=platformPreflight') }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
 const configuredControlPlaneUrl = ref('')
@@ -203,7 +203,7 @@ const addressWarning = computed(() => {
   if (!baseUrl) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
   try { new URL(baseUrl) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
   if (joinForm.installTarget === 'REMOTE' && isLoopbackUrl(baseUrl)) return '远程节点不能使用本机地址，请到系统设置改成节点可访问的地址。'
-  if (joinForm.installTarget === 'REMOTE' && controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '平台自检未通过，请先修复阻断项。'
+  if (joinForm.installTarget === 'REMOTE' && controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '平台自检未通过，请先修复必须处理项。'
   return ''
 })
 function applyAutoCodes() {

@@ -45,14 +45,36 @@
             <div class="action-problem-line"><strong>影响：</strong>{{ autoFixCandidate.impact || autoFixCandidate.message }}</div>
             <div class="auto-action-box">
               <div><strong>推荐动作：</strong>{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</div>
-              <div class="muted">平台会执行受控白名单动作；可能构建镜像、写入配置并短暂重启后端服务。失败时展示阶段日志和兜底命令。</div>
+              <div class="muted">当前部署已启用页面白名单动作，平台会执行受控动作；可能构建镜像、写入配置并短暂重启后端服务。</div>
               <div class="auto-buttons">
                 <el-button type="success" :loading="actionRunning" @click="runAutoFix()">{{ autoFixCandidate.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
-                <el-button v-if="autoFixCandidate.autoActionCommand" @click="copyText(autoFixCandidate.autoActionCommand || '')">复制兜底命令</el-button>
+                <el-button v-if="autoFixCandidate.manualCommand || autoFixCandidate.autoActionCommand" @click="copyText(autoFixCandidate.manualCommand || autoFixCandidate.autoActionCommand || '')">复制兜底命令</el-button>
               </div>
             </div>
           </template>
-          <div v-else class="muted">{{ preflight.nextAction || '暂无必须处理项。' }}</div>
+          <template v-else-if="fallbackScriptCandidate">
+            <div class="action-problem-title">{{ fallbackScriptCandidate.label }}</div>
+            <div class="action-problem-line"><strong>影响：</strong>{{ fallbackScriptCandidate.impact || fallbackScriptCandidate.message }}</div>
+            <div class="fallback-action-box">
+              <div><strong>当前页面不能一键处理</strong></div>
+              <div class="muted">{{ fallbackScriptCandidate.actionUnavailableReason || preflight.platformActionCapability?.reason || '页面白名单动作未启用。CI/CD 会在部署阶段自动处理；极端情况下可使用平台服务器兜底命令。' }}</div>
+              <div v-if="fallbackScriptCandidate.manualCommand || fallbackScriptCandidate.autoActionCommand" class="command-row"><span>平台服务器兜底命令</span><el-button size="small" @click="copyText(fallbackScriptCandidate.manualCommand || fallbackScriptCandidate.autoActionCommand || '')">复制</el-button></div>
+              <pre v-if="fallbackScriptCandidate.manualCommand || fallbackScriptCandidate.autoActionCommand" class="verify-command">{{ fallbackScriptCandidate.manualCommand || fallbackScriptCandidate.autoActionCommand }}</pre>
+            </div>
+          </template>
+          <template v-else-if="preflight.status === 'WARN'">
+            <div class="action-problem-title">平台侧没有必须处理项</div>
+            <div class="action-problem-line"><strong>下一步：</strong>{{ preflight.nextAction || '请在目标执行节点验证平台入口、镜像仓库和镜像拉取。' }}</div>
+            <div class="node-verify-box">
+              <div><strong>推荐动作：</strong>复制执行节点验证命令，在目标执行节点验证。</div>
+              <div class="muted">当前状态是“需确认”，不是平台侧部署失败；验证失败后再处理安全组、Docker registry 或重新触发 CI/CD。</div>
+              <div class="auto-buttons">
+                <el-button v-if="nodeVerificationCommands.length" type="primary" plain @click="copyText(nodeVerificationCommands.join(' && '))">复制执行节点验证命令</el-button>
+                <el-button @click="detailVisible = true">查看确认项</el-button>
+              </div>
+            </div>
+          </template>
+          <div v-else class="node-verify-box"><strong>平台侧接入条件已就绪。</strong><div class="muted">{{ preflight.nextAction || '可以继续新增或重新接入执行节点。' }}</div></div>
           <div v-if="actionResult" class="action-result" :class="`result-${String(actionResult.status || '').toLowerCase()}`">
             <div><strong>{{ actionResult.status === 'SUCCESS' ? '自动处理完成' : (actionResult.status === 'UNAVAILABLE' ? '当前不能一键处理' : '自动处理结果') }}</strong>：{{ actionResult.message || actionResult.stage }}</div>
             <div v-if="actionResult.stage" class="muted">阶段：{{ actionResult.stage }}</div>
@@ -61,9 +83,11 @@
             <pre v-if="actionResult.manualCommand" class="verify-command">{{ actionResult.manualCommand }}</pre>
           </div>
           <div v-if="preflight.automationSummary" class="automation-pills">
-            <el-tag v-if="preflight.automationSummary.platformScript" size="small" type="success" effect="light">平台可一键处理 {{ preflight.automationSummary.platformScript }} 项</el-tag>
-            <el-tag v-if="preflight.automationSummary.nodeInstallerAuthorized" size="small" type="warning" effect="light">节点授权可处理 {{ preflight.automationSummary.nodeInstallerAuthorized }}</el-tag>
-            <el-tag v-if="preflight.automationSummary.cloudConsole" size="small" type="danger" effect="light">需云控制台 {{ preflight.automationSummary.cloudConsole }}</el-tag>
+            <el-tag v-if="preflight.automationSummary.pageAction" size="small" type="success" effect="light">页面一键可处理 {{ preflight.automationSummary.pageAction }} 项</el-tag>
+            <el-tag v-if="preflight.automationSummary.ciCdOrServerScript" size="small" type="info" effect="light">CI/CD 或平台服务器兜底处理 {{ preflight.automationSummary.ciCdOrServerScript }} 项</el-tag>
+            <el-tag v-if="preflight.automationSummary.nodeVerify" size="small" type="warning" effect="light">需执行节点验证 {{ preflight.automationSummary.nodeVerify }} 项</el-tag>
+            <el-tag v-if="preflight.automationSummary.nodeInstallerAuthorized" size="small" type="warning" effect="light">节点授权可处理 {{ preflight.automationSummary.nodeInstallerAuthorized }} 项</el-tag>
+            <el-tag v-if="preflight.automationSummary.cloudConsole" size="small" type="danger" effect="light">需云控制台处理 {{ preflight.automationSummary.cloudConsole }} 项</el-tag>
           </div>
         </div>
         <div class="problem-summary">
@@ -148,12 +172,12 @@
               <div class="field-block"><strong>影响：</strong>{{ item.impact }}</div>
               <div v-if="item.handler" class="field-block"><strong>处理方式：</strong>{{ item.handler }}</div>
               <div v-if="item.status !== 'PASS'" class="field-block action-field"><strong>处理：</strong>{{ item.action || item.suggestion }}</div>
-              <div v-if="item.autoActionCommand" class="command-row"><span>自动化命令</span><el-button size="small" @click="copyText(item.autoActionCommand || '')">复制</el-button></div>
+              <div v-if="item.autoActionCommand" class="command-row"><span>{{ item.automationType === 'PLATFORM_SCRIPT' ? '平台服务器兜底命令' : '自动化命令' }}</span><el-button size="small" @click="copyText(item.autoActionCommand || '')">复制</el-button></div>
               <pre v-if="item.autoActionCommand" class="verify-command">{{ item.autoActionCommand }}</pre>
               <div v-if="item.verifyCommand" class="command-row"><span>验证命令</span><el-button size="small" @click="copyText(item.verifyCommand || '')">复制</el-button></div>
               <pre v-if="item.verifyCommand" class="verify-command">{{ item.verifyCommand }}</pre>
               <div class="drawer-actions">
-                <el-button v-if="item.actionEndpoint && item.status !== 'PASS'" type="success" size="small" :loading="actionRunning" @click="runAutoFix(item)">{{ item.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
+                <el-button v-if="item.actionEndpoint && item.actionAvailable && item.status === 'FAIL'" type="success" size="small" :loading="actionRunning" @click="runAutoFix(item)">{{ item.actionButtonLabel || '自动准备执行组件镜像' }}</el-button>
                 <el-button v-if="item.route && item.status !== 'PASS'" class="route-button" type="primary" plain size="small" @click="goRoute(item.route)">{{ item.actionLabel || '去处理' }}</el-button>
               </div>
             </div>
@@ -189,8 +213,11 @@ const cards = computed(() => [
   { title: '等待资源', value: summary.value.waitingCount },
 ])
 const problemChecks = computed<ControlPlanePreflightCheck[]>(() => (preflight.value?.checks || []).filter((item) => item.status !== 'PASS'))
+const blockingProblems = computed(() => problemChecks.value.filter((item) => item.status === 'FAIL'))
 const topProblems = computed(() => [...problemChecks.value].sort((a, b) => statusWeight(a.status) - statusWeight(b.status)).slice(0, 3))
-const autoFixCandidate = computed(() => problemChecks.value.find((item) => item.actionEndpoint && item.automationType === 'PLATFORM_SCRIPT'))
+const autoFixCandidate = computed(() => blockingProblems.value.find((item) => item.actionEndpoint && item.actionAvailable && item.automationType === 'PLATFORM_SCRIPT'))
+const fallbackScriptCandidate = computed(() => blockingProblems.value.find((item) => item.automationType === 'PLATFORM_SCRIPT' && !item.actionAvailable))
+const nodeVerificationCommands = computed(() => preflight.value?.nodeVerificationCommands?.length ? preflight.value.nodeVerificationCommands : problemChecks.value.filter((item) => item.status === 'WARN' && item.verifyCommand).map((item) => item.verifyCommand || ''))
 const preflightTitle = computed(() => {
   if (!preflight.value) return '等待检测'
   if (preflight.value.status === 'FAIL') return '平台还有必须处理项'
@@ -246,7 +273,10 @@ async function copyText(text: string) {
 
 async function runAutoFix(item?: ControlPlanePreflightCheck) {
   const target = item || autoFixCandidate.value
-  if (!target) return
+  if (!target || !target.actionAvailable || target.status !== 'FAIL') {
+    ElMessage.warning(target?.actionUnavailableReason || '当前检查项不适合页面一键处理，请按验证命令确认。')
+    return
+  }
   try {
     await ElMessageBox.confirm('平台将执行受控白名单动作准备执行组件镜像，可能会构建镜像、写入 .env 并短暂重启后端服务。确认继续？', target.actionButtonLabel || '自动准备执行组件镜像', { type: 'warning', confirmButtonText: '确认执行', cancelButtonText: '取消' })
   } catch {
@@ -301,6 +331,8 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .action-problem-line strong { color: #111827; }
 .automation-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .auto-action-box { margin-top: 12px; padding: 13px; border: 1px solid #bbf7d0; border-radius: 14px; background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); }
+.fallback-action-box { margin-top: 12px; padding: 13px; border: 1px solid #fed7aa; border-radius: 14px; background: linear-gradient(135deg, #fff7ed 0%, #ffffff 100%); }
+.node-verify-box { margin-top: 12px; padding: 13px; border: 1px solid #bfdbfe; border-radius: 14px; background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%); }
 .auto-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .action-result { margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid #e2e8f0; background: #f8fafc; }
 .result-success { border-color: #bbf7d0; background: #f0fdf4; }

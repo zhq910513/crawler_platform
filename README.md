@@ -123,7 +123,7 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.65`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.65`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.66`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.66`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -142,15 +142,15 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
 
-## 1.0.65 Agent 镜像下发与运行版本说明
+## 1.0.66 Agent 镜像下发与运行版本说明
 
 CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls` 通知执行节点。Agent 仅在空闲时主动预热镜像；已有运行实例继续使用 run 快照中的旧 digest，不会被新镜像打断。详细规范见 `docs/agent-image-update-flow.md`。
 
-## 1.0.65 账号状态上报规范
+## 1.0.66 账号状态上报规范
 
-1.0.65 继续保留账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。
+1.0.66 继续保留账号状态中心。平台不高频访问客户 Redis/Mongo/MySQL/Cookie 缓存库，账号状态统一通过 `companyCode/companyId + platformCode + credentialKey` 的状态事件上报，并聚合成账号最后已知状态。详见 `docs/account-status-reporting-standard.md`。
 
-## Agent 镜像分发自动化（1.0.65）
+## Agent 镜像分发自动化（1.0.66）
 
 平台部署或升级后，推荐执行：
 
@@ -160,8 +160,8 @@ bash deploy/scripts/prepare-agent-image.sh
 
 脚本会自动构建 Agent 镜像、推送到内置 registry、写入 `.env` 的 `CRAWLER_AGENT_IMAGE` 并重启后端服务。云安全组/防火墙放行 5000/TCP 仍需操作员在云控制台处理。执行节点安装命令如需自动配置 HTTP 私有仓库，可追加 `--auto-configure-docker-registry`。
 
-## 1.0.65 导航栏版本展示与 CI/CD 执行组件镜像自动化
+## 1.0.66 导航栏版本展示与 CI/CD 执行组件镜像自动化
 
-1.0.65 保持旧版深色侧边栏风格，不改变导航宽度、菜单字体、圆角和选中态；通过固定侧边栏高度、菜单内部滚动和版本卡固定保留，解决导航项增多后左下角版本不可见的问题。
+1.0.66 保持旧版深色侧边栏风格，不改变导航宽度、菜单字体、圆角和选中态；通过固定侧边栏高度、菜单内部滚动和版本卡固定保留，解决导航项增多后左下角版本不可见的问题。
 
 GitHub Actions 部署入口会自动传入平台服务器公网主机 `CP_DEPLOY_PUBLIC_HOST`，并在 CI/CD 场景启用 `STRICT_AGENT_IMAGE_PREPARE=1`。执行组件镜像准备脚本会据此自动写入 `CRAWLER_AGENT_IMAGE=<公网主机>:5000/crawler_platform_agent:<版本>`。如果准备失败，CI/CD 会失败并输出原因，避免部署成功后运行总览仍残留执行组件镜像地址阻断项。

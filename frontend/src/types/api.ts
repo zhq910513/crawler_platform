@@ -699,6 +699,10 @@ export interface ControlPlanePreflightCheck {
   autoActionCommand?: string
   actionEndpoint?: string
   actionButtonLabel?: string
+  actionAvailable?: boolean
+  actionUnavailableReason?: string
+  executionChannel?: string
+  manualCommand?: string
   details?: Record<string, unknown>
 }
 
@@ -733,7 +737,11 @@ export interface ControlPlanePreflight {
   checkSource?: string
   checkSourceLabel?: string
   nextAction?: string
-  automationSummary?: { platformScript: number; nodeInstallerAuthorized: number; cloudConsole: number; manual: number }
+  automationSummary?: { ciCdOrServerScript: number; pageAction: number; platformScript: number; nodeInstallerAuthorized: number; nodeVerify: number; cloudConsole: number; manual: number }
+  platformActionEnabled?: boolean
+  platformActionAvailable?: boolean
+  platformActionCapability?: { enabled: boolean; available: boolean; reason?: string; manualCommand?: string; channel?: string }
+  nodeVerificationCommands?: string[]
 }
 
 export interface PlatformPreflightSnapshot {

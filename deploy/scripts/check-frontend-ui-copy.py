@@ -17,7 +17,7 @@ BAD_PATTERNS = [
 ATTR_RE = re.compile(r"(?:label|title|placeholder|content|description)=\"([^\"]*)\"")
 TEXT_RE = re.compile(r">([^<>]+)<")
 
-FORBIDDEN_PHRASES = ["阻断阻断", "平台脚本可处理"]
+FORBIDDEN_PHRASES = ["阻断阻断", "平台脚本可处理", "平台可一键处理"]
 
 errors: list[str] = []
 for path in sorted(SRC.rglob("*.vue")):

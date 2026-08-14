@@ -144,7 +144,7 @@
         <div class="preflight-header">
           <div>
             <div class="preflight-title">接入前检查</div>
-            <div class="muted">平台自检：阻断 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
+            <div class="muted">平台自检：必须处理 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
           </div>
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
@@ -269,7 +269,7 @@ const joinWarning = computed(() => {
   if (!joinForm.serverName.trim()) return '请填写节点名称。'
   if (!controlBaseUrl.value) return '节点连接地址未配置，请超级管理员先到系统设置保存。'
   try { new URL(controlBaseUrl.value) } catch { return '节点连接地址格式不正确，请到系统设置修正。' }
-  if (controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '平台自检未通过，请先修复阻断项。'
+  if (controlPreflight.value && !controlPreflight.value.readyForRemoteAgent) return controlPreflight.value.summary || '平台自检未通过，请先修复必须处理项。'
   return ''
 })
 
@@ -293,7 +293,7 @@ function resolveControlBaseUrl(value?: string) {
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '阻断'; return '需确认' }
+function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '必须处理'; return '需确认' }
 function serverBlockReason(server: ServerNode) {
   if (server.manageStatus !== 'ENABLED') return '已停用'
   if (!['HEALTHY', 'DEGRADED'].includes(server.healthStatus)) return server.healthStatus === 'OFFLINE' ? '离线' : '健康异常'
@@ -492,7 +492,7 @@ async function inspectPipeline() {
     const result = await analyzeProjectPublishPipeline(pipelinePayload())
     applyPipelineResult(result)
     if (result.canContinue) ElMessage.success('发布流水线前置检查通过')
-    else ElMessage.warning(result.message || '发布流水线存在阻断项')
+    else ElMessage.warning(result.message || '发布流水线存在必须处理项')
   } catch (error) {
     const payload = apiErrorData<unknown>(error)
     const message = payload?.message || (error instanceof Error ? error.message : '流水线检查失败')
@@ -513,7 +513,7 @@ async function publishProject() {
     const analysis = await analyzeProjectPublishPipeline(pipelinePayload())
     applyPipelineResult(analysis)
     if (!analysis.canContinue) {
-      ElMessage.warning(analysis.message || '发布流水线存在阻断项')
+      ElMessage.warning(analysis.message || '发布流水线存在必须处理项')
       return
     }
     const result = await runProjectPublishPipeline(pipelinePayload())

@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from urllib.error import HTTPError, URLError
 import json
+import os
+from pathlib import Path
+import shlex
+import shutil
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
 
@@ -61,6 +65,8 @@ class SystemConfigService:
         checks: list[dict] = []
         required_ports: list[dict] = []
         checked_at = utcnow().isoformat()
+        platform_action_capability = self._platform_action_capability_payload()
+        prepare_agent_image_command = platform_action_capability["manualCommand"]
         source_key = (check_source or "AUTO").strip().upper()
         if source_key == "MANUAL":
             source_label = "手动检测"
@@ -90,7 +96,17 @@ class SystemConfigService:
             auto_action_command: str = "",
             action_endpoint: str = "",
             action_button_label: str = "",
+            execution_channel: str = "",
+            action_available: bool | None = None,
+            action_unavailable_reason: str = "",
+            manual_command: str = "",
         ) -> None:
+            resolved_action_available = bool(action_endpoint) if action_available is None else bool(action_available)
+            if automation_type == "PLATFORM_SCRIPT" and action_endpoint:
+                resolved_action_available = bool(platform_action_capability.get("available")) if action_available is None else bool(action_available)
+                if not resolved_action_available and not action_unavailable_reason:
+                    action_unavailable_reason = str(platform_action_capability.get("reason") or "当前页面未启用白名单动作执行能力。")
+            resolved_channel = execution_channel or self._execution_channel(automation_type, resolved_action_available)
             checks.append({
                 "key": key,
                 "label": label,
@@ -110,6 +126,10 @@ class SystemConfigService:
                 "autoActionCommand": auto_action_command,
                 "actionEndpoint": action_endpoint,
                 "actionButtonLabel": action_button_label,
+                "actionAvailable": resolved_action_available,
+                "actionUnavailableReason": action_unavailable_reason,
+                "executionChannel": resolved_channel,
+                "manualCommand": manual_command or (prepare_agent_image_command if automation_type == "PLATFORM_SCRIPT" else ""),
                 "details": details or {},
             })
 
@@ -236,17 +256,17 @@ class SystemConfigService:
                 "agent_image",
                 "执行组件镜像地址",
                 "FAIL",
-                "未配置 执行组件镜像地址，执行节点无法拉取 Agent 容器。",
+                "未配置执行组件镜像地址，执行节点无法拉取 Agent 容器。",
                 True,
                 "配置 CRAWLER_AGENT_IMAGE 后重启 API/Scheduler/Maintenance，再回到运行总览点击重新检测。",
-                action="平台可自动处理：点击运行总览里的“自动准备执行组件镜像”。平台会通过白名单动作构建、推送、写入 CRAWLER_AGENT_IMAGE 并重启后端服务；若当前部署未启用一键动作，再按兜底命令在平台服务器执行。",
+                action="CI/CD 会在部署阶段自动准备执行组件镜像；页面一键处理需要显式启用白名单动作。当前也可使用兜底命令在平台服务器执行。",
                 impact="远程执行节点无法拉取 Agent 容器，新增节点无法启动；已在线节点不受影响。",
                 route="/dashboard?focus=platformPreflight",
                 action_label="准备执行组件镜像",
                 category="执行组件镜像分发",
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
-                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
+                auto_action_command=prepare_agent_image_command,
                 action_endpoint="/platform-actions/agent-image-preparations",
                 action_button_label="自动准备执行组件镜像",
             )
@@ -259,14 +279,14 @@ class SystemConfigService:
                 True,
                 "将 CRAWLER_AGENT_IMAGE 改成执行节点可访问的完整镜像地址，例如 42.193.226.138:5000/crawler_platform_agent:版本。",
                 {"image": image},
-                action="平台可自动处理：点击运行总览里的“自动准备执行组件镜像”。平台会通过白名单动作构建、tag、push 执行组件镜像，写入 CRAWLER_AGENT_IMAGE=公网IP:5000/crawler_platform_agent:版本 并重启后端服务；若当前部署未启用一键动作，再按兜底命令在平台服务器执行。",
+                action="CI/CD 会在部署阶段自动准备执行组件镜像；页面一键处理需要显式启用白名单动作。当前也可使用兜底命令在平台服务器执行。",
                 impact="远程节点会默认去 Docker Hub 拉你的私有镜像，通常会拉取失败；已在线节点不受影响。",
                 route="/dashboard?focus=platformPreflight",
                 action_label="自动准备镜像分发",
                 category="执行组件镜像分发",
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
-                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
+                auto_action_command=prepare_agent_image_command,
                 action_endpoint="/platform-actions/agent-image-preparations",
                 action_button_label="自动准备执行组件镜像",
             )
@@ -283,7 +303,7 @@ class SystemConfigService:
                 "port": registry_port,
                 "protocol": "TCP",
                 "reason": "执行节点需要从这里拉取 crawler_platform_agent 镜像。",
-                "impact": "远程执行节点需要访问该仓库拉取 执行组件镜像。",
+                "impact": "远程执行节点需要访问该仓库拉取执行组件镜像。",
                 "action": f"在镜像仓库所在服务器放行 {registry_port}/TCP，来源建议限制为执行节点公网 IP；HTTP registry 还要在执行节点 Docker 配置 insecure-registries。",
                 "actionLabel": "放行镜像仓库端口",
                 "verifyCommand": registry_command,
@@ -295,7 +315,7 @@ class SystemConfigService:
                 "agent_registry",
                 "执行组件镜像仓库",
                 "PASS" if registry_probe["ok"] else "WARN",
-                f"执行组件镜像仓库可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认 执行组件镜像仓库可访问：{registry_probe['message']}。请在执行节点验证仓库端口和镜像拉取。",
+                f"执行组件镜像仓库可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认执行组件镜像仓库可访问：{registry_probe['message']}。请在执行节点验证仓库端口和镜像拉取。",
                 False,
                 "在执行节点验证镜像仓库 /v2/ 和 docker pull；如果失败，放行仓库端口，HTTP registry 需要配置 insecure-registries。",
                 {**registry_probe, "image": image, "registry": registry},
@@ -318,38 +338,36 @@ class SystemConfigService:
                 False,
                 "使用平台脚本准备镜像，或在执行节点执行 docker pull 验证镜像是否可拉取。",
                 tag_probe,
-                action=f"平台可自动处理：点击运行总览里的“自动准备执行组件镜像”；处理后验证：{pull_command}",
+                action=f"当前是需确认项，请优先在目标执行节点执行验证命令：{pull_command}。如果验证失败，再由 CI/CD 重新部署或在平台服务器执行兜底命令准备执行组件镜像。",
                 verify_command=pull_command,
-                impact="镜像仓库存在但 tag 未推送时，执行节点仍会在拉取 执行组件镜像阶段失败。",
-                action_label="准备执行组件镜像 tag",
+                impact="镜像仓库存在但 tag 未推送时，执行节点仍会在拉取执行组件镜像阶段失败。",
+                action_label="在节点验证镜像拉取",
                 category="执行组件镜像分发",
                 can_ignore=True,
-                automation_type="PLATFORM_SCRIPT",
-                handler="平台部署脚本",
-                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
-                action_endpoint="/platform-actions/agent-image-preparations",
-                action_button_label="自动准备执行组件镜像",
+                automation_type="NODE_VERIFY",
+                handler="执行节点验证",
+                auto_action_command=prepare_agent_image_command,
+                execution_channel="NODE_VERIFY",
             )
             digest_probe = self._registry_digest_probe(image)
             add_check(
                 "agent_image_digest",
                 "执行组件镜像校验值",
                 "PASS" if digest_probe["ok"] else "WARN",
-                f"执行组件镜像校验值 已记录：{digest_probe.get('digest')}" if digest_probe["ok"] else f"未能确认 执行组件镜像校验值：{digest_probe['message']}。请用平台脚本重新准备镜像或在执行节点 docker pull 后上报 digest。",
+                f"执行组件镜像校验值已记录：{digest_probe.get('digest')}" if digest_probe["ok"] else f"未能确认执行组件镜像校验值：{digest_probe['message']}。请用平台脚本重新准备镜像或在执行节点 docker pull 后上报 digest。",
                 False,
                 "重新准备执行组件镜像后平台会读取 registry manifest digest；执行节点心跳也会上报实际 digest。",
                 digest_probe,
-                action="平台可自动处理：点击运行总览里的“自动准备执行组件镜像”，构建并推送后自动记录 digest。",
+                action="当前是需确认项，平台侧已可继续接入；请在执行节点完成 docker pull 后通过心跳上报实际镜像校验值。如果验证失败，再由 CI/CD 重新部署或使用平台服务器兜底命令重新准备执行组件镜像。",
                 verify_command=pull_command,
                 impact="digest 未确认时仍可接入，但无法证明 tag 内容和当前发布版本完全一致。",
-                action_label="刷新 执行组件镜像校验值",
+                action_label="在节点验证镜像校验值",
                 category="执行组件镜像分发",
                 can_ignore=True,
-                automation_type="PLATFORM_SCRIPT",
-                handler="平台部署脚本",
-                auto_action_command="bash deploy/scripts/prepare-agent-image.sh",
-                action_endpoint="/platform-actions/agent-image-preparations",
-                action_button_label="自动准备执行组件镜像",
+                automation_type="NODE_VERIFY",
+                handler="执行节点验证",
+                auto_action_command=prepare_agent_image_command,
+                execution_channel="NODE_VERIFY",
             )
             security = self._registry_security_posture(registry, registry_port, scheme_hint)
             add_check(
@@ -378,11 +396,13 @@ class SystemConfigService:
             summary = f"平台自检有 {warning_count} 个需确认项，请按提示在执行节点验证；确认通过后可以继续接入。"
         else:
             summary = "平台自检通过，执行节点接入基础条件已具备。"
-        next_action = ""
-        for item in checks:
-            if item["status"] != "PASS":
-                next_action = item.get("action") or item.get("suggestion") or "按提示处理后重新检测。"
-                break
+        if blocking_count:
+            next_action = "先处理平台侧必须处理项；CI/CD 会自动准备执行组件镜像，页面一键处理仅在白名单动作启用时可用。"
+        elif warning_count:
+            next_action = "当前没有必须处理项，可以继续接入执行节点；请在目标执行节点验证平台入口、镜像仓库、镜像拉取和安全组策略。"
+        else:
+            next_action = "平台侧接入条件已就绪，可以继续新增或重新接入执行节点。"
+        node_verify_commands = [str(item.get("verifyCommand") or "") for item in checks if item.get("status") == "WARN" and item.get("verifyCommand")]
         return {
             "readyForRemoteAgent": blocking_count == 0,
             "status": "PASS" if blocking_count == 0 and warning_count == 0 else ("WARN" if blocking_count == 0 else "FAIL"),
@@ -399,6 +419,10 @@ class SystemConfigService:
             "checkSourceLabel": source_label,
             "nextAction": next_action,
             "automationSummary": self._automation_summary(checks),
+            "platformActionEnabled": bool(platform_action_capability.get("enabled")),
+            "platformActionAvailable": bool(platform_action_capability.get("available")),
+            "platformActionCapability": platform_action_capability,
+            "nodeVerificationCommands": node_verify_commands[:6],
         }
 
     @staticmethod
@@ -409,26 +433,94 @@ class SystemConfigService:
         return ""
 
     @staticmethod
+    def _execution_channel(automation_type: str, action_available: bool = False) -> str:
+        if automation_type == "PLATFORM_SCRIPT":
+            return "PAGE_ACTION" if action_available else "CICD_OR_SERVER_SCRIPT"
+        if automation_type == "NODE_INSTALLER_AUTHORIZED":
+            return "NODE_INSTALLER"
+        if automation_type == "CLOUD_CONSOLE":
+            return "CLOUD_CONSOLE"
+        if automation_type == "NODE_VERIFY":
+            return "NODE_VERIFY"
+        return "MANUAL"
+
+    @staticmethod
     def _automation_summary(checks: list[dict]) -> dict:
-        summary = {"platformScript": 0, "nodeInstallerAuthorized": 0, "cloudConsole": 0, "manual": 0}
+        summary = {
+            "ciCdOrServerScript": 0,
+            "pageAction": 0,
+            "platformScript": 0,
+            "nodeInstallerAuthorized": 0,
+            "nodeVerify": 0,
+            "cloudConsole": 0,
+            "manual": 0,
+        }
         for item in checks:
             if item.get("status") == "PASS":
                 continue
             kind = str(item.get("automationType") or "MANUAL")
+            channel = str(item.get("executionChannel") or "")
             if kind == "PLATFORM_SCRIPT":
+                if item.get("actionAvailable"):
+                    summary["pageAction"] += 1
+                else:
+                    summary["ciCdOrServerScript"] += 1
                 summary["platformScript"] += 1
             elif kind == "NODE_INSTALLER_AUTHORIZED":
                 summary["nodeInstallerAuthorized"] += 1
             elif kind == "CLOUD_CONSOLE":
                 summary["cloudConsole"] += 1
+            elif kind == "NODE_VERIFY" or channel == "NODE_VERIFY":
+                summary["nodeVerify"] += 1
             else:
                 summary["manual"] += 1
         return summary
 
+    @staticmethod
+    def _prepare_agent_image_manual_command() -> str:
+        root = str(settings.platform_action_root or "/data/projects/crawler_platform").strip() or "/data/projects/crawler_platform"
+        return f"cd {shlex.quote(root)} && bash deploy/scripts/prepare-agent-image.sh"
+
+    def _platform_action_capability_payload(self) -> dict:
+        enabled = bool(settings.platform_action_enabled)
+        manual_command = self._prepare_agent_image_manual_command()
+        if not enabled:
+            return {
+                "enabled": False,
+                "available": False,
+                "reason": "当前部署未启用页面白名单动作执行能力；CI/CD 仍会在部署阶段自动处理，页面只展示兜底命令和节点验证引导。",
+                "manualCommand": manual_command,
+                "channel": "CICD_OR_SERVER_SCRIPT",
+            }
+
+        root = Path(settings.platform_action_root).resolve()
+        script = root / "deploy" / "scripts" / "prepare-agent-image.sh"
+        if not root.exists():
+            return {"enabled": True, "available": False, "reason": f"平台动作根目录不存在：{root}", "manualCommand": manual_command, "channel": "CICD_OR_SERVER_SCRIPT"}
+        if not script.exists() or not os.access(script, os.R_OK):
+            return {"enabled": True, "available": False, "reason": f"平台动作脚本不存在或不可读：{script}", "manualCommand": manual_command, "channel": "CICD_OR_SERVER_SCRIPT"}
+        if shutil.which("docker") is None:
+            return {"enabled": True, "available": False, "reason": "当前后端运行环境找不到 docker 命令，不能通过页面执行镜像准备动作。", "manualCommand": manual_command, "channel": "CICD_OR_SERVER_SCRIPT"}
+        if not os.getenv("DOCKER_HOST") and not Path("/var/run/docker.sock").exists():
+            return {"enabled": True, "available": False, "reason": "当前后端运行环境未挂载 Docker socket，不能通过页面执行镜像准备动作。", "manualCommand": manual_command, "channel": "CICD_OR_SERVER_SCRIPT"}
+        return {
+            "enabled": True,
+            "available": True,
+            "reason": "页面白名单动作执行能力已启用。",
+            "manualCommand": manual_command,
+            "channel": "PAGE_ACTION",
+        }
 
     def save_preflight_snapshot(self, preflight: dict, user: SysUser | None = None) -> dict:
         previous = self.latest_preflight_snapshot()
         changes = self._snapshot_changes(previous, preflight)
+        preflight["changes"] = changes
+        source = str(preflight.get("checkSource") or "AUTO").upper()
+        if source == "AUTO" and previous and changes == ["状态无变化"]:
+            payload = dict(previous)
+            payload["saved"] = False
+            payload["changes"] = changes
+            return payload
         snapshot = PlatformPreflightSnapshot(
             status=str(preflight.get("status") or "UNKNOWN"),
             blocking_count=int(preflight.get("blockingCount") or 0),
@@ -447,7 +539,6 @@ class SystemConfigService:
         )
         self.db.add(snapshot)
         self.db.flush()
-        preflight["changes"] = changes
         keep_ids = list(self.db.scalars(select(PlatformPreflightSnapshot.snapshot_id).order_by(PlatformPreflightSnapshot.checked_at.desc()).limit(50)).all())
         if keep_ids:
             self.db.execute(delete(PlatformPreflightSnapshot).where(PlatformPreflightSnapshot.snapshot_id.not_in(keep_ids)))
@@ -486,17 +577,17 @@ class SystemConfigService:
         if not previous:
             return ["首次保存平台自检快照"]
         changes: list[str] = []
-        status_label = {"PASS": "通过", "WARN": "需确认", "FAIL": "阻断"}
+        status_label = {"PASS": "通过", "WARN": "需确认", "FAIL": "必须处理"}
         if previous.get("status") != current.get("status"):
             changes.append(f"总体状态：{status_label.get(str(previous.get('status')), previous.get('status'))} -> {status_label.get(str(current.get('status')), current.get('status'))}")
         if int(previous.get("blockingCount") or 0) != int(current.get("blockingCount") or 0):
-            changes.append(f"阻断项：{previous.get('blockingCount', 0)} -> {current.get('blockingCount', 0)}")
+            changes.append(f"必须处理项：{previous.get('blockingCount', 0)} -> {current.get('blockingCount', 0)}")
         if int(previous.get("warningCount") or 0) != int(current.get("warningCount") or 0):
             changes.append(f"需确认项：{previous.get('warningCount', 0)} -> {current.get('warningCount', 0)}")
         if str(previous.get("agentImage") or "") != str(current.get("agentImage") or ""):
             changes.append("执行组件镜像地址已变化")
         if str(previous.get("agentImageDigest") or "") != str(current.get("agentImageDigest") or ""):
-            changes.append("执行组件镜像校验值 已变化")
+            changes.append("执行组件镜像校验值已变化")
         return changes[:8] or ["状态无变化"]
 
     def inspect_control_plane_public_base_url(self, detected_base_url: str = "") -> dict:

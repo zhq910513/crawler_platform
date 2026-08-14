@@ -55,10 +55,16 @@ if "platformPreflight" not in dashboard_page or "平台自检" not in dashboard_
     errors.append("运行总览未作为平台自检主入口展示摘要、详情抽屉和手动重新检测变化")
 if "prepareAgentImageAction" not in dashboard_page or "自动准备执行组件镜像" not in dashboard_page or "受控白名单动作" not in dashboard_page:
     errors.append("运行总览平台自检缺少一键准备执行组件镜像的受控动作入口")
+if "actionAvailable" not in dashboard_page or "fallbackScriptCandidate" not in dashboard_page or "nodeVerificationCommands" not in dashboard_page:
+    errors.append("运行总览必须按真实动作能力区分页面一键处理、平台服务器兜底和执行节点验证")
+if "平台可一键处理" in dashboard_page or "平台脚本可处理" in dashboard_page:
+    errors.append("运行总览不能把脚本兜底能力误展示成页面一键处理能力")
 if "impact" not in system_config_service or "verifyCommand" not in system_config_service or "checkSourceLabel" not in system_config_service:
     errors.append("控制端预检缺少影响范围、验证命令或检测来源")
 if "automationType" not in system_config_service or "autoActionCommand" not in system_config_service or "prepare-agent-image.sh" not in system_config_service or "actionEndpoint" not in system_config_service:
     errors.append("控制端预检未区分可自动处理项，或未给出 执行组件镜像自动准备动作")
+if "platformActionCapability" not in system_config_service or "executionChannel" not in system_config_service or "nodeVerificationCommands" not in system_config_service:
+    errors.append("控制端预检必须返回平台动作能力、执行通道和节点验证命令，避免页面动作口径误导")
 if "--auto-configure-docker-registry" not in text or "insecure-registries" not in text:
     errors.append("Agent 安装脚本缺少授权自动配置 Docker HTTP 私有仓库能力")
 if "grep -F '"'"'"$reg"'"'"'" in text or 'grep -F "\\"$reg\\""' not in text:

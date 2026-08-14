@@ -1089,6 +1089,16 @@ def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> 
     assert '.env.tmp_prepare_agent_image' in prepare_script
     assert 'sed -i "s#^${key}' not in prepare_script
     assert preflight.get('automationSummary', {}).get('platformScript', 0) >= 1
+    assert preflight.get('automationSummary', {}).get('ciCdOrServerScript', 0) >= 1
+    assert preflight.get('automationSummary', {}).get('pageAction', 0) == 0
+    assert preflight.get('platformActionEnabled') is False
+    assert preflight.get('platformActionAvailable') is False
+    assert preflight.get('platformActionCapability', {}).get('available') is False
+    agent_image_check = next(item for item in preflight['checks'] if item['key'] == 'agent_image')
+    assert agent_image_check.get('actionAvailable') is False
+    assert agent_image_check.get('actionUnavailableReason')
+    assert agent_image_check.get('executionChannel') == 'CICD_OR_SERVER_SCRIPT'
+    assert agent_image_check.get('manualCommand', '').startswith('cd ')
     assert any(item.get('verifyCommand') for item in preflight['requiredPorts'])
     assert all(item.get('impact') for item in preflight['requiredPorts'])
     assert preflight.get('checkedAt')
@@ -1103,6 +1113,7 @@ def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> 
     assert any(item.get('actionEndpoint') == '/platform-actions/agent-image-preparations' for item in preflight['checks'])
     unavailable = client.post('/api/v1/platform-actions/agent-image-preparations', headers=headers).json()['data']
     assert unavailable['status'] == 'UNAVAILABLE'
+    assert unavailable['manualCommand'].startswith('cd ')
     assert 'bash deploy/scripts/prepare-agent-image.sh' in unavailable['manualCommand']
 
 

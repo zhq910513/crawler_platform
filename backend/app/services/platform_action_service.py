@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import threading
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ _ACTION_STATE: dict[str, Any] = {
     "finishedAt": "",
     "triggeredBy": "",
     "logs": [],
-    "manualCommand": "bash deploy/scripts/prepare-agent-image.sh",
+    "manualCommand": "cd /data/projects/crawler_platform && bash deploy/scripts/prepare-agent-image.sh",
 }
 
 
@@ -41,7 +42,7 @@ class PlatformActionService:
     def prepare_agent_image(self, user: SysUser) -> dict:
         require_super_admin(user)
         action_key = "prepare_agent_image"
-        manual_command = "bash deploy/scripts/prepare-agent-image.sh"
+        manual_command = self._prepare_agent_image_manual_command()
         capability = self._inspect_prepare_agent_image_capability()
         if not capability["available"]:
             result = {
@@ -129,6 +130,11 @@ class PlatformActionService:
             if _ACTION_LOCK.locked():
                 _ACTION_LOCK.release()
             self._release_db_action_lock(action_key)
+
+    @staticmethod
+    def _prepare_agent_image_manual_command() -> str:
+        root = str(settings.platform_action_root or "/data/projects/crawler_platform").strip() or "/data/projects/crawler_platform"
+        return f"cd {shlex.quote(root)} && bash deploy/scripts/prepare-agent-image.sh"
 
     def _acquire_db_action_lock(self, action_key: str, user: SysUser) -> bool:
         lock_key = f"platform_action.{action_key}.lock"
