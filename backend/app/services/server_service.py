@@ -196,6 +196,7 @@ class ServerService:
         self.db.flush()
         command = self._install_command(raw_token, control_plane_url, payload.replace_existing_agent)
         connectivity_command = f"curl -fsSL {control_plane_url.rstrip('/')}/health && echo"
+        node_verification_script = self._node_verification_script(control_plane_url)
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
         self.db.commit()
         return {
@@ -209,6 +210,7 @@ class ServerService:
             "joinToken": raw_token,
             "installCommand": command,
             "connectivityCommand": connectivity_command,
+            "nodeVerificationScript": node_verification_script,
             "controlPlaneUrl": control_plane_url,
             "joinTokenMasked": self._mask_token(raw_token),
             "installTarget": payload.install_target,
@@ -331,6 +333,34 @@ class ServerService:
             "EXPIRED": "已过期",
             "CANCELLED": "已取消",
         }.get(status or "", status or "未知")
+
+    def _node_verification_script(self, control_plane_url: str) -> str:
+        base = control_plane_url.rstrip('/')
+        lines = [
+            "set -Eeuo pipefail",
+            f"curl -fsSL {base}/health && echo",
+            f"curl -fsSL {base}/api/v1/agent-installers/linux.sh | head -5",
+        ]
+        image = str(settings.crawler_agent_image or "").strip()
+        if image and self._image_has_registry_prefix(image):
+            registry = image.split('/', 1)[0]
+            host = registry.rsplit(':', 1)[0] if ':' in registry else registry
+            port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
+            scheme = "http" if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else "https"
+            lines.extend([
+                f"curl -i {scheme}://{registry}/v2/",
+                f"docker pull {shlex.quote(image)}",
+            ])
+        else:
+            lines.append("echo '执行组件镜像地址尚未配置私有仓库前缀，请先查看运行总览平台自检。'")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _image_has_registry_prefix(image: str) -> bool:
+        first = (image or "").split("/", 1)[0]
+        if not first or first == image:
+            return False
+        return "." in first or ":" in first or first == "localhost"
 
     def _install_command(self, token: str, base: str, replace_existing_agent: bool = False) -> str:
         public_base = base.rstrip("/")

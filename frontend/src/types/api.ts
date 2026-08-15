@@ -505,7 +505,7 @@ export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: b
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
 
 export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number; replaceExistingAgent?: boolean }
-export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; invitationStatus?: string; invitationStatusLabel?: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; controlPlanePreflight?: ControlPlanePreflight; note: string }
+export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; invitationStatus?: string; invitationStatusLabel?: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; nodeVerificationScript?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; controlPlanePreflight?: ControlPlanePreflight; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
 
 export interface ProjectPublishPipelineRequest { companyId: number; serverIds: number[]; repositoryUrl: string; refName?: string }
@@ -741,7 +741,13 @@ export interface ControlPlanePreflight {
   platformActionEnabled?: boolean
   platformActionAvailable?: boolean
   platformActionCapability?: { enabled: boolean; available: boolean; reason?: string; manualCommand?: string; channel?: string }
-  nodeVerificationCommands?: string[]
+  securityGroupChecklist?: {
+    title?: string
+    summary?: string
+    controlPlaneUrl?: string
+    rules: Array<{ name: string; protocol: string; port: number; source: string; suggestion: string; risk?: string }>
+    notes?: string[]
+  }
 }
 
 export interface PlatformPreflightSnapshot {

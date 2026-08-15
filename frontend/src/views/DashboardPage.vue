@@ -63,15 +63,15 @@
             </div>
           </template>
           <template v-else-if="preflight.status === 'WARN'">
-            <div class="action-problem-title">平台侧没有必须处理项</div>
-            <div class="action-problem-line"><strong>下一步：</strong>{{ preflight.nextAction || '请在目标执行节点验证平台入口、镜像仓库和镜像拉取。' }}</div>
-            <div class="node-verify-box">
-              <div><strong>推荐动作：</strong>复制执行节点验证脚本，在目标执行节点验证。</div>
-              <div class="muted">当前状态是“需确认”，不是平台侧部署失败；验证失败后再处理安全组、镜像仓库或重新触发 CI/CD。</div>
-              <div v-if="nodeVerificationScript" class="command-row"><span>执行节点验证脚本</span><el-button size="small" @click="copyText(nodeVerificationScript)">复制脚本</el-button></div>
-              <pre v-if="nodeVerificationScript" class="verify-command verify-script">{{ nodeVerificationScript }}</pre>
+            <div class="action-problem-title">平台服务器外部访问策略待确认</div>
+            <div class="action-problem-line"><strong>下一步：</strong>{{ preflight.nextAction || '请确认云服务器安全组、防火墙和内置镜像仓库访问策略。' }}</div>
+            <div class="security-checklist-box">
+              <div><strong>推荐动作：</strong>复制平台服务器安全组规则清单，在云控制台和服务器防火墙中确认。</div>
+              <div class="muted">当前状态是“需确认”，不是平台侧部署失败；平台无法在未授权情况下自动修改云安全组。</div>
+              <div v-if="securityGroupChecklistText" class="command-row"><span>安全组规则清单</span><el-button size="small" @click="copyText(securityGroupChecklistText)">复制清单</el-button></div>
+              <pre v-if="securityGroupChecklistText" class="verify-command verify-script">{{ securityGroupChecklistText }}</pre>
               <div class="auto-buttons">
-                <el-button v-if="nodeVerificationScript" type="primary" plain @click="copyText(nodeVerificationScript)">复制脚本</el-button>
+                <el-button v-if="securityGroupChecklistText" type="primary" plain @click="copyText(securityGroupChecklistText)">复制清单</el-button>
                 <el-button @click="detailVisible = true">查看确认项</el-button>
               </div>
             </div>
@@ -87,8 +87,6 @@
           <div v-if="preflight.automationSummary" class="automation-pills">
             <el-tag v-if="preflight.automationSummary.pageAction" size="small" type="success" effect="light">页面一键可处理 {{ preflight.automationSummary.pageAction }} 项</el-tag>
             <el-tag v-if="preflight.automationSummary.ciCdOrServerScript" size="small" type="info" effect="light">CI/CD 或平台服务器兜底处理 {{ preflight.automationSummary.ciCdOrServerScript }} 项</el-tag>
-            <el-tag v-if="preflight.automationSummary.nodeVerify" size="small" type="warning" effect="light">需执行节点验证 {{ preflight.automationSummary.nodeVerify }} 项</el-tag>
-            <el-tag v-if="preflight.automationSummary.nodeInstallerAuthorized" size="small" type="warning" effect="light">节点授权可处理 {{ preflight.automationSummary.nodeInstallerAuthorized }} 项</el-tag>
             <el-tag v-if="preflight.automationSummary.cloudConsole" size="small" type="danger" effect="light">需云控制台处理 {{ preflight.automationSummary.cloudConsole }} 项</el-tag>
           </div>
         </div>
@@ -143,6 +141,20 @@
           <div class="section-title-small">最近检测变化</div>
           <div v-if="preflight.agentImageDigest" class="field-block"><strong>执行组件镜像校验值：</strong>{{ preflight.agentImageDigest }}</div>
           <div v-for="item in preflight.changes || []" :key="item" class="change-row">{{ normalizePreflightText(item) }}</div>
+        </div>
+
+        <div v-if="preflight.securityGroupChecklist?.rules?.length" class="drawer-section">
+          <div class="section-title-small">平台服务器安全组 / 防火墙规则</div>
+          <div class="field-block">{{ preflight.securityGroupChecklist.summary }}</div>
+          <div class="drawer-list">
+            <div v-for="rule in preflight.securityGroupChecklist.rules" :key="`${rule.name}-${rule.port}`" class="drawer-item">
+              <div class="drawer-item-title">{{ rule.name }}：{{ rule.protocol }}/{{ rule.port }}</div>
+              <div class="field-block"><strong>建议来源：</strong>{{ rule.source }}</div>
+              <div class="field-block"><strong>建议：</strong>{{ rule.suggestion }}</div>
+              <div class="field-block"><strong>风险：</strong>{{ rule.risk }}</div>
+            </div>
+          </div>
+          <div class="auto-buttons"><el-button size="small" @click="copyText(securityGroupChecklistText)">复制规则清单</el-button></div>
         </div>
 
         <div class="drawer-section">
@@ -221,13 +233,23 @@ const topProblems = computed(() => [...problemChecks.value].sort((a, b) => statu
 const hiddenProblemCount = computed(() => Math.max(0, problemChecks.value.length - topProblems.value.length))
 const autoFixCandidate = computed(() => blockingProblems.value.find((item) => item.actionEndpoint && item.actionAvailable && item.automationType === 'PLATFORM_SCRIPT'))
 const fallbackScriptCandidate = computed(() => blockingProblems.value.find((item) => item.automationType === 'PLATFORM_SCRIPT' && !item.actionAvailable))
-const nodeVerificationCommands = computed(() => {
-  const raw = preflight.value?.nodeVerificationCommands?.length ? preflight.value.nodeVerificationCommands : problemChecks.value.filter((item) => item.status === 'WARN' && item.verifyCommand).map((item) => item.verifyCommand || '')
-  return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter(Boolean)))
-})
-const nodeVerificationScript = computed(() => {
-  if (!nodeVerificationCommands.value.length) return ''
-  return ['set -Eeuo pipefail', ...nodeVerificationCommands.value].join('\n')
+const securityGroupChecklistText = computed(() => {
+  const checklist = preflight.value?.securityGroupChecklist
+  if (!checklist?.rules?.length) return ''
+  const lines = [checklist.title || '平台服务器安全组 / 防火墙规则清单']
+  if (checklist.controlPlaneUrl) lines.push(`平台入口：${checklist.controlPlaneUrl}`)
+  lines.push('')
+  for (const rule of checklist.rules) {
+    lines.push(`- ${rule.name}: ${rule.protocol}/${rule.port}`)
+    lines.push(`  建议来源：${rule.source}`)
+    lines.push(`  建议：${rule.suggestion}`)
+    if (rule.risk) lines.push(`  风险：${rule.risk}`)
+  }
+  if (checklist.notes?.length) {
+    lines.push('')
+    for (const note of checklist.notes) lines.push(`备注：${note}`)
+  }
+  return lines.join('\n')
 })
 const preflightTitle = computed(() => {
   if (!preflight.value) return '等待检测'
@@ -354,7 +376,7 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .automation-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .auto-action-box { margin-top: 12px; padding: 13px; border: 1px solid #bbf7d0; border-radius: 14px; background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%); }
 .fallback-action-box { margin-top: 12px; padding: 13px; border: 1px solid #fed7aa; border-radius: 14px; background: linear-gradient(135deg, #fff7ed 0%, #ffffff 100%); }
-.node-verify-box { margin-top: 12px; padding: 13px; border: 1px solid #bfdbfe; border-radius: 14px; background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%); }
+.security-checklist-box, .node-verify-box { margin-top: 12px; padding: 13px; border: 1px solid #bfdbfe; border-radius: 14px; background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%); }
 .auto-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .action-result { margin-top: 12px; padding: 12px; border-radius: 14px; border: 1px solid #e2e8f0; background: #f8fafc; }
 .result-success { border-color: #bbf7d0; background: #f0fdf4; }

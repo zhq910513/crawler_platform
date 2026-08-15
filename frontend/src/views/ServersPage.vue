@@ -121,8 +121,8 @@
           <el-tag type="success" effect="light">有效期：{{ formatTime(joinResult.expiresAt) }}</el-tag>
         </div>
         <div class="command-block">
-          <div class="command-title"><span>第一步：在目标节点验证连通性</span><el-button size="small" @click="copyText(joinResult.connectivityCommand || '')">复制</el-button></div>
-          <pre>{{ joinResult.connectivityCommand }}</pre>
+          <div class="command-title"><span>第一步：在目标节点执行完整预检</span><el-button size="small" @click="copyText(joinResult.nodeVerificationScript || joinResult.connectivityCommand || '')">复制</el-button></div>
+          <pre>{{ joinResult.nodeVerificationScript || joinResult.connectivityCommand }}</pre>
         </div>
         <div class="command-block">
           <div class="command-title"><span>第二步：安装并接入节点</span><el-button size="small" type="primary" @click="copyText(joinResult.installCommand)">复制</el-button></div>

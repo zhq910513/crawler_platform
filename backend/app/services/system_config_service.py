@@ -175,8 +175,8 @@ class SystemConfigService:
                 "port": port,
                 "protocol": "TCP",
                 "reason": "执行节点下载安装脚本、调用 /health、上报心跳和领取任务。",
-                "impact": "执行节点需要通过这个入口下载安装脚本、上报心跳和领取任务。",
-                "action": f"在云防火墙/安全组放行 {port}/TCP，来源建议限制为执行节点公网 IP；处理后点击运行总览的重新检测。",
+                "impact": "平台入口需要对执行节点开放，用于下载安装脚本、上报心跳和领取任务。",
+                "action": f"在云防火墙/安全组确认 {port}/TCP 的入站规则；来源建议限制为管理员、业务访问方和执行节点公网 IP，处理后点击运行总览的重新检测。",
                 "actionLabel": "放行平台入口端口",
                 "verifyCommand": health_command,
                 "automationType": "CLOUD_CONSOLE",
@@ -204,13 +204,13 @@ class SystemConfigService:
                     "WARN",
                     "当前地址看起来是内网地址，只有同一内网/VPN 内的执行节点才能访问。",
                     False,
-                    "如果执行节点不在同一网络，请改成公网 IP 或域名；如果在同一内网，请在执行节点执行验证命令确认。",
+                    "如果执行节点不在同一网络，请改成公网 IP 或域名；如果这是内网专用部署，请确认平台服务器入口端口仅对内网/VPN 开放。",
                     {"host": host},
-                    action=f"操作员在目标执行节点执行：{health_command}",
+                    action="操作员确认该控制端地址的网络边界：公网节点请配置公网 IP/域名，内网节点请确认 VPN/内网路由和入口端口策略。",
                     verify_command=health_command,
                     impact="如果执行节点不在同一内网/VPN，会无法下载脚本和上报心跳。",
                     route="/settings?focus=controlPlaneUrl",
-                    action_label="在节点验证连通性",
+                    action_label="确认入口网络策略",
                     category="平台访问入口",
                     can_ignore=True,
                 )
@@ -224,12 +224,12 @@ class SystemConfigService:
                 "PASS" if health["ok"] else "WARN",
                 "控制端 /health 可访问。" if health["ok"] else f"控制端本机未能确认 /health 可访问：{health['message']}。这可能是云服务器 NAT 回环或容器网络限制，不代表执行节点一定不可访问。",
                 False,
-                "请在目标执行节点执行连通性验证命令；如果失败，再检查平台服务器安全组、防火墙、端口映射和 Web 容器。",
+                "请确认平台服务器入口端口、安全组、防火墙和 Web/API 容器端口映射；控制端自测公网地址失败可能是 NAT 回环限制，不等于外部不可访问。",
                 health,
-                action=f"操作员在目标执行节点执行：{health_command}；失败时放行平台入口端口并确认 docker compose 端口映射。",
+                action=f"操作员在云控制台或服务器防火墙确认平台入口 {port}/TCP 已按最小来源放行，并确认 docker compose 端口映射和 Web 容器健康。",
                 verify_command=health_command,
-                impact="如果该验证在目标节点失败，Agent 后续心跳、领取任务都会失败。",
-                action_label="在节点验证 /health",
+                impact="如果平台入口端口未正确开放，执行节点后续心跳、领取任务都会失败。",
+                action_label="确认平台入口端口",
                 category="平台访问入口",
                 can_ignore=True,
             )
@@ -238,14 +238,14 @@ class SystemConfigService:
                 "agent_installer",
                 "安装脚本地址",
                 "PASS" if installer["ok"] else "WARN",
-                "Agent 安装脚本可下载。" if installer["ok"] else f"控制端本机未能确认安装脚本可下载：{installer['message']}。请以执行节点外部验证结果为准。",
+                "安装脚本可下载。" if installer["ok"] else f"控制端本机未能确认安装脚本可下载：{installer['message']}。请确认平台入口端口、反向代理和安全组策略。",
                 False,
-                "请在目标执行节点执行安装脚本下载验证命令；如果失败，再检查 /api/v1/agent-installers/linux.sh 是否能通过控制端公网地址访问。",
+                "请确认平台入口端口和反向代理允许访问 /api/v1/agent-installers/linux.sh；控制端本机自测失败可能是公网回环限制。",
                 installer,
-                action=f"操作员在目标执行节点执行：{installer_command}；失败时检查平台入口端口、安全组和 Web/API 反向代理。",
+                action="操作员确认平台入口端口、安全组、防火墙和 Web/API 反向代理已经放行安装脚本下载路径。",
                 verify_command=installer_command,
                 impact="安装脚本不可下载时，执行节点无法完成自动接入。",
-                action_label="在节点验证安装脚本",
+                action_label="确认安装脚本入口",
                 category="平台访问入口",
                 can_ignore=True,
             )
@@ -298,13 +298,13 @@ class SystemConfigService:
             registry_command = f"curl -i {scheme_hint}://{registry}/v2/"
             pull_command = f"docker pull {image}"
             required_ports.append({
-                "name": "执行组件镜像仓库",
+                "name": "平台镜像仓库公网访问",
                 "host": registry_host,
                 "port": registry_port,
                 "protocol": "TCP",
-                "reason": "执行节点需要从这里拉取 crawler_platform_agent 镜像。",
-                "impact": "远程执行节点需要访问该仓库拉取执行组件镜像。",
-                "action": f"在镜像仓库所在服务器放行 {registry_port}/TCP，来源建议限制为执行节点公网 IP；HTTP registry 还要在执行节点 Docker 配置 insecure-registries。",
+                "reason": "执行节点需要从平台镜像仓库拉取执行组件镜像。",
+                "impact": "平台镜像仓库需要对执行节点来源 IP 开放，用于拉取执行组件镜像。",
+                "action": f"在平台服务器或云安全组确认 {registry_port}/TCP 仅对执行节点来源 IP 放行；HTTP registry 的执行节点 Docker 配置由接入安装流程处理。",
                 "actionLabel": "放行镜像仓库端口",
                 "verifyCommand": registry_command,
                 "automationType": "CLOUD_CONSOLE",
@@ -313,21 +313,21 @@ class SystemConfigService:
             registry_probe = self._registry_probe(registry)
             add_check(
                 "agent_registry",
-                "执行组件镜像仓库",
+                "平台镜像仓库公网访问",
                 "PASS" if registry_probe["ok"] else "WARN",
-                f"执行组件镜像仓库可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认执行组件镜像仓库可访问：{registry_probe['message']}。请在执行节点验证仓库端口和镜像拉取。",
+                f"平台镜像仓库公网访问可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认平台镜像仓库公网访问可访问：{registry_probe['message']}。请确认平台服务器 registry 容器、5000/TCP 监听、云安全组和本机防火墙策略。",
                 False,
-                "在执行节点验证镜像仓库 /v2/ 和 docker pull；如果失败，放行仓库端口，HTTP registry 需要配置 insecure-registries。",
+                "确认平台服务器 registry 容器、本机 5000/TCP 监听、云安全组和防火墙规则；HTTP registry 的节点侧 Docker 配置在执行节点接入流程中处理。",
                 {**registry_probe, "image": image, "registry": registry},
-                action=f"操作员先在云安全组放行 {registry_port}/TCP；执行节点安装脚本可在授权后自动配置 Docker insecure-registries，安装命令追加 --auto-configure-docker-registry。",
+                action=f"操作员在云控制台确认平台服务器 {registry_port}/TCP 仅对执行节点来源 IP 放行；不要对全部公网开放。",
                 verify_command=registry_command,
                 impact="镜像仓库不可达时，远程执行节点无法启动平台执行组件；已在线节点不受影响。",
-                action_label="验证镜像仓库",
+                action_label="确认仓库端口策略",
                 category="执行组件镜像分发",
                 can_ignore=True,
-                automation_type="NODE_INSTALLER_AUTHORIZED",
-                handler="执行节点安装脚本",
-                auto_action_command="在执行节点安装命令后追加 --auto-configure-docker-registry",
+                automation_type="CLOUD_CONSOLE",
+                handler="云控制台",
+                auto_action_command="",
             )
             configured_digest = str(settings.crawler_agent_image_digest or "").strip()
             if configured_digest:
@@ -344,18 +344,19 @@ class SystemConfigService:
                 tag_status,
                 tag_message,
                 False,
-                "部署阶段已记录镜像校验值时，平台视为镜像版本已准备；否则在执行节点执行 docker pull 验证镜像是否可拉取。",
+                "部署阶段已记录镜像校验值时，平台视为镜像版本已准备；否则重新触发 CI/CD 或在平台服务器执行兜底命令确认镜像版本。",
                 tag_probe,
-                action=f"当前是需确认项，请优先在目标执行节点执行验证命令：{pull_command}。如果验证失败，再由 CI/CD 重新部署或在平台服务器执行兜底命令准备执行组件镜像。",
-                verify_command=pull_command if tag_status == "WARN" else "",
-                impact="镜像仓库存在但版本未推送时，执行节点仍会在拉取执行组件镜像阶段失败。",
-                action_label="在节点验证镜像拉取",
+                action="CI/CD 会在部署阶段准备执行组件镜像；如版本未确认，请重新触发 CI/CD 或在平台服务器执行兜底命令准备镜像。",
+                verify_command="",
+                impact="镜像仓库存在但版本未推送时，新增执行节点会在拉取执行组件镜像阶段失败。",
+                action_label="重新准备执行组件镜像",
                 category="执行组件镜像分发",
                 can_ignore=True,
-                automation_type="NODE_VERIFY",
-                handler="执行节点验证",
+                automation_type="PLATFORM_SCRIPT",
+                handler="平台部署脚本",
                 auto_action_command=prepare_agent_image_command,
-                execution_channel="NODE_VERIFY",
+                action_endpoint="/platform-actions/agent-image-preparations" if tag_status == "FAIL" else "",
+                action_button_label="自动准备执行组件镜像" if tag_status == "FAIL" else "",
             )
             if configured_digest:
                 digest_probe = {"ok": True, "source": "configured_digest", "digest": configured_digest}
@@ -373,21 +374,22 @@ class SystemConfigService:
                 False,
                 "部署阶段会读取 registry manifest 校验值；执行节点心跳也会上报实际运行镜像校验值。",
                 digest_probe,
-                action="当前是需确认项，平台侧已可继续接入；请在执行节点完成 docker pull 后通过心跳上报实际镜像校验值。如果验证失败，再由 CI/CD 重新部署或使用平台服务器兜底命令重新准备执行组件镜像。",
-                verify_command=pull_command if digest_status == "WARN" else "",
+                action="CI/CD 会在部署阶段读取 registry manifest 校验值；如校验值未确认，请重新触发 CI/CD 或在平台服务器执行兜底命令准备镜像。",
+                verify_command="",
                 impact="未记录校验值时仍可接入，但无法证明镜像版本内容和当前发布版本完全一致。",
-                action_label="在节点验证镜像校验值",
+                action_label="重新准备执行组件镜像",
                 category="执行组件镜像分发",
                 can_ignore=True,
-                automation_type="NODE_VERIFY",
-                handler="执行节点验证",
+                automation_type="PLATFORM_SCRIPT",
+                handler="平台部署脚本",
                 auto_action_command=prepare_agent_image_command,
-                execution_channel="NODE_VERIFY",
+                action_endpoint="/platform-actions/agent-image-preparations" if digest_status == "FAIL" else "",
+                action_button_label="自动准备执行组件镜像" if digest_status == "FAIL" else "",
             )
             security = self._registry_security_posture(registry, registry_port, scheme_hint)
             add_check(
                 "agent_registry_security",
-                "内置镜像仓库安全",
+                "内置镜像仓库安全策略",
                 security["status"],
                 security["message"],
                 False,
@@ -408,20 +410,16 @@ class SystemConfigService:
         if blocking_count:
             summary = f"平台自检发现 {blocking_count} 个必须处理项，按提示处理后点击重新检测。"
         elif warning_count:
-            summary = f"平台侧没有必须处理项，可以生成接入命令；仍有 {warning_count} 个外部条件建议在目标执行节点验证。"
+            summary = f"平台侧没有必须处理项，可以生成接入命令；仍有 {warning_count} 个平台服务器外部访问策略需要超管确认。"
         else:
             summary = "平台自检通过，执行节点接入基础条件已具备。"
         if blocking_count:
             next_action = "先处理平台侧必须处理项；CI/CD 会自动准备执行组件镜像，页面一键处理仅在白名单动作启用时可用。"
         elif warning_count:
-            next_action = "先复制执行节点验证脚本；验证通过后再正式接入或运行任务。"
+            next_action = "请确认云服务器安全组、防火墙和内置镜像仓库访问策略；确认后可继续新增或重新接入执行节点。"
         else:
             next_action = "平台侧接入条件已就绪，可以继续新增或重新接入执行节点。"
-        node_verify_commands: list[str] = []
-        for item in checks:
-            command = str(item.get("verifyCommand") or "").strip()
-            if item.get("status") == "WARN" and command and command not in node_verify_commands:
-                node_verify_commands.append(command)
+        security_group_checklist = self._security_group_checklist(base, required_ports, checks)
         return {
             "readyForRemoteAgent": blocking_count == 0,
             "status": "PASS" if blocking_count == 0 and warning_count == 0 else ("WARN" if blocking_count == 0 else "FAIL"),
@@ -441,7 +439,50 @@ class SystemConfigService:
             "platformActionEnabled": bool(platform_action_capability.get("enabled")),
             "platformActionAvailable": bool(platform_action_capability.get("available")),
             "platformActionCapability": platform_action_capability,
-            "nodeVerificationCommands": node_verify_commands[:6],
+            "securityGroupChecklist": security_group_checklist,
+        }
+
+    @staticmethod
+    def _security_group_checklist(control_plane_url: str, required_ports: list[dict], checks: list[dict]) -> dict:
+        rules: list[dict] = []
+        seen: set[tuple[str, int, str]] = set()
+        for item in required_ports:
+            port = int(item.get("port") or 0)
+            if not port:
+                continue
+            name = str(item.get("name") or "平台端口")
+            protocol = str(item.get("protocol") or "TCP")
+            key = (name, port, protocol)
+            if key in seen:
+                continue
+            seen.add(key)
+            is_registry = port == int(settings.crawler_agent_registry_port or 5000) or "镜像" in name or "registry" in name.lower()
+            rules.append({
+                "name": name,
+                "protocol": protocol,
+                "port": port,
+                "source": "执行节点公网 IP" if is_registry else "管理员、业务访问方和执行节点公网 IP",
+                "suggestion": "仅允许执行节点公网 IP 访问，不建议 0.0.0.0/0" if is_registry else "按实际访问方最小范围放行，不建议长期全网开放",
+                "risk": "内置镜像仓库未启用认证或 TLS 时，全网开放会带来未授权拉取或污染镜像风险。" if is_registry else "入口端口过度开放会扩大平台管理面暴露范围。",
+            })
+        if not any(int(item.get("port") or 0) == 22 for item in rules):
+            rules.append({
+                "name": "SSH / CI/CD 入口",
+                "protocol": "TCP",
+                "port": 22,
+                "source": "管理员 IP / CI/CD 来源",
+                "suggestion": "仅允许可信运维来源访问；不建议对全部公网开放。",
+                "risk": "SSH 全网开放会增加暴力破解和误操作风险。",
+            })
+        return {
+            "title": "平台服务器安全组 / 防火墙规则清单",
+            "summary": "请在云服务器控制台和本机防火墙确认以下入站规则；平台无法在未授权情况下自动修改云安全组。",
+            "controlPlaneUrl": control_plane_url,
+            "rules": rules,
+            "notes": [
+                "平台自检以控制端服务器为视角：确认本机服务、端口监听、镜像仓库和外部访问策略。",
+                "执行节点连通性验证已放到执行节点接入流程；新增节点时再在目标节点执行验证脚本。",
+            ],
         }
 
     @staticmethod
@@ -459,8 +500,6 @@ class SystemConfigService:
             return "NODE_INSTALLER"
         if automation_type == "CLOUD_CONSOLE":
             return "CLOUD_CONSOLE"
-        if automation_type == "NODE_VERIFY":
-            return "NODE_VERIFY"
         return "MANUAL"
 
     @staticmethod
@@ -489,8 +528,6 @@ class SystemConfigService:
                 summary["nodeInstallerAuthorized"] += 1
             elif kind == "CLOUD_CONSOLE":
                 summary["cloudConsole"] += 1
-            elif kind == "NODE_VERIFY" or channel == "NODE_VERIFY":
-                summary["nodeVerify"] += 1
             else:
                 summary["manual"] += 1
         return summary
@@ -507,7 +544,7 @@ class SystemConfigService:
             return {
                 "enabled": False,
                 "available": False,
-                "reason": "当前部署未启用页面白名单动作执行能力；CI/CD 仍会在部署阶段自动处理，页面只展示兜底命令和节点验证引导。",
+                "reason": "当前部署未启用页面白名单动作执行能力；CI/CD 仍会在部署阶段自动处理，页面只展示平台服务器兜底命令和安全组确认引导。",
                 "manualCommand": manual_command,
                 "channel": "CICD_OR_SERVER_SCRIPT",
             }

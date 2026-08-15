@@ -162,8 +162,8 @@
         <div class="install-title">接入命令已生成</div>
         <div class="muted">请在目标节点执行下面命令，节点上线后会自动出现在本页下拉列表。</div>
         <div class="command-block">
-          <div class="command-title"><span>连通性验证</span><el-button size="small" @click="copyText(joinResult.connectivityCommand || '')">复制</el-button></div>
-          <pre>{{ joinResult.connectivityCommand }}</pre>
+          <div class="command-title"><span>目标节点完整预检</span><el-button size="small" @click="copyText(joinResult.nodeVerificationScript || joinResult.connectivityCommand || '')">复制</el-button></div>
+          <pre>{{ joinResult.nodeVerificationScript || joinResult.connectivityCommand }}</pre>
         </div>
         <div class="command-block">
           <div class="command-title"><span>安装并接入</span><el-button size="small" type="primary" @click="copyText(joinResult.installCommand)">复制</el-button></div>
