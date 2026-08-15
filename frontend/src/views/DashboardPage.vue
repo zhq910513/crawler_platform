@@ -22,12 +22,12 @@
           <div class="section-kicker">平台自检</div>
           <h3>{{ preflightTitle }}</h3>
           <p>{{ preflight.summary }}</p>
-          <div class="check-meta">
-            <el-tag :type="preflightTag(preflight.status)" effect="light">{{ preflightLabel(preflight.status) }}</el-tag>
-            <span>必须处理 {{ preflight.blockingCount }}</span>
-            <span>需确认 {{ preflight.warningCount }}</span>
-            <span>检测来源：{{ preflight.checkSourceLabel || '页面自动检测' }}</span>
-            <span v-if="preflight.checkedAt">检测时间：{{ formatTime(preflight.checkedAt) }}</span>
+          <div class="check-meta status-chip-grid">
+            <div class="status-chip"><span class="chip-label">状态</span><el-tag :type="preflightTag(preflight.status)" effect="light">{{ preflightLabel(preflight.status) }}</el-tag></div>
+            <div class="status-chip"><span class="chip-label">必须处理</span><strong>{{ preflight.blockingCount }}</strong></div>
+            <div class="status-chip"><span class="chip-label">需确认</span><strong>{{ preflight.warningCount }}</strong></div>
+            <div class="status-chip"><span class="chip-label">来源</span><strong>{{ preflight.checkSourceLabel || '页面自动检测' }}</strong></div>
+            <div v-if="preflight.checkedAt" class="status-chip"><span class="chip-label">时间</span><strong>{{ formatTime(preflight.checkedAt) }}</strong></div>
           </div>
         </div>
         <div class="platform-check-actions">
@@ -66,10 +66,12 @@
             <div class="action-problem-title">平台侧没有必须处理项</div>
             <div class="action-problem-line"><strong>下一步：</strong>{{ preflight.nextAction || '请在目标执行节点验证平台入口、镜像仓库和镜像拉取。' }}</div>
             <div class="node-verify-box">
-              <div><strong>推荐动作：</strong>复制执行节点验证命令，在目标执行节点验证。</div>
-              <div class="muted">当前状态是“需确认”，不是平台侧部署失败；验证失败后再处理安全组、Docker registry 或重新触发 CI/CD。</div>
+              <div><strong>推荐动作：</strong>复制执行节点验证脚本，在目标执行节点验证。</div>
+              <div class="muted">当前状态是“需确认”，不是平台侧部署失败；验证失败后再处理安全组、镜像仓库或重新触发 CI/CD。</div>
+              <div v-if="nodeVerificationScript" class="command-row"><span>执行节点验证脚本</span><el-button size="small" @click="copyText(nodeVerificationScript)">复制脚本</el-button></div>
+              <pre v-if="nodeVerificationScript" class="verify-command verify-script">{{ nodeVerificationScript }}</pre>
               <div class="auto-buttons">
-                <el-button v-if="nodeVerificationCommands.length" type="primary" plain @click="copyText(nodeVerificationCommands.join(' && '))">复制执行节点验证命令</el-button>
+                <el-button v-if="nodeVerificationScript" type="primary" plain @click="copyText(nodeVerificationScript)">复制脚本</el-button>
                 <el-button @click="detailVisible = true">查看确认项</el-button>
               </div>
             </div>
@@ -100,6 +102,7 @@
                 <div class="muted">{{ item.impact || item.message }}</div>
               </div>
             </div>
+            <div v-if="hiddenProblemCount > 0" class="more-problems">还有 {{ hiddenProblemCount }} 项，点击“查看详情”查看完整检查结果。</div>
           </div>
           <el-empty v-else description="平台接入基础条件已就绪" />
         </div>
@@ -107,7 +110,7 @@
 
       <div v-if="lastChanges.length" class="change-card">
         <div class="section-title-small">本次检测变化</div>
-        <div v-for="item in lastChanges" :key="item" class="change-row">{{ item }}</div>
+        <div v-for="item in lastChanges" :key="item" class="change-row">{{ normalizePreflightText(item) }}</div>
       </div>
     </div>
 
@@ -118,8 +121,8 @@
           <el-tag size="small" :type="preflightTag(item.status)" effect="light">{{ preflightLabel(item.status) }}</el-tag>
           <div class="history-main">
             <div><strong>{{ item.checkSourceLabel }}</strong> · {{ formatTime(item.checkedAt || item.createdAt || '') }}</div>
-            <div class="muted">必须处理 {{ item.blockingCount }} · 需确认 {{ item.warningCount }} · {{ item.summary }}</div>
-            <div v-if="item.changes?.length" class="history-changes">{{ item.changes.slice(0, 3).join('；') }}</div>
+            <div class="muted">必须处理 {{ item.blockingCount }} · 需确认 {{ item.warningCount }} · {{ normalizePreflightText(item.summary) }}</div>
+            <div v-if="item.changes?.length" class="history-changes">{{ item.changes.slice(0, 3).map(normalizePreflightText).join('；') }}</div>
           </div>
         </div>
       </div>
@@ -139,7 +142,7 @@
         <div v-if="preflight.agentImageDigest || preflight.changes?.length" class="drawer-section">
           <div class="section-title-small">最近检测变化</div>
           <div v-if="preflight.agentImageDigest" class="field-block"><strong>执行组件镜像校验值：</strong>{{ preflight.agentImageDigest }}</div>
-          <div v-for="item in preflight.changes || []" :key="item" class="change-row">{{ item }}</div>
+          <div v-for="item in preflight.changes || []" :key="item" class="change-row">{{ normalizePreflightText(item) }}</div>
         </div>
 
         <div class="drawer-section">
@@ -214,20 +217,35 @@ const cards = computed(() => [
 ])
 const problemChecks = computed<ControlPlanePreflightCheck[]>(() => (preflight.value?.checks || []).filter((item) => item.status !== 'PASS'))
 const blockingProblems = computed(() => problemChecks.value.filter((item) => item.status === 'FAIL'))
-const topProblems = computed(() => [...problemChecks.value].sort((a, b) => statusWeight(a.status) - statusWeight(b.status)).slice(0, 3))
+const topProblems = computed(() => [...problemChecks.value].sort((a, b) => statusWeight(a.status) - statusWeight(b.status)).slice(0, 6))
+const hiddenProblemCount = computed(() => Math.max(0, problemChecks.value.length - topProblems.value.length))
 const autoFixCandidate = computed(() => blockingProblems.value.find((item) => item.actionEndpoint && item.actionAvailable && item.automationType === 'PLATFORM_SCRIPT'))
 const fallbackScriptCandidate = computed(() => blockingProblems.value.find((item) => item.automationType === 'PLATFORM_SCRIPT' && !item.actionAvailable))
-const nodeVerificationCommands = computed(() => preflight.value?.nodeVerificationCommands?.length ? preflight.value.nodeVerificationCommands : problemChecks.value.filter((item) => item.status === 'WARN' && item.verifyCommand).map((item) => item.verifyCommand || ''))
+const nodeVerificationCommands = computed(() => {
+  const raw = preflight.value?.nodeVerificationCommands?.length ? preflight.value.nodeVerificationCommands : problemChecks.value.filter((item) => item.status === 'WARN' && item.verifyCommand).map((item) => item.verifyCommand || '')
+  return Array.from(new Set(raw.map((item) => String(item || '').trim()).filter(Boolean)))
+})
+const nodeVerificationScript = computed(() => {
+  if (!nodeVerificationCommands.value.length) return ''
+  return ['set -Eeuo pipefail', ...nodeVerificationCommands.value].join('\n')
+})
 const preflightTitle = computed(() => {
   if (!preflight.value) return '等待检测'
   if (preflight.value.status === 'FAIL') return '平台还有必须处理项'
   if (preflight.value.status === 'WARN') return '平台有需要确认的事项'
   return '平台接入条件已就绪'
 })
-const preflightIcon = computed(() => preflight.value?.status === 'PASS' ? '✓' : (preflight.value?.status === 'FAIL' ? '!' : '?'))
+const preflightIcon = computed(() => preflight.value?.status === 'PASS' ? '✓' : (preflight.value?.status === 'FAIL' ? '!' : 'i'))
 function statusWeight(status: string) { if (status === 'FAIL') return 0; if (status === 'WARN') return 1; return 2 }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
 function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '必须处理'; return '需确认' }
+function normalizePreflightText(value?: string) {
+  return String(value || '')
+    .replace(/阻断项/g, '必须处理项')
+    .replace(/阻断/g, '必须处理')
+    .replace(/Agent 容器/g, '执行组件容器')
+    .replace(/Agent/g, '执行组件')
+}
 function comparePreflight(before?: ControlPlanePreflight, after?: ControlPlanePreflight) {
   if (!before || !after) return []
   const changes: string[] = []
@@ -314,14 +332,18 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .platform-check-fail { border-color: #fecaca; background: linear-gradient(135deg, #fef2f2 0%, #fff 60%, #f8fafc 100%); }
 .platform-check-warn { border-color: #fed7aa; background: linear-gradient(135deg, #fff7ed 0%, #fff 60%, #f8fafc 100%); }
 .platform-check-hero { display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: center; padding: 22px; border-bottom: 1px solid rgba(148, 163, 184, 0.22); }
-.status-orb { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 22px; color: #fff; font-size: 30px; font-weight: 900; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14); }
+.status-orb { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 22px; color: #fff; font-size: 30px; font-weight: 900; line-height: 1; box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14); }
 .status-pass { background: linear-gradient(135deg, #16a34a, #22c55e); }
 .status-warn { background: linear-gradient(135deg, #f59e0b, #f97316); }
 .status-fail { background: linear-gradient(135deg, #ef4444, #f97316); }
 .section-kicker { color: #2563eb; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; }
 .platform-check-main h3 { margin: 4px 0 6px; color: #0f172a; font-size: 20px; }
 .platform-check-main p { margin: 0; color: #475569; }
-.check-meta { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; color: #64748b; font-size: 12px; }
+.check-meta { margin-top: 12px; color: #64748b; font-size: 12px; }
+.status-chip-grid { display: flex; gap: 8px; align-items: stretch; flex-wrap: wrap; }
+.status-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 5px 9px; border: 1px solid #e2e8f0; border-radius: 999px; background: rgba(255, 255, 255, 0.82); color: #334155; }
+.status-chip .chip-label { color: #64748b; font-weight: 700; }
+.status-chip strong { color: #0f172a; font-weight: 800; }
 .platform-check-actions { display: flex; gap: 8px; align-items: center; }
 .platform-check-summary { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); gap: 16px; padding: 18px 22px 22px; }
 .next-action-card, .problem-summary, .change-card { border: 1px solid #e2e8f0; border-radius: 16px; background: rgba(255, 255, 255, 0.78); padding: 14px; box-shadow: 0 8px 22px rgba(15, 23, 42, 0.04); }
@@ -362,6 +384,8 @@ onMounted(() => { if (route.query.focus === 'platformPreflight') detailVisible.v
 .action-field { color: #92400e; }
 .command-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; color: #111827; font-weight: 700; }
 .verify-command { margin-top: 8px; padding: 9px 10px; border-radius: 10px; background: #111827; color: #e5e7eb; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.verify-script { line-height: 1.55; word-break: normal; }
+.more-problems { padding: 9px 10px; border: 1px dashed #cbd5e1; border-radius: 12px; color: #475569; background: #f8fafc; font-size: 12px; }
 .route-button { margin-top: 10px; }
 @media (max-width: 980px) { .platform-check-hero, .platform-check-summary { grid-template-columns: 1fr; } .platform-check-actions { justify-content: flex-start; } .status-orb { width: 52px; height: 52px; border-radius: 18px; } }
 .preflight-history-card { border: 1px solid #e5e7eb; }

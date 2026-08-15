@@ -215,7 +215,7 @@ class ServerService:
             "warnings": [
                 *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
                 *self._agent_image_warnings(),
-                ("安装命令已授权替换已有 Agent 容器，仅用于重新接入或修复失败接入。" if payload.replace_existing_agent else "安装命令不会静默替换已有 Agent 容器；如脚本发现已有容器，会阻断并提示使用重新接入。"),
+                ("安装命令已授权替换已有执行组件容器，仅用于重新接入或修复失败接入。" if payload.replace_existing_agent else "安装命令不会静默替换已有执行组件容器；如脚本发现已有容器，会阻断并提示使用重新接入。"),
                 "安装命令包含授权式 Docker 镜像仓库配置参数；必要时会备份并合并 Docker HTTP 私有仓库配置。请只交给可信运维人员执行。",
             ],
             "controlPlanePreflight": control_preflight,

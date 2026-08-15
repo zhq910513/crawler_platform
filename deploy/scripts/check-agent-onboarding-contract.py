@@ -57,6 +57,21 @@ if "prepareAgentImageAction" not in dashboard_page or "自动准备执行组件�
     errors.append("运行总览平台自检缺少一键准备执行组件镜像的受控动作入口")
 if "actionAvailable" not in dashboard_page or "fallbackScriptCandidate" not in dashboard_page or "nodeVerificationCommands" not in dashboard_page:
     errors.append("运行总览必须按真实动作能力区分页面一键处理、平台服务器兜底和执行节点验证")
+
+if "status-chip-grid" not in dashboard_page or "chip-label" not in dashboard_page:
+    errors.append("运行总览平台自检状态区必须使用分组胶囊，避免状态、数量和时间挤压在一起")
+if "preflightIcon" not in dashboard_page or "?" in re.search(r"preflightIcon[^\n]*", dashboard_page).group(0):
+    errors.append("运行总览需确认状态不能继续使用问号图标，应使用信息提示语义")
+if "nodeVerificationScript" not in dashboard_page or "执行节点验证脚本" not in dashboard_page or "set -Eeuo pipefail" not in dashboard_page:
+    errors.append("运行总览需确认状态必须直接展示可复制的执行节点验证脚本")
+if "slice(0, 3)" in dashboard_page and "history-changes" not in dashboard_page:
+    errors.append("运行总览当前重点事项不能固定只展示 3 项导致数量不一致")
+if "slice(0, 6)" not in dashboard_page or "hiddenProblemCount" not in dashboard_page:
+    errors.append("运行总览当前重点事项必须展示更多确认项，并提示剩余项")
+if "normalizePreflightText" not in dashboard_page or "必须处理项" not in dashboard_page:
+    errors.append("运行总览历史快照必须对旧文案做展示归一")
+if "configured_digest" not in system_config_service or "部署阶段已记录执行组件镜像校验值" not in system_config_service:
+    errors.append("控制端预检必须使用部署阶段已记录的执行组件镜像校验值降低镜像版本/校验值误报")
 if "平台可一键处理" in dashboard_page or "平台脚本可处理" in dashboard_page:
     errors.append("运行总览不能把脚本兜底能力误展示成页面一键处理能力")
 if "impact" not in system_config_service or "verifyCommand" not in system_config_service or "checkSourceLabel" not in system_config_service:
@@ -83,7 +98,7 @@ if not (ROOT / "deploy/scripts/prepare-agent-image.sh").exists():
 
 workflow_text = (ROOT / ".github/workflows/deploy-test-server.yml").read_text(encoding="utf-8") if (ROOT / ".github/workflows/deploy-test-server.yml").exists() else ""
 if "CP_DEPLOY_PUBLIC_HOST" not in workflow_text or "STRICT_AGENT_IMAGE_PREPARE" not in workflow_text:
-    errors.append("CI/CD 部署入口必须自动传入公网主机并开启执行组件镜像准备强门禁，避免部署成功后运行总览仍残留镜像地址阻断项")
+    errors.append("CI/CD 部署入口必须自动传入公网主机并开启执行组件镜像准备强门禁，避免部署成功后运行总览仍残留镜像地址必须处理项")
 if "CP_DEPLOY_PUBLIC_HOST" not in prepare_script or "CRAWLER_AGENT_REGISTRY_PUBLIC_HOST" not in prepare_script:
     errors.append("执行组件镜像准备脚本必须支持 CI/CD 公网主机兜底和 .env 显式 registry 主机配置")
 

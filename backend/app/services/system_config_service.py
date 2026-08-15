@@ -256,11 +256,11 @@ class SystemConfigService:
                 "agent_image",
                 "执行组件镜像地址",
                 "FAIL",
-                "未配置执行组件镜像地址，执行节点无法拉取 Agent 容器。",
+                "未配置执行组件镜像地址，执行节点无法拉取执行组件容器。",
                 True,
                 "配置 CRAWLER_AGENT_IMAGE 后重启 API/Scheduler/Maintenance，再回到运行总览点击重新检测。",
                 action="CI/CD 会在部署阶段自动准备执行组件镜像；页面一键处理需要显式启用白名单动作。当前也可使用兜底命令在平台服务器执行。",
-                impact="远程执行节点无法拉取 Agent 容器，新增节点无法启动；已在线节点不受影响。",
+                impact="远程执行节点无法拉取执行组件容器，新增节点无法启动；已在线节点不受影响。",
                 route="/dashboard?focus=platformPreflight",
                 action_label="准备执行组件镜像",
                 category="执行组件镜像分发",
@@ -321,7 +321,7 @@ class SystemConfigService:
                 {**registry_probe, "image": image, "registry": registry},
                 action=f"操作员先在云安全组放行 {registry_port}/TCP；执行节点安装脚本可在授权后自动配置 Docker insecure-registries，安装命令追加 --auto-configure-docker-registry。",
                 verify_command=registry_command,
-                impact="镜像仓库不可达时，远程执行节点无法启动 Agent 容器；已在线节点不受影响。",
+                impact="镜像仓库不可达时，远程执行节点无法启动平台执行组件；已在线节点不受影响。",
                 action_label="验证镜像仓库",
                 category="执行组件镜像分发",
                 can_ignore=True,
@@ -329,18 +329,26 @@ class SystemConfigService:
                 handler="执行节点安装脚本",
                 auto_action_command="在执行节点安装命令后追加 --auto-configure-docker-registry",
             )
-            tag_probe = self._registry_tag_probe(image)
+            configured_digest = str(settings.crawler_agent_image_digest or "").strip()
+            if configured_digest:
+                tag_probe = {"ok": True, "source": "configured_digest", "image": image, "digest": configured_digest}
+                tag_status = "PASS"
+                tag_message = f"部署阶段已记录执行组件镜像版本：{image}。"
+            else:
+                tag_probe = self._registry_tag_probe(image)
+                tag_status = "PASS" if tag_probe["ok"] else "WARN"
+                tag_message = f"执行组件镜像版本可查询：{image}" if tag_probe["ok"] else f"控制端本机未能确认执行组件镜像版本已推送：{tag_probe['message']}。请在执行节点或平台服务器验证 docker pull。"
             add_check(
                 "agent_image_tag",
                 "执行组件镜像版本",
-                "PASS" if tag_probe["ok"] else "WARN",
-                f"执行组件镜像 tag 可查询：{image}" if tag_probe["ok"] else f"控制端本机未能确认 执行组件镜像 tag 已推送：{tag_probe['message']}。请在执行节点或平台服务器验证 docker pull。",
+                tag_status,
+                tag_message,
                 False,
-                "使用平台脚本准备镜像，或在执行节点执行 docker pull 验证镜像是否可拉取。",
+                "部署阶段已记录镜像校验值时，平台视为镜像版本已准备；否则在执行节点执行 docker pull 验证镜像是否可拉取。",
                 tag_probe,
                 action=f"当前是需确认项，请优先在目标执行节点执行验证命令：{pull_command}。如果验证失败，再由 CI/CD 重新部署或在平台服务器执行兜底命令准备执行组件镜像。",
-                verify_command=pull_command,
-                impact="镜像仓库存在但 tag 未推送时，执行节点仍会在拉取执行组件镜像阶段失败。",
+                verify_command=pull_command if tag_status == "WARN" else "",
+                impact="镜像仓库存在但版本未推送时，执行节点仍会在拉取执行组件镜像阶段失败。",
                 action_label="在节点验证镜像拉取",
                 category="执行组件镜像分发",
                 can_ignore=True,
@@ -349,18 +357,25 @@ class SystemConfigService:
                 auto_action_command=prepare_agent_image_command,
                 execution_channel="NODE_VERIFY",
             )
-            digest_probe = self._registry_digest_probe(image)
+            if configured_digest:
+                digest_probe = {"ok": True, "source": "configured_digest", "digest": configured_digest}
+                digest_status = "PASS"
+                digest_message = f"部署阶段已记录执行组件镜像校验值：{configured_digest}"
+            else:
+                digest_probe = self._registry_digest_probe(image)
+                digest_status = "PASS" if digest_probe["ok"] else "WARN"
+                digest_message = f"执行组件镜像校验值已记录：{digest_probe.get('digest')}" if digest_probe["ok"] else f"未能确认执行组件镜像校验值：{digest_probe['message']}。请用平台脚本重新准备镜像或在执行节点 docker pull 后上报校验值。"
             add_check(
                 "agent_image_digest",
                 "执行组件镜像校验值",
-                "PASS" if digest_probe["ok"] else "WARN",
-                f"执行组件镜像校验值已记录：{digest_probe.get('digest')}" if digest_probe["ok"] else f"未能确认执行组件镜像校验值：{digest_probe['message']}。请用平台脚本重新准备镜像或在执行节点 docker pull 后上报 digest。",
+                digest_status,
+                digest_message,
                 False,
-                "重新准备执行组件镜像后平台会读取 registry manifest digest；执行节点心跳也会上报实际 digest。",
+                "部署阶段会读取 registry manifest 校验值；执行节点心跳也会上报实际运行镜像校验值。",
                 digest_probe,
                 action="当前是需确认项，平台侧已可继续接入；请在执行节点完成 docker pull 后通过心跳上报实际镜像校验值。如果验证失败，再由 CI/CD 重新部署或使用平台服务器兜底命令重新准备执行组件镜像。",
-                verify_command=pull_command,
-                impact="digest 未确认时仍可接入，但无法证明 tag 内容和当前发布版本完全一致。",
+                verify_command=pull_command if digest_status == "WARN" else "",
+                impact="未记录校验值时仍可接入，但无法证明镜像版本内容和当前发布版本完全一致。",
                 action_label="在节点验证镜像校验值",
                 category="执行组件镜像分发",
                 can_ignore=True,
@@ -393,16 +408,20 @@ class SystemConfigService:
         if blocking_count:
             summary = f"平台自检发现 {blocking_count} 个必须处理项，按提示处理后点击重新检测。"
         elif warning_count:
-            summary = f"平台自检有 {warning_count} 个需确认项，请按提示在执行节点验证；确认通过后可以继续接入。"
+            summary = f"平台侧没有必须处理项，可以生成接入命令；仍有 {warning_count} 个外部条件建议在目标执行节点验证。"
         else:
             summary = "平台自检通过，执行节点接入基础条件已具备。"
         if blocking_count:
             next_action = "先处理平台侧必须处理项；CI/CD 会自动准备执行组件镜像，页面一键处理仅在白名单动作启用时可用。"
         elif warning_count:
-            next_action = "当前没有必须处理项，可以继续接入执行节点；请在目标执行节点验证平台入口、镜像仓库、镜像拉取和安全组策略。"
+            next_action = "先复制执行节点验证脚本；验证通过后再正式接入或运行任务。"
         else:
             next_action = "平台侧接入条件已就绪，可以继续新增或重新接入执行节点。"
-        node_verify_commands = [str(item.get("verifyCommand") or "") for item in checks if item.get("status") == "WARN" and item.get("verifyCommand")]
+        node_verify_commands: list[str] = []
+        for item in checks:
+            command = str(item.get("verifyCommand") or "").strip()
+            if item.get("status") == "WARN" and command and command not in node_verify_commands:
+                node_verify_commands.append(command)
         return {
             "readyForRemoteAgent": blocking_count == 0,
             "status": "PASS" if blocking_count == 0 and warning_count == 0 else ("WARN" if blocking_count == 0 else "FAIL"),
