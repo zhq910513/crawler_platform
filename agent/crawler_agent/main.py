@@ -53,6 +53,7 @@ class AgentApp:
         self.lock = threading.Lock()
         self.docker_client = docker.from_env()
         self.image_prewarm_next_at: dict[str, float] = {}
+        self.shutdown_requested = False
 
     def active_count(self) -> int:
         with self.lock:
@@ -119,7 +120,7 @@ class AgentApp:
             "projectDataRootWritable": path_writable(str(config.project_data_root)),
             "dockerSockAccessible": docker_status == "OK",
             "timezone": datetime.now().astimezone().tzname() or "",
-            "capabilities": config.capabilities(),
+            "capabilities": {**config.capabilities(), "agentDecommission": True},
             "currentRuns": {"runIds": sorted(tracked_run_ids), "dockerRunIds": sorted(docker_run_ids), "orphanRunIds": orphan_run_ids},
             "lastError": self.last_error,
         }
@@ -138,6 +139,17 @@ class AgentApp:
                 if command_type == "PROJECT_DEPLOY_PREPARE":
                     result = self.executor.prepare_project_runtime(command)
                     self.api.agent_command_result(command, True, "项目镜像、目录和运行时自检已完成", result)
+                elif command_type == "AGENT_DECOMMISSION":
+                    if self.active_count() > 0:
+                        raise RuntimeError("仍有 Agent 进程内任务运行，拒绝退役")
+                    result = self.executor.prepare_agent_decommission()
+                    self.api.agent_command_result(command, True, "Agent 已停止接收新任务，准备移除自身容器", result)
+                    self.shutdown_requested = True
+                    try:
+                        self.executor.remove_host_agent_credentials()
+                        self.executor.remove_current_agent_container(str(result.get("containerId") or ""))
+                    finally:
+                        return
                 else:
                     self.api.agent_command_result(command, False, f"不支持的 Agent 指令类型：{command_type}", {})
             except Exception as exc:
@@ -194,6 +206,8 @@ class AgentApp:
                 if now - last_heartbeat >= config.heartbeat_interval_seconds:
                     heartbeat_response = self.api.heartbeat(self.heartbeat_payload())
                     self.handle_agent_commands(heartbeat_response or {})
+                    if self.shutdown_requested:
+                        return
                     self.handle_container_cleanups(heartbeat_response or {})
                     self.handle_image_updates(heartbeat_response or {})
                     last_heartbeat = now

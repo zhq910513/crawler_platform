@@ -19,53 +19,57 @@
           <div class="muted">{{ s.row.serverIp || '-' }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="管理状态"><template #default="s">{{ zh(s.row.manageStatus) }}</template></el-table-column>
-      <el-table-column label="健康状态"><template #default="s"><el-tag :type="healthTag(s.row.healthStatus)" effect="light">{{ zh(s.row.healthStatus) }}</el-tag></template></el-table-column>
-      <el-table-column label="负载状态"><template #default="s"><el-tag :type="capacityTag(s.row.capacityStatus)" effect="light">{{ zh(s.row.capacityStatus) }}</el-tag></template></el-table-column>
-      <el-table-column label="资源使用" min-width="260">
+      <el-table-column label="状态" min-width="130">
         <template #default="s">
-          <div class="metric-line">处理器 <el-progress :percentage="percent(s.row.metrics?.cpuUsage)" :show-text="true" /></div>
-          <div class="metric-line">内存 <el-progress :percentage="percent(s.row.metrics?.memoryUsage)" :show-text="true" /></div>
-          <div class="metric-line">磁盘 <el-progress :percentage="percent(s.row.metrics?.diskUsage)" :show-text="true" /></div>
-          <div class="metric-line">文件数 <el-progress :percentage="percent(s.row.metrics?.inodeUsage)" :show-text="true" /></div>
+          <el-tag :type="nodeStatusTag(s.row)" effect="light">{{ nodeStatusText(s.row) }}</el-tag>
+          <div v-if="nodeStatusHint(s.row)" class="muted node-hint">{{ nodeStatusHint(s.row) }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="运行中任务" min-width="120">
-        <template #default="s">{{ s.row.metrics?.runningContainers ?? 0 }}</template>
-      </el-table-column>
-      <el-table-column label="环境检查" min-width="180">
+      <el-table-column label="资源" min-width="210">
         <template #default="s">
-          <div>容器服务：{{ zh(s.row.metrics?.dockerStatus || '-') }}</div>
-          <div>执行权限：{{ boolText(s.row.metrics?.dockerSockAccessible) }}</div>
-          <div>数据目录：{{ boolText(s.row.metrics?.projectDataRootWritable) }}</div>
-          <div>时区：{{ s.row.metrics?.timezone || '-' }}</div>
+          <template v-if="hasRuntimeMetrics(s.row)">
+            <div>CPU {{ metricText(s.row.metrics?.cpuUsage) }} · 内存 {{ metricText(s.row.metrics?.memoryUsage) }}</div>
+            <div class="muted">磁盘 {{ metricText(s.row.metrics?.diskUsage) }} · 文件数 {{ metricText(s.row.metrics?.inodeUsage) }}</div>
+          </template>
+          <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column label="最后心跳" min-width="170"><template #default="s">{{ formatTime(s.row.metrics?.lastHeartbeatAt) }}</template></el-table-column>
-      <el-table-column label="最近异常" min-width="220"><template #default="s">{{ s.row.metrics?.lastError || s.row.agentLastError || '-' }}</template></el-table-column>
+      <el-table-column label="运行任务" width="100">
+        <template #default="s">{{ hasRuntimeMetrics(s.row) ? (s.row.metrics?.runningContainers ?? 0) : '-' }}</template>
+      </el-table-column>
+      <el-table-column label="最后心跳" min-width="170">
+        <template #default="s">{{ formatTime(s.row.agentLastHeartbeatAt || s.row.metrics?.lastHeartbeatAt) }}</template>
+      </el-table-column>
+      <el-table-column label="最近异常" min-width="220">
+        <template #default="s">{{ s.row.metrics?.decommissionError || s.row.metrics?.lastError || s.row.agentLastError || '-' }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="190" fixed="right">
         <template #default="s">
-          <el-button link type="primary" @click="rejoinNode(s.row)">重新接入</el-button>
-          <el-button link type="danger" @click="cleanupNode(s.row)">清理</el-button>
+          <el-button link type="primary" :disabled="s.row.metrics?.decommissionStatus === 'PENDING'" @click="rejoinNode(s.row)">重新接入</el-button>
+          <el-button link type="danger" :disabled="s.row.metrics?.decommissionStatus === 'PENDING'" @click="cleanupNode(s.row)">清理</el-button>
         </template>
       </el-table-column>
     </el-table>
-
 
 
     <div class="join-invitations-card">
       <div class="section-header">
         <div>
           <h4>接入记录</h4>
-          <p class="muted">展示待接入、接入中和接入失败的节点邀请，便于定位失败阶段并重新接入。</p>
+          <p class="muted">仅保留待接入、接入中和接入失败记录；清理后的记录不再显示。</p>
         </div>
       </div>
       <el-table :data="joinInvitations.slice(0, 8)" size="small" stripe>
         <el-table-column label="节点" min-width="180"><template #default="s">{{ s.row.server_name || s.row.serverName || '-' }}</template></el-table-column>
-        <el-table-column label="状态" width="110"><template #default="s"><el-tag effect="light">{{ s.row.invitation_status || s.row.invitationStatus || '-' }}</el-tag></template></el-table-column>
-        <el-table-column label="失败阶段" min-width="140"><template #default="s">{{ s.row.failure_stage || s.row.failureStage || '-' }}</template></el-table-column>
-        <el-table-column label="失败原因" min-width="220"><template #default="s">{{ s.row.failure_reason || s.row.failureReason || '-' }}</template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="s"><el-tag effect="light">{{ invitationStatusText(s.row) }}</el-tag></template></el-table-column>
+        <el-table-column label="结果" min-width="260"><template #default="s">{{ invitationResultText(s.row) }}</template></el-table-column>
         <el-table-column label="更新时间" min-width="170"><template #default="s">{{ formatTime(s.row.updated_at || s.row.updatedAt || s.row.created_at || s.row.createdAt) }}</template></el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="s">
+            <el-button v-if="canCleanupInvitation(s.row)" link type="danger" @click="cleanupInvitation(s.row)">清理记录</el-button>
+            <span v-else class="muted">节点列表处理</span>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
 
@@ -100,6 +104,8 @@
           <el-col :span="12"><el-form-item label="同时运行任务上限"><el-input-number v-model="joinForm.maxContainerSlots" :min="1" :max="100" /></el-form-item></el-col>
         </el-row>
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
+        <el-checkbox v-model="joinForm.autoConfigureDockerRegistry">允许脚本在 Registry 网络验证通过后配置 Docker HTTP 私有仓库并重启 Docker</el-checkbox>
+        <div class="field-hint">默认关闭。只有目标节点尚未配置 HTTP Registry 且确认可以重启 Docker 时再授权。</div>
         <el-collapse class="advanced-box">
           <el-collapse-item title="高级设置" name="advanced">
             <el-row :gutter="16">
@@ -151,7 +157,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createAgentJoinToken, createServer, deleteServer, getSystemSettings, listAgentJoinTokens, listCompanies, listServers } from '../api/platform'
+import { createAgentJoinToken, createServer, deleteAgentJoinToken, deleteServer, getSystemSettings, listAgentJoinTokens, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
 import { useRoute, useRouter } from 'vue-router'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ServerNode } from '../types/api'
@@ -165,14 +171,29 @@ const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
 const onboardingVisible = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
-const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: false })
+const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: false, autoConfigureDockerRegistry: false })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
 
-function percent(value?: number | null) { if (value === null || value === undefined || Number.isNaN(Number(value))) return 0; return Math.max(0, Math.min(100, Math.round(Number(value)))) }
-function boolText(value?: boolean | null) { if (value === null || value === undefined) return '-'; return value ? '可用' : '不可用' }
-function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
-function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
+function hasRuntimeMetrics(row: ServerNode) { return Boolean(row.agentLastHeartbeatAt || row.metrics?.lastHeartbeatAt) }
+function metricText(value?: number | null) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value))}%` }
+function invitationFor(row: ServerNode) { return joinInvitations.value.find((item) => String(item.server_code || item.serverCode || '') === row.serverCode) }
+function nodeStatusText(row: ServerNode) {
+  if (row.metrics?.decommissionStatus === 'PENDING') return '清理中'
+  if (row.metrics?.decommissionStatus === 'FAILED') return '清理失败'
+  if (row.agentConnectionStatus === 'ONLINE') return '在线'
+  if (row.agentConnectionStatus === 'OFFLINE') return '离线'
+  const invitation = invitationFor(row)
+  const status = String(invitation?.invitation_status || invitation?.invitationStatus || '')
+  if (status === 'CONFIG_ISSUED') return '接入中'
+  if (status === 'FAILED') return '接入失败'
+  return '待接入'
+}
+function nodeStatusTag(row: ServerNode) { const text = nodeStatusText(row); if (text === '在线') return 'success'; if (['离线', '接入失败', '清理失败'].includes(text)) return 'danger'; return 'info' }
+function nodeStatusHint(row: ServerNode) { const text = nodeStatusText(row); if (text === '接入中') return '等待首次心跳'; if (text === '清理中') return '等待 Agent 退役确认'; return '' }
+function invitationStatusText(row: Record<string, any>) { const status = String(row.invitation_status || row.invitationStatus || ''); return ({ PENDING: '待接入', CONFIG_ISSUED: '接入中', FAILED: '接入失败' } as Record<string, string>)[status] || zh(status) }
+function invitationResultText(row: Record<string, any>) { return String(row.failure_reason || row.failureReason || row.failure_stage || row.failureStage || '-') }
+function canCleanupInvitation(row: Record<string, any>) { const code = String(row.server_code || row.serverCode || ''); return !rows.value.some((item) => item.serverCode === code) }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; if (status === 'PENDING') return 'info'; return 'warning' }
 function preflightLabel(status: string) { if (status === 'PASS') return '正常'; if (status === 'FAIL') return '已确认异常'; if (status === 'PENDING') return '待场景验证'; return '运行提醒' }
 function goDashboardPreflight() { router.push('/dashboard?focus=platformPreflight') }
@@ -218,6 +239,7 @@ function applyInstallTarget() {
 function openOnboarding() {
   joinResult.value = null
   joinForm.replaceExistingAgent = false
+  joinForm.autoConfigureDockerRegistry = false
   onboardingVisible.value = true
   if (!joinForm.companyId) joinForm.companyId = form.companyId
   if (!joinForm.serverName) joinForm.serverName = '上海执行节点01'
@@ -235,17 +257,37 @@ function rejoinNode(row: ServerNode) {
   joinForm.workDir = row.workDir || '/var/lib/crawler-agent'
   joinForm.installTarget = 'REMOTE'
   joinForm.replaceExistingAgent = true
+  joinForm.autoConfigureDockerRegistry = false
   applyInstallTarget()
   onboardingVisible.value = true
 }
 async function cleanupNode(row: ServerNode) {
   try {
-    await ElMessageBox.confirm(`清理后会删除节点 ${row.serverName} 的接入记录，并释放节点标识，确认继续？`, '清理执行节点', { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(`确认清理执行节点 ${row.serverName}？在线节点会先自动退役远端 Agent；离线节点会立即失效旧 Token 并清理平台记录。`, '清理执行节点', { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' })
   } catch {
     return
   }
-  await deleteServer(row.serverId)
-  ElMessage.success('节点接入记录已清理，可以重新接入')
+  const result = await deleteServer(row.serverId)
+  if (result.decommissioning) {
+    ElMessage.success(result.message || '已下发 Agent 退役指令，确认后节点会自动移除')
+  } else {
+    ElMessage.success('节点及接入记录已清理')
+    if (result.manualCleanupCommand) {
+      await ElMessageBox.alert(`平台已使旧 Agent Token 失效。若目标机仍残留 crawler-agent，请在目标机执行：\n\n${result.manualCleanupCommand}`, '远端残留检查', { confirmButtonText: '知道了' })
+    }
+  }
+  await load()
+}
+async function cleanupInvitation(row: Record<string, any>) {
+  const tokenId = Number(row.token_id || row.tokenId || 0)
+  if (!tokenId) return
+  try {
+    await ElMessageBox.confirm(`确认清理“${row.server_name || row.serverName || '该节点'}”的接入记录？`, '清理接入记录', { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' })
+  } catch {
+    return
+  }
+  await deleteAgentJoinToken(tokenId)
+  ElMessage.success('接入记录已清理')
   await load()
 }
 async function load() {
@@ -286,7 +328,7 @@ watch(() => route.query.openOnboarding, (value) => { if (value === '1') openOnbo
 .server-name { font-weight: 700; color: #111827; }
 .hero-toolbar { align-items: flex-start; }
 .hero-toolbar h3 { margin: 0 0 6px; }
-.metric-line { display: grid; grid-template-columns: 56px 1fr; gap: 8px; align-items: center; margin-bottom: 6px; }
+.node-hint { margin-top: 4px; }
 .wizard-steps { margin-bottom: 16px; }
 .guide-alert { margin-bottom: 16px; }
 .onboarding-form { margin-top: 6px; }

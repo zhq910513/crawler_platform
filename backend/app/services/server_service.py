@@ -28,6 +28,7 @@ from app.services.permissions import require_company_scope, scoped_company_id, w
 from app.services.audit import write_operation_log
 from app.config import settings
 from app.services.system_config_service import SystemConfigService
+from app.services.agent_command_service import AgentCommandService
 from app.utils import sha256_text, utcnow
 
 
@@ -108,6 +109,7 @@ class ServerService:
         if not server:
             raise AppError("资源不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         require_company_scope(user, server.company_id)
+        before = self._server_payload(server)
         agent = server.agent
         active_statuses = {"QUEUED", "ROUTED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
         active_scope = CrawlerTaskRun.server_id == server.server_id
@@ -117,7 +119,58 @@ class ServerService:
         if active_count:
             raise AppError("节点存在运行中任务，不能清理，请等待任务结束后再操作", code=40074, http_status=status.HTTP_400_BAD_REQUEST)
 
-        before = self._server_payload(server)
+        # 在线节点优先通过现有心跳指令通道退役，避免平台记录删除后远端 crawler-agent
+        # 仍以 restart=always 持续运行并反复使用已失效 Token。
+        offline_before = utcnow() - timedelta(seconds=max(30, settings.agent_lease_seconds * 2))
+        supports_decommission = bool(agent and isinstance(agent.capabilities, dict) and agent.capabilities.get("agentDecommission") is True)
+        if agent and supports_decommission and agent.connection_status == "ONLINE" and agent.last_heartbeat_at and agent.last_heartbeat_at >= offline_before:
+            server.manage_status = "DISABLED"
+            metrics = dict(server.metrics or {})
+            if not any(isinstance(item, dict) and item.get("commandType") == "AGENT_DECOMMISSION" and item.get("status") == "PENDING" for item in metrics.get("pendingAgentCommands", []) or []):
+                AgentCommandService(self.db).enqueue_agent_decommission(server=server, agent_id=agent.agent_id)
+            metrics = dict(server.metrics or {})
+            metrics["decommissionStatus"] = "PENDING"
+            metrics["decommissionRequestedAt"] = utcnow().isoformat()
+            server.metrics = metrics
+            write_operation_log(
+                self.db, user, None, operation_type="DECOMMISSION_SERVER_REQUESTED", resource_type="server",
+                resource_id=str(server_id), before_data=before,
+                after_data={"deleted": False, "decommissioning": True, "agentCode": agent.agent_code},
+            )
+            self.db.commit()
+            return {
+                "server_id": server_id,
+                "deleted": False,
+                "decommissioning": True,
+                "cleanup_counts": {},
+                "message": "已停止节点接收新任务并下发远端 Agent 退役指令；Agent 确认后平台会自动删除节点和接入记录。",
+                "manual_cleanup_command": self._agent_local_cleanup_command(),
+            }
+
+        live_but_legacy = bool(agent and not supports_decommission and agent.connection_status == "ONLINE" and agent.last_heartbeat_at and agent.last_heartbeat_at >= offline_before)
+        cleanup_counts = self._delete_server_records(server, agent)
+        cleanup_command = self._agent_local_cleanup_command()
+        write_operation_log(
+            self.db, user, None, operation_type="DELETE_SERVER", resource_type="server", resource_id=str(server_id),
+            before_data=before,
+            after_data={"deleted": True, "cleanupCounts": cleanup_counts, "remoteAgentReachable": live_but_legacy, "remoteAutoDecommissionSupported": supports_decommission, "manualCleanupCommand": cleanup_command},
+        )
+        self.db.commit()
+        message = (
+            "平台节点和接入记录已清理；当前 Agent 未声明自动退役能力，旧 Token 已失效。请在目标服务器执行返回的清理命令移除旧 Agent 容器和失效凭证。"
+            if live_but_legacy
+            else "平台节点和接入记录已清理；该节点当前不在线，无法确认远端容器是否仍存在。旧 Agent Token 已失效。"
+        )
+        return {
+            "server_id": server_id,
+            "deleted": True,
+            "decommissioning": False,
+            "cleanup_counts": cleanup_counts,
+            "message": message,
+            "manual_cleanup_command": cleanup_command,
+        }
+
+    def _delete_server_records(self, server: CrawlerServer, agent: CrawlerAgent | None) -> dict[str, int]:
         agent_id = agent.agent_id if agent else None
         cleanup_counts: dict[str, int] = {}
 
@@ -146,12 +199,27 @@ class ServerService:
         bulk_delete(CrawlerAgentJoinToken, CrawlerAgentJoinToken.server_code == server.server_code)
         if agent:
             bulk_delete(CrawlerAgentJoinToken, CrawlerAgentJoinToken.agent_code == agent.agent_code)
-
         self.db.delete(server)
         cleanup_counts["crawler_server"] = cleanup_counts.get("crawler_server", 0) + 1
-        write_operation_log(self.db, user, None, operation_type="DELETE_SERVER", resource_type="server", resource_id=str(server_id), before_data=before, after_data={"deleted": True, "cleanupCounts": cleanup_counts})
-        self.db.commit()
-        return {"server_id": server_id, "deleted": True, "cleanup_counts": cleanup_counts}
+        return cleanup_counts
+
+    def finalize_agent_decommission(self, agent: CrawlerAgent) -> dict:
+        server = self.db.get(CrawlerServer, agent.server_id)
+        if not server:
+            return {"deleted": True, "cleanup_counts": {}}
+        before = self._server_payload(server)
+        server_id = server.server_id
+        cleanup_counts = self._delete_server_records(server, agent)
+        write_operation_log(
+            self.db, None, None, operation_type="DECOMMISSION_SERVER_COMPLETED", resource_type="server", resource_id=str(server_id),
+            before_data=before, after_data={"deleted": True, "cleanupCounts": cleanup_counts, "remoteAgentDecommissioned": True},
+        )
+        return {"deleted": True, "cleanup_counts": cleanup_counts}
+
+    @staticmethod
+    def _agent_local_cleanup_command() -> str:
+        # 不删除 /data/crawler-agent 等业务数据目录；只移除平台安装的 Agent 容器和失效凭证。
+        return "docker rm -f crawler-agent 2>/dev/null || true; rm -f /opt/crawler-agent/.env"
 
     def create_agent_join_token(self, user: SysUser, payload: AgentJoinTokenCreate, detected_base_url: str = "") -> dict:
         company_id = writable_company_id(user, payload.company_id)
@@ -194,7 +262,7 @@ class ServerService:
         )
         self.db.add(token)
         self.db.flush()
-        command = self._install_command(raw_token, control_plane_url, payload.replace_existing_agent)
+        command = self._install_command(raw_token, control_plane_url, payload.replace_existing_agent, payload.auto_configure_docker_registry)
         connectivity_command = f"curl -fsSL {control_plane_url.rstrip('/')}/health && echo"
         node_verification_script = self._node_verification_script(control_plane_url)
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
@@ -218,7 +286,7 @@ class ServerService:
                 *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
                 *self._agent_image_warnings(),
                 ("安装命令已授权替换已有执行组件容器，仅用于重新接入或修复失败接入。" if payload.replace_existing_agent else "安装命令不会静默替换已有执行组件容器；如脚本发现已有容器，会阻断并提示使用重新接入。"),
-                "安装命令包含授权式 Docker 镜像仓库配置参数；必要时会备份并合并 Docker HTTP 私有仓库配置。请只交给可信运维人员执行。",
+                ("已明确授权安装脚本在 Registry 网络验证通过后配置 Docker HTTP 私有仓库；该动作会备份 daemon.json 并重启 Docker。" if payload.auto_configure_docker_registry else "默认不会修改 Docker daemon.json 或重启 Docker；如检测到 HTTP 私有仓库尚未配置，脚本会在消耗接入凭证前停止。"),
             ],
             "controlPlanePreflight": control_preflight,
             "note": "该命令包含一次性接入凭证，请只发送给可信运维人员；凭证使用后自动失效。",
@@ -230,8 +298,23 @@ class ServerService:
         stmt = select(CrawlerAgentJoinToken).order_by(CrawlerAgentJoinToken.created_at.desc())
         if scoped is not None:
             stmt = stmt.where(CrawlerAgentJoinToken.company_id == scoped)
+        stmt = stmt.where(CrawlerAgentJoinToken.invitation_status.in_(["PENDING", "CONFIG_ISSUED", "FAILED"]))
         rows = list(self.db.scalars(stmt).all())
         return [{**{c.name: getattr(row, c.name) for c in row.__table__.columns}, "tokenHash": "***"} for row in rows]
+
+    def delete_agent_join_token(self, user: SysUser, token_id: int) -> dict:
+        token = self.db.get(CrawlerAgentJoinToken, token_id)
+        if not token:
+            raise AppError("接入记录不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_company_scope(user, token.company_id)
+        server = self.servers.by_code(token.server_code)
+        if server:
+            raise AppError("该接入记录已生成节点，请从执行节点列表清理节点；节点清理会同步删除接入记录", code=40076, http_status=status.HTTP_400_BAD_REQUEST)
+        before = {c.name: getattr(token, c.name) for c in token.__table__.columns}
+        self.db.delete(token)
+        write_operation_log(self.db, user, None, operation_type="DELETE_AGENT_JOIN_TOKEN", resource_type="agent_join_token", resource_id=str(token_id), before_data=before, after_data={"deleted": True})
+        self.db.commit()
+        return {"token_id": token_id, "deleted": True}
 
 
     def report_agent_join_failure(self, payload: AgentBootstrapFailureReport) -> dict:
@@ -338,8 +421,11 @@ class ServerService:
         base = control_plane_url.rstrip('/')
         lines = [
             "set -Eeuo pipefail",
-            f"curl -fsSL {base}/health && echo",
-            f"curl -fsSL {base}/api/v1/agent-installers/linux.sh | head -5",
+            f"curl -fsS --connect-timeout 3 --max-time 10 {base}/health && echo",
+            "tmp_installer=\"$(mktemp)\"",
+            f"curl -fsS --connect-timeout 3 --max-time 10 {base}/api/v1/agent-installers/linux.sh -o \"$tmp_installer\"",
+            "head -5 \"$tmp_installer\"",
+            "rm -f \"$tmp_installer\"",
         ]
         image = str(settings.crawler_agent_image or "").strip()
         if image and self._image_has_registry_prefix(image):
@@ -348,7 +434,7 @@ class ServerService:
             port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
             scheme = "http" if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else "https"
             lines.extend([
-                f"curl -i {scheme}://{registry}/v2/",
+                f"curl -fsS --connect-timeout 3 --max-time 10 {scheme}://{registry}/v2/ && echo",
                 f"docker pull {shlex.quote(image)}",
             ])
         else:
@@ -362,14 +448,15 @@ class ServerService:
             return False
         return "." in first or ":" in first or first == "localhost"
 
-    def _install_command(self, token: str, base: str, replace_existing_agent: bool = False) -> str:
+    def _install_command(self, token: str, base: str, replace_existing_agent: bool = False, auto_configure_docker_registry: bool = False) -> str:
         public_base = base.rstrip("/")
-        # 接入命令默认只授权 Docker HTTP registry 自动配置。
-        # 替换已有 Agent 容器属于高风险动作，只有重新接入/修复失败接入时才显式追加 --replace-existing-agent。
-        flags = "--auto-configure-docker-registry"
+        flags: list[str] = []
+        if auto_configure_docker_registry:
+            flags.append("--auto-configure-docker-registry")
         if replace_existing_agent:
-            flags += " --replace-existing-agent"
-        return f"curl -fsSL {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)} {flags}"
+            flags.append("--replace-existing-agent")
+        suffix = (" " + " ".join(flags)) if flags else ""
+        return f"curl -fsSL --connect-timeout 3 --max-time 15 {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)}{suffix}"
 
     def _resolve_control_plane_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
         base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")

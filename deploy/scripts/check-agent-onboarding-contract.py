@@ -19,6 +19,7 @@ dashboard_page = (ROOT / "frontend/src/views/DashboardPage.vue").read_text(encod
 system_config_service = (ROOT / "backend/app/services/system_config_service.py").read_text(encoding="utf-8")
 companies = (ROOT / "frontend/src/views/CompaniesPage.vue").read_text(encoding="utf-8")
 platform_action_service = (ROOT / "backend/app/services/platform_action_service.py").read_text(encoding="utf-8")
+agent_main = (ROOT / "agent/crawler_agent/main.py").read_text(encoding="utf-8")
 
 if not installer.exists():
     errors.append("backend/app/templates/install-agent.sh 不存在，API 镜像内安装脚本接口会失败")
@@ -39,6 +40,9 @@ if "templates" not in api or "deploy" in re.sub(r"#.*", "", api):
     errors.append("安装脚本接口不应依赖 API 镜像外的 deploy 目录")
 if "currentOrigin" not in frontend or "connectivityCommand" not in frontend:
     errors.append("执行节点接入前端缺少系统地址读取或连通性验证命令")
+dictionary_text = (ROOT / "frontend/src/utils/dictionaries.ts").read_text(encoding="utf-8")
+if "isNaiveUtc" not in dictionary_text or "`${raw}Z`" not in dictionary_text:
+    errors.append("前端统一时间格式化必须把后端无时区标记的 UTC ISO 时间按 UTC 解析，避免少 8 小时")
 
 if "controlPlanePreflight" not in system_config_service or "requiredPorts" not in system_config_service:
     errors.append("控制端缺少对外接入预检和必要端口清单，执行节点接入前无法提前暴露安全组/镜像仓库问题")
@@ -88,8 +92,8 @@ if '"readyForRemoteAgent": blocking_count == 0' not in system_config_service:
     errors.append("远程节点接入就绪必须只由已确认阻断项决定，PENDING 不得误阻断")
 if "runtimeIssues" not in dashboard_page or "item.status === 'PENDING'" not in dashboard_page or "待自动验证" not in dashboard_page:
     errors.append("运行总览必须分离真实运行异常与待自动验证项，并把待验证明细下沉到详情")
-if "configured_digest" not in system_config_service or "部署阶段已记录执行组件镜像校验值" not in system_config_service:
-    errors.append("控制端预检必须使用部署阶段已记录的执行组件镜像校验值降低镜像版本/校验值误报")
+if "configuredDigest" not in system_config_service or "配置中的 digest 仅作为期望值" not in system_config_service:
+    errors.append("控制端预检必须把配置 digest 仅作为期望值，不能把配置字符串冒充 Registry/运行证据")
 if "平台可一键处理" in dashboard_page or "平台脚本可处理" in dashboard_page:
     errors.append("运行总览不能把脚本兜底能力误展示成页面一键处理能力")
 if "impact" not in system_config_service or "verifyCommand" not in system_config_service or "checkSourceLabel" not in system_config_service:
@@ -98,21 +102,39 @@ if "automationType" not in system_config_service or "autoActionCommand" not in s
     errors.append("控制端预检未区分可自动处理项，或未给出 执行组件镜像自动准备动作")
 if "platformActionCapability" not in system_config_service or "executionChannel" not in system_config_service or "securityGroupChecklist" not in system_config_service:
     errors.append("控制端预检必须返回平台动作能力、执行通道和安全组规则清单，避免页面动作口径误导")
-if "nodeVerificationScript" not in service or "curl -i" not in service or "docker pull" not in service:
-    errors.append("执行节点接入流程必须生成目标节点完整预检脚本，覆盖平台入口、安装脚本、镜像仓库和镜像拉取")
+if "nodeVerificationScript" not in service or "--connect-timeout 3 --max-time 10" not in service or "docker pull" not in service:
+    errors.append("执行节点接入流程必须生成带硬超时的目标节点预检脚本，覆盖平台入口、安装脚本、镜像仓库和镜像拉取")
 if "--auto-configure-docker-registry" not in text or "insecure-registries" not in text:
     errors.append("Agent 安装脚本缺少授权自动配置 Docker HTTP 私有仓库能力")
 if "grep -F '"'"'"$reg"'"'"'" in text or 'grep -F "\\"$reg\\""' not in text:
     errors.append("Agent 安装脚本 Docker insecure-registries 检测必须检查真实 registry 值，不能误查字面量 $reg")
 if "--replace-existing-agent" not in text or "CURRENT_STAGE" not in text or "启动 Agent 容器" not in text:
     errors.append("Agent 安装脚本缺少失败阶段标识或已有 Agent 容器替换授权保护")
-if "--auto-configure-docker-registry" not in service or "replace_existing_agent" not in service:
-    errors.append("后端生成的执行节点接入命令缺少 Docker registry 授权配置或重新接入替换控制")
-if 'flags += " --replace-existing-agent"' not in service:
+if "auto_configure_docker_registry" not in service or "replace_existing_agent" not in service:
+    errors.append("后端生成的执行节点接入命令缺少显式 Docker registry 授权或重新接入替换控制")
+if 'flags.append("--replace-existing-agent")' not in service:
     errors.append("--replace-existing-agent 只能在重新接入场景显式追加，不能作为新增节点默认行为")
+if 'flags.append("--auto-configure-docker-registry")' not in service:
+    errors.append("Docker insecure-registry 修改必须由显式 auto_configure_docker_registry 授权后才追加到安装命令")
+if "执行组件镜像仓库网络检查" not in text or text.index("执行组件镜像仓库网络检查") > text.index("换取执行节点配置"):
+    errors.append("Agent 安装脚本必须在消耗一次性接入 Token 前验证 Registry 网络")
+if "--max-time" not in text or "docker pull \"$AGENT_IMAGE\" >/dev/null 2>&1" in text:
+    errors.append("Agent 安装脚本网络请求必须有硬超时，docker pull 失败不得吞掉原始错误")
+if "Docker 已配置并重启，可访问 HTTP 私有仓库" in text:
+    errors.append("Docker 重启成功不能冒充 Registry 网络可达")
+if "AGENT_DECOMMISSION" not in service or "delete_agent_join_token" not in service:
+    errors.append("执行节点清理必须覆盖在线 Agent 退役和孤立接入记录物理清理")
+if '"agentDecommission": True' not in agent_main or 'agent.capabilities.get("agentDecommission") is True' not in service:
+    errors.append("Agent 远端退役必须由显式 capability 门禁保护，避免旧版 Agent 收到不支持的指令")
+if "AGENT_HOST_CONFIG_DIR" not in text or "crawler-agent-host-config" not in text:
+    errors.append("新版 Agent 安装必须挂载宿主机配置目录，自动退役后才能清理失效 .env")
+if "清理后的记录不再显示" not in frontend or "metricText" not in frontend or "接入中" not in frontend:
+    errors.append("执行节点页面必须隐藏清理后的接入记录，并避免未上报资源显示为 0%")
 prepare_script = (ROOT / "deploy/scripts/prepare-agent-image.sh").read_text(encoding="utf-8") if (ROOT / "deploy/scripts/prepare-agent-image.sh").exists() else ""
 if ".env.tmp_prepare_agent_image" not in prepare_script or "本机 registry 中未发现 crawler_platform_agent" not in prepare_script:
     errors.append("执行组件镜像准备脚本缺少安全 .env 写入或精确 tag 验证")
+if "crawler-platform-smoke-registry" not in prepare_script or "REGISTRY_DATA_VOLUME" not in prepare_script or "拒绝把未知容器当成正式 Agent Registry" not in prepare_script:
+    errors.append("正式 Agent Registry 必须隔离 smoke 容器，并使用持久化数据卷；历史 smoke registry 只能显式安全接管")
 if not (ROOT / "deploy/scripts/prepare-agent-image.sh").exists():
     errors.append("缺少平台侧 执行组件镜像自动准备脚本 deploy/scripts/prepare-agent-image.sh")
 

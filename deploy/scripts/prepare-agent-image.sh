@@ -12,6 +12,7 @@ RESTART_BACKEND="1"
 SKIP_BUILD="0"
 SKIP_PUSH="0"
 REGISTRY_CONTAINER_NAME="${REGISTRY_CONTAINER_NAME:-crawler-platform-agent-registry}"
+REGISTRY_DATA_VOLUME="${REGISTRY_DATA_VOLUME:-crawler-platform-agent-registry-data}"
 
 usage() {
   cat <<USAGE
@@ -84,17 +85,29 @@ PUBLIC_AGENT_IMAGE="${PUBLIC_REGISTRY}/crawler_platform_agent:${VERSION}"
 
 cp_info "准备 执行组件镜像：version=${VERSION} publicImage=${PUBLIC_AGENT_IMAGE}"
 
-if ! docker ps --format '{{.Names}} {{.Ports}}' | grep -Eq "(^| )${REGISTRY_CONTAINER_NAME}( |$)|0\.0\.0\.0:${REGISTRY_PORT}->5000/tcp|:::${REGISTRY_PORT}->5000/tcp"; then
-  if docker ps -a --format '{{.Names}}' | grep -qx "$REGISTRY_CONTAINER_NAME"; then
-    cp_info "启动已有内置 registry 容器：$REGISTRY_CONTAINER_NAME"
+if docker ps -a --format '{{.Names}}' | grep -qx "$REGISTRY_CONTAINER_NAME"; then
+  if [ "$(docker inspect -f '{{.State.Running}}' "$REGISTRY_CONTAINER_NAME" 2>/dev/null || echo false)" != "true" ]; then
+    cp_info "启动已有正式 registry 容器：$REGISTRY_CONTAINER_NAME"
     docker start "$REGISTRY_CONTAINER_NAME" >/dev/null
   else
-    cp_info "启动内置 执行组件镜像仓库：0.0.0.0:${REGISTRY_PORT}->5000"
-    docker run -d --restart=always --name "$REGISTRY_CONTAINER_NAME" -p "${REGISTRY_PORT}:5000" registry:2 >/dev/null
+    cp_info "正式 registry 已在运行：$REGISTRY_CONTAINER_NAME"
   fi
 else
-  cp_info "内置 registry 已在 ${REGISTRY_PORT} 端口运行。"
+  legacy_smoke="crawler-platform-smoke-registry"
+  if docker ps -a --format '{{.Names}}' | grep -qx "$legacy_smoke" \
+    && docker inspect -f '{{.Config.Image}}' "$legacy_smoke" 2>/dev/null | grep -Eq '^registry(:|@)' \
+    && docker port "$legacy_smoke" 5000/tcp 2>/dev/null | grep -Eq ":${REGISTRY_PORT}$"; then
+    cp_warn "检测到历史 smoke registry 正在承载 ${REGISTRY_PORT}/TCP，原地接管为正式 registry，保留现有镜像数据。"
+    docker rename "$legacy_smoke" "$REGISTRY_CONTAINER_NAME"
+    docker start "$REGISTRY_CONTAINER_NAME" >/dev/null 2>&1 || true
+  else
+    port_owner="$(docker ps --format '{{.Names}} {{.Ports}}' | awk -v p=":${REGISTRY_PORT}->5000/tcp" 'index($0,p){print $1; exit}')"
+    [ -z "$port_owner" ] || cp_die "${REGISTRY_PORT}/TCP 已被其他容器占用：$port_owner。拒绝把未知容器当成正式 Agent Registry。"
+    cp_info "启动正式执行组件镜像仓库：0.0.0.0:${REGISTRY_PORT}->5000，数据卷=${REGISTRY_DATA_VOLUME}"
+    docker run -d --restart=always --name "$REGISTRY_CONTAINER_NAME" -p "${REGISTRY_PORT}:5000" -v "${REGISTRY_DATA_VOLUME}:/var/lib/registry" registry:2 >/dev/null
+  fi
 fi
+
 
 if [ "$SKIP_BUILD" != "1" ]; then
   cp_info "构建 执行组件镜像：$LOCAL_IMAGE"

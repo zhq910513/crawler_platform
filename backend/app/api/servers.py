@@ -49,3 +49,8 @@ def create_agent_join_token(payload: AgentJoinTokenCreate, request: Request, use
 @router.get("/agent-join-tokens")
 def list_agent_join_tokens(company_id: int | None = Query(default=None), user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ServerService(db).list_agent_join_tokens(user, company_id))
+
+
+@router.delete("/agent-join-tokens/{token_id}")
+def delete_agent_join_token(token_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    return ok(ServerService(db).delete_agent_join_token(user, token_id))

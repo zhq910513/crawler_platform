@@ -38,5 +38,9 @@ export function zh(value?: string | number | null): string {
 
 export function formatTime(value?: string | null): string {
   if (!value) return '-'
-  return new Date(value).toLocaleString('zh-CN', { hour12: false })
+  const raw = String(value).trim()
+  const isNaiveUtc = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)
+  const date = new Date(isNaiveUtc ? `${raw}Z` : raw)
+  if (Number.isNaN(date.getTime())) return raw
+  return date.toLocaleString('zh-CN', { hour12: false })
 }

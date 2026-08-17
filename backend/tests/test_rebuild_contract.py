@@ -1124,7 +1124,7 @@ def test_preflight_unknown_external_conditions_are_pending_not_warning(monkeypat
     from app.models import CrawlerAgent
     from app.services.system_config_service import SystemConfigService
 
-    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.70'
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.71'
     monkeypatch.setattr(settings, 'crawler_agent_image', target_image)
     monkeypatch.setattr(settings, 'crawler_agent_image_digest', '')
     monkeypatch.setattr(SystemConfigService, '_http_probe', staticmethod(lambda url, timeout=1.0: {'ok': False, 'statusCode': 0, 'url': url, 'message': 'simulated control-plane loopback failure'}))
@@ -1160,7 +1160,7 @@ def test_preflight_runtime_evidence_overrides_control_plane_loopback_probe(monke
     client = TestClient(app)
     _, headers = login(client)
     _, _, agents, _ = create_flow(client, headers, 'runtimeevidence', ['srv-runtimeevidence-a'])
-    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.70'
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.71'
     actual_digest = 'sha256:' + ('9' * 64)
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
         'agentInstanceId': 'runtime-evidence-agent',
@@ -1203,7 +1203,7 @@ def test_preflight_reports_confirmed_offline_agent_as_runtime_warning(monkeypatc
     client = TestClient(app)
     _, headers = login(client)
     _, _, agents, _ = create_flow(client, headers, 'offlineevidence', ['srv-offlineevidence-a'])
-    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.70'
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.71'
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
         'agentInstanceId': 'offline-evidence-agent',
         'agentImage': target_image,
@@ -1267,7 +1267,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     }).json()['data']
     assert token_body['joinToken']
     assert '--join-token' in token_body['installCommand']
-    assert '--auto-configure-docker-registry' in token_body['installCommand']
+    assert '--auto-configure-docker-registry' not in token_body['installCommand']
     assert '--replace-existing-agent' not in token_body['installCommand']
     assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
@@ -1282,6 +1282,15 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
         'replaceExistingAgent': True,
     }).json()['data']
     assert '--replace-existing-agent' in rejoin_token['installCommand']
+    registry_authorized = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'join-srv-registry-authorized',
+        'serverName': 'Registry 授权节点',
+        'agentCode': 'join-agent-registry-authorized',
+        'installTarget': 'LOCAL',
+        'autoConfigureDockerRegistry': True,
+    }).json()['data']
+    assert '--auto-configure-docker-registry' in registry_authorized['installCommand']
     bad_remote = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],
         'serverCode': 'join-srv-loopback',
@@ -1308,8 +1317,13 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert 'requested_agent_image' in script.text
     assert 'crawler_platform_agent:1.0.44' not in script.text
     assert '__CRAWLER_AGENT_IMAGE__' not in script.text
-    assert '执行组件镜像拉取失败且本机不存在' in script.text
+    assert '执行组件镜像拉取失败：$AGENT_IMAGE' in script.text
     assert '--auto-configure-docker-registry' in script.text
+    assert '--max-time' in script.text
+    assert script.text.index('执行组件镜像仓库网络检查') < script.text.index('换取执行节点配置')
+    assert 'Docker 已配置并重启，可访问 HTTP 私有仓库' not in script.text
+    assert 'Docker 已配置 HTTP 私有仓库并重启成功' in script.text
+    assert 'docker pull "$AGENT_IMAGE" >/dev/null 2>&1' not in script.text
     assert '--replace-existing-agent' in script.text
     assert 'CURRENT_STAGE' in script.text
     assert '启动 Agent 容器' in script.text
@@ -1363,6 +1377,9 @@ def test_unhealthy_agent_can_be_cleaned_and_rejoined() -> None:
     assert cleanup_body['cleanupCounts']['crawlerServer'] == 1
     assert cleanup_body['cleanupCounts']['crawlerAgent'] == 1
 
+    invitations_after_cleanup = client.get('/api/v1/servers/agent-join-tokens', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    assert not any((item.get('serverCode') or item.get('server_code')) == 'cleanup-node-01' for item in invitations_after_cleanup)
+
     recreated = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'cleanup-node-01', 'serverName': '重新新增节点'}).json()['data']
     assert recreated['serverCode'] == 'cleanup-node-01'
     rejoin = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
@@ -1376,6 +1393,145 @@ def test_unhealthy_agent_can_be_cleaned_and_rejoined() -> None:
     })
     assert rejoin.status_code == 200
     assert rejoin.json()['data']['serverCode'] == 'cleanup-node-01'
+
+
+def test_orphan_join_invitation_can_be_cleaned_and_disappears() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'inviteclean', 'companyName': '邀请清理公司'}).json()['data']
+    token = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'invite-clean-01',
+        'serverName': '待清理邀请',
+        'agentCode': 'invite-clean-agent-01',
+        'installTarget': 'LOCAL',
+    }).json()['data']
+    rows = client.get('/api/v1/servers/agent-join-tokens', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    assert any(item['tokenId'] == token['tokenId'] for item in rows)
+    deleted = client.delete(f"/api/v1/servers/agent-join-tokens/{token['tokenId']}", headers=headers)
+    assert deleted.status_code == 200
+    assert deleted.json()['data']['deleted'] is True
+    rows = client.get('/api/v1/servers/agent-join-tokens', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    assert not any(item['tokenId'] == token['tokenId'] for item in rows)
+
+
+def test_online_agent_cleanup_uses_decommission_before_record_delete() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, _, agents, _ = create_flow(client, headers, 'decommission', ['srv-decommission-a'])
+    agent = agents[0]
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+        'agentInstanceId': 'decommission-instance',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {'agentDecommission': True},
+    })
+    assert heartbeat.status_code == 200
+    server_id = next(item['serverId'] for item in client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data'] if item['serverCode'] == agent['serverCode'])
+    cleanup = client.delete(f'/api/v1/servers/{server_id}', headers=headers)
+    assert cleanup.status_code == 200
+    body = cleanup.json()['data']
+    assert body['deleted'] is False
+    assert body['decommissioning'] is True
+
+    heartbeat2 = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+        'agentInstanceId': 'decommission-instance',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {'agentDecommission': True},
+    })
+    assert heartbeat2.status_code == 200
+    commands = heartbeat2.json()['data']['pendingAgentCommands']
+    command = next(item for item in commands if item['commandType'] == 'AGENT_DECOMMISSION')
+    ack = client.post('/api/v1/agent-command-results', headers=agent['headers'], json={
+        'commandId': command['commandId'],
+        'commandType': 'AGENT_DECOMMISSION',
+        'success': True,
+        'message': 'self decommission prepared',
+        'result': {'containerId': 'abc'},
+    })
+    assert ack.status_code == 200
+    assert ack.json()['data']['decommissioned'] is True
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    assert not any(item['serverId'] == server_id for item in servers)
+    stale = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+        'agentInstanceId': 'decommission-instance',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+    })
+    assert stale.status_code == 401
+
+
+def test_legacy_online_agent_cleanup_invalidates_token_and_requires_local_cleanup() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, _, agents, _ = create_flow(client, headers, 'legacycleanup', ['srv-legacycleanup-a'])
+    agent = agents[0]
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+        'agentInstanceId': 'legacy-cleanup-instance',
+        'agentVersion': '1.0.70',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {},
+    })
+    assert heartbeat.status_code == 200
+    server_id = next(item['serverId'] for item in client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data'] if item['serverCode'] == agent['serverCode'])
+    cleanup = client.delete(f'/api/v1/servers/{server_id}', headers=headers)
+    assert cleanup.status_code == 200
+    body = cleanup.json()['data']
+    assert body['deleted'] is True
+    assert body['decommissioning'] is False
+    assert '未声明自动退役能力' in body['message']
+    assert 'docker rm -f crawler-agent' in body['manualCleanupCommand']
+    stale = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+        'agentInstanceId': 'legacy-cleanup-instance',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+    })
+    assert stale.status_code == 401
+
+
+
+def test_preflight_does_not_treat_configured_digest_as_registry_tag_evidence(monkeypatch) -> None:
+    migrate()
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.models import CrawlerAgent
+    from app.services.system_config_service import SystemConfigService
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.71'
+    monkeypatch.setattr(settings, 'crawler_agent_image', target_image)
+    monkeypatch.setattr(settings, 'crawler_agent_image_digest', 'sha256:' + ('1' * 64))
+    monkeypatch.setattr(SystemConfigService, '_http_probe', staticmethod(lambda url, timeout=1.0: {'ok': True, 'statusCode': 200, 'url': url, 'message': 'ok'}))
+    monkeypatch.setattr(SystemConfigService, '_registry_probe', lambda self, registry: {'ok': True, 'statusCode': 200, 'url': registry, 'message': 'ok'})
+    monkeypatch.setattr(SystemConfigService, '_registry_tag_probe', lambda self, image: {'ok': False, 'statusCode': 200, 'message': '仓库可访问，但未找到 tag 1.0.71', 'image': image})
+    monkeypatch.setattr(SystemConfigService, '_registry_digest_probe', lambda self, image: {'ok': False, 'message': 'HTTP 404', 'image': image, 'digest': ''})
+    with SessionLocal() as db:
+        runtime_agents = list(db.query(CrawlerAgent).filter(CrawlerAgent.agent_image == target_image).all())
+        original_runtime_state = [(agent, agent.connection_status, agent.last_heartbeat_at) for agent in runtime_agents]
+        for agent, _, _ in original_runtime_state:
+            agent.connection_status = 'UNREGISTERED'
+            agent.last_heartbeat_at = None
+        db.commit()
+        preflight = SystemConfigService(db).inspect_control_plane_preflight('http://203.0.113.10:8080')
+        for agent, connection_status, last_heartbeat_at in original_runtime_state:
+            agent.connection_status = connection_status
+            agent.last_heartbeat_at = last_heartbeat_at
+        db.commit()
+    by_key = {item['key']: item for item in preflight['checks']}
+    assert by_key['agent_image_tag']['status'] == 'FAIL'
+    assert by_key['agent_image_tag']['blocking'] is True
+    assert by_key['agent_image_digest']['status'] == 'PENDING'
+    assert by_key['agent_image_digest']['details']['configuredDigest'].startswith('sha256:')
+    assert preflight['readyForRemoteAgent'] is False
 
 
 def test_agent_runtime_defaults_do_not_hide_missing_control_plane_url() -> None:

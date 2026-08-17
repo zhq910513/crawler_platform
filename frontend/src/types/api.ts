@@ -89,6 +89,8 @@ export interface AgentMetrics {
   timezone?: string
   lastError?: string
   lastHeartbeatAt?: string
+  decommissionStatus?: string
+  decommissionError?: string
 }
 
 export interface ServerNode {
@@ -505,7 +507,7 @@ export interface RunLogChunk { chunkId: number; runId: number; stream: string; s
 export interface RunLogTail { runId: number; lastLogSeq: number; logTruncated: boolean; chunks: RunLogChunk[] }
 export interface RunDiagnosis { runId: number; failedStage: string; errorType: string; errorSummary: string; retryable: boolean | null; diagnosis: Record<string, unknown>; logStatus: string; logTruncated: boolean; lastLogSeq: number; lastLogAt: string | null }
 
-export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number; replaceExistingAgent?: boolean }
+export interface AgentJoinTokenCreateRequest { companyId: number; serverCode: string; serverName: string; agentCode: string; agentName?: string; maxContainerSlots?: number; workDir?: string; labels?: Record<string, unknown>; capabilities?: Record<string, unknown>; registryCredentialRef?: string; installMode?: string; installTarget?: 'LOCAL' | 'REMOTE'; controlPlaneUrl?: string; expiresInHours?: number; replaceExistingAgent?: boolean; autoConfigureDockerRegistry?: boolean }
 export interface AgentJoinTokenResult { tokenId: number; companyId: number; agentCode: string; serverCode: string; expiresAt: string; invitationStatus?: string; invitationStatusLabel?: string; joinToken?: string; joinTokenMasked?: string; installCommand: string; connectivityCommand?: string; nodeVerificationScript?: string; controlPlaneUrl?: string; installTarget?: string; warnings?: string[]; controlPlanePreflight?: ControlPlanePreflight; note: string }
 export interface ProjectReleaseDeployRequest { releaseId?: number | null; serverIds: number[]; autoSelect?: boolean; prewarmWhenIdle?: boolean; maxParallelPulls?: number; reason?: string }
 

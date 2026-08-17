@@ -208,8 +208,20 @@ class AgentService:
         service = AgentCommandService(self.db)
         ack = service.acknowledge(server, payload.model_dump(by_alias=True))
         service.apply_project_deploy_result(server, ack)
+        command = ack.get("command") or {}
+        decommissioned = False
+        if ack.get("accepted") and command.get("commandType") == "AGENT_DECOMMISSION":
+            if payload.success:
+                from app.services.server_service import ServerService
+                ServerService(self.db).finalize_agent_decommission(agent)
+                decommissioned = True
+            else:
+                metrics = dict(server.metrics or {})
+                metrics["decommissionStatus"] = "FAILED"
+                metrics["decommissionError"] = (payload.message or "远端 Agent 退役失败")[:1000]
+                server.metrics = metrics
         self.db.commit()
-        return {"accepted": bool(ack.get("accepted")), "commandId": payload.command_id, "reason": ack.get("reason", "")}
+        return {"accepted": bool(ack.get("accepted")), "commandId": payload.command_id, "reason": ack.get("reason", ""), "decommissioned": decommissioned}
 
     def _pending_image_pulls(self, server: CrawlerServer, payload: AgentHeartbeat) -> list[dict]:
         running_count = int(payload.running_containers or 0)

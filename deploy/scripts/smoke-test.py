@@ -121,12 +121,19 @@ def docker_available():
 
 def ensure_registry(name, port):
     existing = run(["docker", "ps", "-a", "--format", "{{.Names}}"], check=True).splitlines()
-    if name not in existing:
-        run(["docker", "run", "-d", "--name", name, "--restart=always", "-p", f"{port}:5000", "registry:2"])
-    else:
+    if name in existing:
         running = run(["docker", "inspect", "-f", "{{.State.Running}}", name], check=True).strip()
         if running != "true":
             run(["docker", "start", name])
+        return
+    # 正式环境可能已经运行 crawler-platform-agent-registry；smoke 直接复用同一 registry，
+    # 不再为了测试创建第二个容器抢占 5000/TCP。
+    published = run(["docker", "ps", "--format", "{{.Names}} {{.Image}} {{.Ports}}"], check=True).splitlines()
+    for line in published:
+        if "registry:2" in line and (f"0.0.0.0:{port}->5000/tcp" in line or f":::{port}->5000/tcp" in line):
+            print(f"复用已有 registry：{line.split()[0]}")
+            return
+    run(["docker", "run", "-d", "--name", name, "--restart=always", "-p", f"{port}:5000", "registry:2"])
 
 
 def build_smoke_image(registry, tag, pip_index_url):

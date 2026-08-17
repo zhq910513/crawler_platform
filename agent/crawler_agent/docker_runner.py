@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -196,6 +197,36 @@ class RunExecutor:
             self._report_image_pull(image_task, "FAILED", message)
             logger.warning("prewarm image failed project=%s error=%s", project_code, exc, exc_info=True)
             return False
+
+
+    def prepare_agent_decommission(self) -> dict[str, Any]:
+        running_ids = sorted(self.running_platform_run_ids())
+        if running_ids:
+            raise RuntimeError(f"仍有平台任务容器运行，拒绝退役 Agent：{running_ids}")
+        container_ref = str(os.getenv("HOSTNAME") or "").strip()
+        if not container_ref:
+            raise RuntimeError("无法识别当前 Agent 容器，拒绝自动退役")
+        container = self.client.containers.get(container_ref)
+        container.update(restart_policy={"Name": "no"})
+        return {"containerId": container.id, "containerName": getattr(container, "name", "") or "", "restartPolicy": "no", "dataPreserved": True}
+
+    def remove_host_agent_credentials(self) -> None:
+        config_dir = str(os.getenv("AGENT_HOST_CONFIG_DIR") or "").strip()
+        if not config_dir:
+            return
+        env_file = Path(config_dir) / ".env"
+        try:
+            env_file.unlink(missing_ok=True)
+        except Exception as exc:
+            logger.warning("remove host agent credentials failed path=%s error=%s", env_file, exc)
+
+    def remove_current_agent_container(self, container_id: str) -> None:
+        target = str(container_id or "").strip()
+        if not target:
+            return
+        # 平台已收到退役成功回报后再删除自身容器。Docker daemon 通过挂载的
+        # docker.sock 执行删除；业务数据目录不删除，避免误伤项目缓存/运行数据。
+        self.client.api.remove_container(target, force=True, v=False)
 
     def cleanup_platform_containers(self, cleanup: dict[str, Any]) -> dict[str, Any]:
         scope = str(cleanup.get("cleanupScope") or "PROJECT").upper()

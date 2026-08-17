@@ -331,7 +331,7 @@ class SystemConfigService:
             registry_host = registry.rsplit(':', 1)[0] if ':' in registry else registry
             registry_port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
             scheme_hint = "http" if registry_port in {5000, 80} or registry_host in {"localhost", "127.0.0.1"} else "https"
-            registry_command = f"curl -i {scheme_hint}://{registry}/v2/"
+            registry_command = f"curl -fsS --connect-timeout 3 --max-time 10 {scheme_hint}://{registry}/v2/ && echo"
             pull_command = f"docker pull {image}"
             image_runtime_agents = [item for item in runtime_evidence["agents"] if item.get("agentImage") == image and item.get("actualDigest")]
             required_ports.append({
@@ -373,43 +373,46 @@ class SystemConfigService:
                 evidence_scope="当前镜像仓库" if registry_probe["ok"] else ("已有在线执行节点" if registry_runtime_verified else "新节点接入场景"),
             )
             configured_digest = str(settings.crawler_agent_image_digest or "").strip()
-            if configured_digest:
-                tag_probe = {"ok": True, "source": "configured_digest", "image": image, "digest": configured_digest}
+            tag_probe = self._registry_tag_probe(image)
+            tag_confirmed_missing = str(tag_probe.get("message") or "").startswith("仓库可访问，但未找到 tag")
+            if tag_probe["ok"]:
                 tag_status = "PASS"
-                tag_message = f"部署阶段已记录执行组件镜像版本：{image}。"
-                tag_evidence_source = "部署配置"
-                tag_evidence_scope = "当前发布镜像"
+                tag_blocking = False
+                tag_message = f"执行组件镜像版本已在 Registry 中确认：{image}"
+                tag_evidence_source = "Registry 主动探测"
+                tag_evidence_scope = "当前镜像 tag"
+            elif tag_confirmed_missing:
+                tag_status = "FAIL"
+                tag_blocking = True
+                tag_message = f"Registry 可访问，但当前发布镜像 tag 不存在：{image}"
+                tag_evidence_source = "Registry 主动探测"
+                tag_evidence_scope = "当前镜像 tag"
+            elif image_runtime_agents:
+                tag_status = "PASS"
+                tag_blocking = False
+                tag_message = f"控制端本机未能查询镜像 tag（{tag_probe['message']}），但已有 {len(image_runtime_agents)} 个在线执行节点正在运行该镜像；现有节点版本已由运行事实验证。"
+                tag_evidence_source = "执行节点实时镜像证据"
+                tag_evidence_scope = "已有在线执行节点"
             else:
-                tag_probe = self._registry_tag_probe(image)
-                if tag_probe["ok"]:
-                    tag_status = "PASS"
-                    tag_message = f"执行组件镜像版本可查询：{image}"
-                    tag_evidence_source = "Registry 主动探测"
-                    tag_evidence_scope = "当前镜像 tag"
-                elif image_runtime_agents:
-                    tag_status = "PASS"
-                    tag_message = f"控制端本机未能查询镜像 tag（{tag_probe['message']}），但已有 {len(image_runtime_agents)} 个在线执行节点正在运行该镜像，现有节点镜像版本已由运行事实验证。"
-                    tag_evidence_source = "执行节点实时镜像证据"
-                    tag_evidence_scope = "已有在线执行节点"
-                else:
-                    tag_status = "PENDING"
-                    tag_message = f"控制端本机未能查询镜像 tag（{tag_probe['message']}）；新节点接入时会自动通过 docker pull 验证。"
-                    tag_evidence_source = "等待目标节点预检"
-                    tag_evidence_scope = "新节点接入场景"
+                tag_status = "PENDING"
+                tag_blocking = False
+                tag_message = f"控制端本机未能查询镜像 tag（{tag_probe['message']}）；新节点接入脚本会在消耗 Token 前验证 Registry 网络，并在拉取阶段确认镜像。"
+                tag_evidence_source = "等待目标节点预检"
+                tag_evidence_scope = "新节点接入场景"
             add_check(
                 "agent_image_tag",
                 "执行组件镜像版本",
                 tag_status,
                 tag_message,
-                False,
-                "部署阶段已记录镜像校验值时，平台视为镜像版本已准备；否则重新触发 CI/CD 或在平台服务器执行兜底命令确认镜像版本。",
+                tag_blocking,
+                "Registry 已确认缺少当前 tag 时直接阻断新节点接入；仅控制端无法探测时保留待场景验证，由目标节点继续验证。",
                 tag_probe,
-                action="CI/CD 会在部署阶段准备执行组件镜像；如版本未确认，请重新触发 CI/CD 或在平台服务器执行兜底命令准备镜像。",
+                action="CI/CD 会在部署阶段准备执行组件镜像；如 Registry 已确认缺少当前版本，请重新触发 CI/CD 或在平台服务器执行兜底命令准备镜像。",
                 verify_command="",
-                impact="镜像仓库存在但版本未推送时，新增执行节点会在拉取执行组件镜像阶段失败。",
+                impact="Registry 已确认缺少当前版本时，新执行节点必然无法拉取 Agent 镜像。",
                 action_label="重新准备执行组件镜像",
                 category="执行组件镜像分发",
-                can_ignore=True,
+                can_ignore=not tag_blocking,
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
                 auto_action_command=prepare_agent_image_command if tag_status == "FAIL" else "",
@@ -418,46 +421,53 @@ class SystemConfigService:
                 evidence_source=tag_evidence_source,
                 evidence_scope=tag_evidence_scope,
             )
-            if configured_digest:
-                digest_probe = {"ok": True, "source": "configured_digest", "digest": configured_digest}
-                digest_status = "PASS"
-                digest_message = f"部署阶段已记录执行组件镜像校验值：{configured_digest}"
-                digest_evidence_source = "部署配置"
-                digest_evidence_scope = "当前发布镜像"
-            else:
-                digest_probe = self._registry_digest_probe(image)
-                if digest_probe["ok"]:
-                    digest_status = "PASS"
-                    digest_message = f"执行组件镜像校验值已读取：{digest_probe.get('digest')}"
-                    digest_evidence_source = "Registry manifest"
-                    digest_evidence_scope = "当前镜像 tag"
-                elif image_runtime_agents:
-                    actual_digests = sorted({str(item.get("actualDigest") or "") for item in image_runtime_agents if item.get("actualDigest")})
-                    runtime_digest = actual_digests[0] if len(actual_digests) == 1 else " / ".join(actual_digests)
-                    digest_probe = {**digest_probe, "ok": True, "source": "running_agents", "digest": runtime_digest, "runtimeAgents": image_runtime_agents}
-                    digest_status = "PASS"
-                    digest_message = f"控制端本机未能读取 registry digest，但在线执行节点已上报实际运行镜像校验值：{runtime_digest}"
-                    digest_evidence_source = "执行节点实际运行 digest"
-                    digest_evidence_scope = "已有在线执行节点"
+
+            digest_probe = self._registry_digest_probe(image)
+            registry_digest = str(digest_probe.get("digest") or "").strip()
+            if digest_probe["ok"]:
+                if configured_digest and registry_digest and configured_digest != registry_digest:
+                    digest_status = "FAIL"
+                    digest_blocking = True
+                    digest_message = f"执行组件镜像 digest 与部署配置不一致：Registry={registry_digest}，配置={configured_digest}"
                 else:
-                    digest_status = "PENDING"
-                    digest_message = f"当前未取得镜像 digest（{digest_probe['message']}）；新节点成功拉取后会自动上报实际运行 digest。"
-                    digest_evidence_source = "等待目标节点上报"
-                    digest_evidence_scope = "新节点接入场景"
+                    digest_status = "PASS"
+                    digest_blocking = False
+                    digest_message = f"执行组件镜像校验值已从 Registry 读取：{registry_digest}"
+                digest_evidence_source = "Registry manifest"
+                digest_evidence_scope = "当前镜像 tag"
+            elif image_runtime_agents:
+                actual_digests = sorted({str(item.get("actualDigest") or "") for item in image_runtime_agents if item.get("actualDigest")})
+                runtime_digest = actual_digests[0] if len(actual_digests) == 1 else " / ".join(actual_digests)
+                digest_status = "FAIL" if configured_digest and len(actual_digests) == 1 and runtime_digest != configured_digest else "PASS"
+                digest_blocking = False
+                digest_probe = {**digest_probe, "ok": digest_status == "PASS", "source": "running_agents", "digest": runtime_digest, "runtimeAgents": image_runtime_agents}
+                digest_message = (
+                    f"在线执行节点实际运行 digest 与部署配置不一致：实际={runtime_digest}，配置={configured_digest}"
+                    if digest_status == "FAIL"
+                    else f"控制端本机未能读取 Registry digest，但在线执行节点已上报实际运行镜像校验值：{runtime_digest}"
+                )
+                digest_evidence_source = "执行节点实际运行 digest"
+                digest_evidence_scope = "已有在线执行节点"
+            else:
+                digest_status = "PENDING"
+                digest_blocking = False
+                digest_message = f"当前未从 Registry 或在线节点取得镜像 digest（{digest_probe['message']}）；配置中的 digest 仅作为期望值，不作为 Registry 已就绪的证明。"
+                digest_evidence_source = "等待 Registry/目标节点证据"
+                digest_evidence_scope = "新节点接入场景"
             add_check(
                 "agent_image_digest",
                 "执行组件镜像校验值",
                 digest_status,
                 digest_message,
-                False,
-                "部署阶段会读取 registry manifest 校验值；执行节点心跳也会上报实际运行镜像校验值。",
-                digest_probe,
-                action="CI/CD 会在部署阶段读取 registry manifest 校验值；如校验值未确认，请重新触发 CI/CD 或在平台服务器执行兜底命令准备镜像。",
+                digest_blocking,
+                "Registry manifest 或执行节点实际运行 digest 才作为运行证据；配置值只表示期望版本。",
+                {**digest_probe, "configuredDigest": configured_digest},
+                action="如 Registry digest 与配置不一致，请重新准备执行组件镜像并更新发布配置。",
                 verify_command="",
-                impact="未记录校验值时仍可接入，但无法证明镜像版本内容和当前发布版本完全一致。",
+                impact="digest 不一致说明实际镜像内容与当前发布配置不同；无运行证据时保持待场景验证。",
                 action_label="重新准备执行组件镜像",
                 category="执行组件镜像分发",
-                can_ignore=True,
+                can_ignore=not digest_blocking,
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
                 auto_action_command=prepare_agent_image_command if digest_status == "FAIL" else "",
@@ -1030,17 +1040,28 @@ class SystemConfigService:
         except Exception as exc:  # pragma: no cover
             return {"ok": False, "statusCode": 0, "url": url, "message": str(exc), "body": ""}
 
-    def _registry_probe(self, registry: str) -> dict:
+    def _registry_probe_candidates(self, registry: str) -> list[str]:
+        candidates = [registry]
         host = registry.rsplit(':', 1)[0] if ':' in registry else registry
         port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
-        schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
+        configured_host = str(settings.crawler_agent_registry_public_host or "").strip()
+        configured_port = int(settings.crawler_agent_registry_port or 5000)
+        if configured_host and host == configured_host and port == configured_port and host not in {"127.0.0.1", "localhost"}:
+            candidates.append(f"127.0.0.1:{port}")
+        return candidates
+
+    def _registry_probe(self, registry: str) -> dict:
         attempts = []
-        for scheme in schemes:
-            probe = self._http_probe(f"{scheme}://{registry}/v2/", timeout=1.0)
-            attempts.append(probe)
-            if probe["ok"]:
-                return {**probe, "attempts": attempts}
-        return {"ok": False, "statusCode": 0, "url": attempts[-1]["url"] if attempts else "", "message": "; ".join(item["message"] for item in attempts) or "无法访问镜像仓库", "attempts": attempts}
+        for candidate in self._registry_probe_candidates(registry):
+            host = candidate.rsplit(':', 1)[0] if ':' in candidate else candidate
+            port = int(candidate.rsplit(':', 1)[1]) if ':' in candidate and candidate.rsplit(':', 1)[1].isdigit() else 443
+            schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
+            for scheme in schemes:
+                probe = self._http_probe(f"{scheme}://{candidate}/v2/", timeout=1.0)
+                attempts.append({**probe, "probeRegistry": candidate})
+                if probe["ok"]:
+                    return {**probe, "registry": registry, "probeRegistry": candidate, "attempts": attempts}
+        return {"ok": False, "statusCode": 0, "url": attempts[-1]["url"] if attempts else "", "message": "; ".join(item["message"] for item in attempts) or "无法访问镜像仓库", "registry": registry, "attempts": attempts}
 
     def _registry_tag_probe(self, image: str) -> dict:
         try:
@@ -1051,23 +1072,24 @@ class SystemConfigService:
                 repo, tag = rest, 'latest'
         except ValueError:
             return {"ok": False, "message": "镜像地址缺少仓库前缀", "image": image}
-        host = registry.rsplit(':', 1)[0] if ':' in registry else registry
-        port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
-        schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
         attempts = []
-        for scheme in schemes:
-            url = f"{scheme}://{registry}/v2/{repo}/tags/list"
-            probe = self._http_text_probe(url, timeout=1.0)
-            attempts.append(probe)
-            if probe["ok"]:
-                try:
-                    payload = json.loads(str(probe.get("body") or "{}"))
-                except json.JSONDecodeError:
-                    payload = {}
-                tags = payload.get("tags") if isinstance(payload, dict) else None
-                if isinstance(tags, list) and tag in tags:
-                    return {**probe, "image": image, "registry": registry, "repository": repo, "tag": tag, "tags": tags, "attempts": attempts}
-                return {**probe, "ok": False, "message": f"仓库可访问，但未找到 tag {tag}", "image": image, "registry": registry, "repository": repo, "tag": tag, "tags": tags or [], "attempts": attempts}
+        for candidate in self._registry_probe_candidates(registry):
+            host = candidate.rsplit(':', 1)[0] if ':' in candidate else candidate
+            port = int(candidate.rsplit(':', 1)[1]) if ':' in candidate and candidate.rsplit(':', 1)[1].isdigit() else 443
+            schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
+            for scheme in schemes:
+                url = f"{scheme}://{candidate}/v2/{repo}/tags/list"
+                probe = self._http_text_probe(url, timeout=1.0)
+                attempts.append({**probe, "probeRegistry": candidate})
+                if probe["ok"]:
+                    try:
+                        payload = json.loads(str(probe.get("body") or "{}"))
+                    except json.JSONDecodeError:
+                        payload = {}
+                    tags = payload.get("tags") if isinstance(payload, dict) else None
+                    if isinstance(tags, list) and tag in tags:
+                        return {**probe, "image": image, "registry": registry, "probeRegistry": candidate, "repository": repo, "tag": tag, "tags": tags, "attempts": attempts}
+                    return {**probe, "ok": False, "message": f"仓库可访问，但未找到 tag {tag}", "image": image, "registry": registry, "probeRegistry": candidate, "repository": repo, "tag": tag, "tags": tags or [], "attempts": attempts}
         return {"ok": False, "message": "; ".join(item["message"] for item in attempts) or "无法查询镜像 tag", "image": image, "registry": registry, "attempts": attempts}
 
     def _registry_digest_probe(self, image: str) -> dict:
@@ -1079,28 +1101,29 @@ class SystemConfigService:
                 repo, tag = rest, 'latest'
         except ValueError:
             return {"ok": False, "message": "镜像地址缺少仓库前缀", "image": image}
-        host = registry.rsplit(':', 1)[0] if ':' in registry else registry
-        port = int(registry.rsplit(':', 1)[1]) if ':' in registry and registry.rsplit(':', 1)[1].isdigit() else 443
-        schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
         attempts = []
         accept = "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json"
-        for scheme in schemes:
-            url = f"{scheme}://{registry}/v2/{repo}/manifests/{tag}"
-            try:
-                req = UrlRequest(url, headers={"User-Agent": "crawler-platform-preflight/1.0", "Accept": accept})
-                with urlopen(req, timeout=1.0) as resp:
-                    digest = str(resp.headers.get("Docker-Content-Digest") or "")
-                    status_code = int(getattr(resp, "status", 0) or 0)
-                    result = {"ok": bool(digest.startswith("sha256:")), "statusCode": status_code, "url": url, "message": f"HTTP {status_code}", "digest": digest, "image": image, "registry": registry, "repository": repo, "tag": tag}
-                    attempts.append(result)
-                    if result["ok"]:
-                        return {**result, "attempts": attempts}
-            except HTTPError as exc:
-                attempts.append({"ok": False, "statusCode": exc.code, "url": url, "message": f"HTTP {exc.code}", "digest": ""})
-            except URLError as exc:
-                attempts.append({"ok": False, "statusCode": 0, "url": url, "message": str(getattr(exc, "reason", exc)), "digest": ""})
-            except Exception as exc:  # pragma: no cover
-                attempts.append({"ok": False, "statusCode": 0, "url": url, "message": str(exc), "digest": ""})
+        for candidate in self._registry_probe_candidates(registry):
+            host = candidate.rsplit(':', 1)[0] if ':' in candidate else candidate
+            port = int(candidate.rsplit(':', 1)[1]) if ':' in candidate and candidate.rsplit(':', 1)[1].isdigit() else 443
+            schemes = ["http", "https"] if port in {5000, 80} or host in {"localhost", "127.0.0.1"} else ["https", "http"]
+            for scheme in schemes:
+                url = f"{scheme}://{candidate}/v2/{repo}/manifests/{tag}"
+                try:
+                    req = UrlRequest(url, headers={"User-Agent": "crawler-platform-preflight/1.0", "Accept": accept})
+                    with urlopen(req, timeout=1.0) as resp:
+                        digest = str(resp.headers.get("Docker-Content-Digest") or "")
+                        status_code = int(getattr(resp, "status", 0) or 0)
+                        result = {"ok": bool(digest.startswith("sha256:")), "statusCode": status_code, "url": url, "message": f"HTTP {status_code}", "digest": digest, "image": image, "registry": registry, "probeRegistry": candidate, "repository": repo, "tag": tag}
+                        attempts.append(result)
+                        if result["ok"]:
+                            return {**result, "attempts": attempts}
+                except HTTPError as exc:
+                    attempts.append({"ok": False, "statusCode": exc.code, "url": url, "message": f"HTTP {exc.code}", "digest": "", "probeRegistry": candidate})
+                except URLError as exc:
+                    attempts.append({"ok": False, "statusCode": 0, "url": url, "message": str(getattr(exc, "reason", exc)), "digest": "", "probeRegistry": candidate})
+                except Exception as exc:  # pragma: no cover
+                    attempts.append({"ok": False, "statusCode": 0, "url": url, "message": str(exc), "digest": "", "probeRegistry": candidate})
         return {"ok": False, "message": "; ".join(item.get("message", "") for item in attempts) or "无法读取镜像 digest", "image": image, "registry": registry, "attempts": attempts, "digest": ""}
 
     @staticmethod

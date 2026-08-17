@@ -123,7 +123,7 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.70`） > 最新 commit message 中的版本号（如 `精简运行总览信息层级v1.0.70`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.71`） > 最新 commit message 中的版本号（如 `修复执行节点接入与退役链路v1.0.71`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -141,6 +141,10 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
+
+## 1.0.71 执行节点接入与退役链路
+
+1.0.71 修复执行节点 Registry 预检、Docker HTTP Registry 授权、真实镜像拉取错误、节点删除后的远端 Agent 残留以及接入记录清理问题。Registry 网络在 Join Token 消耗前验证；高风险 Docker 重启改为显式授权；在线节点清理通过 Agent 心跳指令完成退役后再删除平台记录。执行节点页面同时收敛信息密度，并统一修复 UTC 时间显示。
 
 ## 1.0.70 运行总览极简信息层级
 

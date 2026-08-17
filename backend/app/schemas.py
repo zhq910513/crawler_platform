@@ -355,6 +355,7 @@ class AgentJoinTokenCreate(ApiModel):
     control_plane_url: str = Field(default="", max_length=500)
     expires_in_hours: int = Field(default=24, ge=1, le=720)
     replace_existing_agent: bool = False
+    auto_configure_docker_registry: bool = False
 
 
 class AgentBootstrapEnvRequest(ApiModel):

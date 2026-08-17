@@ -4,13 +4,15 @@ set -Eeuo pipefail
 CONTROL_PLANE_URL="${CONTROL_PLANE_URL:-}"
 JOIN_TOKEN="${JOIN_TOKEN:-}"
 AGENT_IMAGE_FROM_ARGS="0"
-AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:1.0.70}"
+AGENT_IMAGE="${AGENT_IMAGE:-__CRAWLER_AGENT_IMAGE__}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
 FORCE="${FORCE:-0}"
 HEALTH_PORT="${AGENT_LOCAL_HEALTH_PORT:-18080}"
 AUTO_CONFIGURE_DOCKER_REGISTRY="${AUTO_CONFIGURE_DOCKER_REGISTRY:-0}"
 REPLACE_EXISTING_AGENT="${REPLACE_EXISTING_AGENT:-0}"
 CURRENT_STAGE="初始化"
+CURL_CONNECT_TIMEOUT="${CRAWLER_AGENT_CURL_CONNECT_TIMEOUT:-3}"
+CURL_MAX_TIME="${CRAWLER_AGENT_CURL_MAX_TIME:-10}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,7 +42,7 @@ report_join_failure(){
     reason_json="$(json_escape "${LAST_FAILURE_REASON:-安装脚本异常退出}")"
     token_json="$(json_escape "$JOIN_TOKEN")"
     body="{\"joinToken\":\"$token_json\",\"failureStage\":\"$stage_json\",\"failureReason\":\"$reason_json\",\"installReport\":{\"pass\":$PASS_COUNT,\"warn\":$WARN_COUNT,\"fail\":$FAIL_COUNT}}"
-    curl -fsSL -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/failures" -H 'Content-Type: application/json' --data "$body" >/dev/null 2>&1 || true
+    curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/failures" -H 'Content-Type: application/json' --data "$body" >/dev/null 2>&1 || true
   fi
 }
 trap report_join_failure EXIT
@@ -60,6 +62,15 @@ registry_likely_http(){
   port="${reg##*:}"
   [ "$reg" != "$port" ] || port=""
   [ "$host" = "localhost" ] || [ "$host" = "127.0.0.1" ] || [ "$port" = "5000" ] || [ "$port" = "80" ]
+}
+registry_probe(){
+  reg="$1"
+  scheme="https"
+  registry_likely_http "$reg" && scheme="http"
+  url="$scheme://$reg/v2/"
+  output="$(curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" "$url" 2>&1)" && { pass "镜像仓库网络可达：$reg"; return 0; }
+  fail "执行节点无法访问镜像仓库：$reg；curl：${output:-连接失败或超时}"
+  return 1
 }
 docker_insecure_registry_configured(){
   reg="$1"
@@ -121,7 +132,7 @@ configure_insecure_registry(){
     exit 1
   fi
   docker info >/dev/null 2>&1 || { fail "Docker 重启后不可用，请检查 Docker 服务和权限。"; exit 1; }
-  pass "Docker 已配置并重启，可访问 HTTP 私有仓库：$reg"
+  pass "Docker 已配置 HTTP 私有仓库并重启成功：$reg"
 }
 
 stage "参数校验"
@@ -150,7 +161,7 @@ if has_cmd curl; then pass "curl 已安装"; else fail "curl 未安装，无法�
 stage "控制端连通检查"
 # outbound platform check
 if [ -n "$CONTROL_PLANE_URL" ] && has_cmd curl; then
-  if curl -fsSL --connect-timeout 5 "$CONTROL_PLANE_URL/health" >/dev/null 2>&1 || curl -fsSL --connect-timeout 5 "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/ping" >/dev/null 2>&1; then
+  if curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" "$CONTROL_PLANE_URL/health" >/dev/null 2>&1 || curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/ping" >/dev/null 2>&1; then
     pass "控制端连通：$CONTROL_PLANE_URL"
   else
     fail "无法访问控制端：$CONTROL_PLANE_URL，请检查公网端口、防火墙、安全组和路由。"
@@ -181,6 +192,25 @@ else
   warn "未找到 ss/netstat，跳过本机端口占用检测"
 fi
 
+stage "执行组件镜像仓库网络检查"
+agent_image_first_component="$(image_registry_component "$AGENT_IMAGE")"
+if image_has_registry_prefix "$AGENT_IMAGE"; then
+  registry_probe "$agent_image_first_component" || true
+  if [ "$FAIL_COUNT" -eq 0 ] && registry_likely_http "$agent_image_first_component"; then
+    if ! docker_insecure_registry_configured "$agent_image_first_component"; then
+      if [ "$AUTO_CONFIGURE_DOCKER_REGISTRY" = "1" ]; then
+        configure_insecure_registry "$agent_image_first_component"
+      else
+        fail "Docker 尚未允许 HTTP 私有仓库：$agent_image_first_component。为避免未经授权修改 daemon.json/重启 Docker，本次安装已停止；确认宿主机允许重启 Docker 后，重新生成并执行带 --auto-configure-docker-registry 的接入命令。"
+      fi
+    else
+      pass "Docker 已允许 HTTP 私有仓库：$agent_image_first_component"
+    fi
+  fi
+else
+  warn "执行组件镜像未配置私有仓库前缀，远程节点会默认从 Docker Hub 拉取：$AGENT_IMAGE。"
+fi
+
 stage "安装前检查汇总"
 if [ "$FAIL_COUNT" -gt 0 ] && [ "$FORCE" != "1" ]; then
   echo "安装前检查未通过：PASS=$PASS_COUNT WARN=$WARN_COUNT FAIL=$FAIL_COUNT。修复后重试，或追加 --force 强制继续。" >&2
@@ -194,7 +224,7 @@ chmod 700 "$AGENT_HOME" "$AGENT_STATE_DIR" 2>/dev/null || true
 stage "换取执行节点配置"
 INSTALL_REPORT="{\"installMode\":\"$INSTALL_MODE\",\"pass\":$PASS_COUNT,\"warn\":$WARN_COUNT,\"fail\":$FAIL_COUNT,\"agentHome\":\"$AGENT_HOME\",\"stateDir\":\"$AGENT_STATE_DIR\",\"projectRoot\":\"$AGENT_PROJECT_ROOT\"}"
 BODY="{\"joinToken\":\"$JOIN_TOKEN\",\"hostname\":\"$(hostname 2>/dev/null || echo unknown)\",\"installReport\":$INSTALL_REPORT}"
-if curl -fsSL -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/env" -H 'Content-Type: application/json' --data "$BODY" > "$ENV_FILE.tmp"; then
+if curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/env" -H 'Content-Type: application/json' --data "$BODY" > "$ENV_FILE.tmp"; then
   mv "$ENV_FILE.tmp" "$ENV_FILE"
   tmp_env="$ENV_FILE.platform.tmp"
   grep -v '^AGENT_CONTROL_PLANE_URL=' "$ENV_FILE" > "$tmp_env" 2>/dev/null || true
@@ -215,40 +245,49 @@ else
 fi
 
 
-stage "执行组件镜像仓库检查"
+stage "执行组件镜像仓库确认"
 agent_image_first_component="$(image_registry_component "$AGENT_IMAGE")"
-if ! image_has_registry_prefix "$AGENT_IMAGE"; then
-  warn "执行组件镜像未配置私有仓库前缀，远程节点会默认从 Docker Hub 拉取：$AGENT_IMAGE。生产环境建议配置 CRAWLER_AGENT_IMAGE 为可访问的私有仓库镜像。"
-elif registry_likely_http "$agent_image_first_component"; then
-  configure_insecure_registry "$agent_image_first_component"
+if image_has_registry_prefix "$AGENT_IMAGE"; then
+  registry_probe "$agent_image_first_component" || { exit 1; }
+  if registry_likely_http "$agent_image_first_component" && ! docker_insecure_registry_configured "$agent_image_first_component"; then
+    if [ "$AUTO_CONFIGURE_DOCKER_REGISTRY" = "1" ]; then
+      configure_insecure_registry "$agent_image_first_component"
+    else
+      fail "Docker 尚未允许 HTTP 私有仓库：$agent_image_first_component。请重新生成明确授权 Docker 配置的接入命令后重试。"
+      exit 1
+    fi
+  fi
 fi
 
 stage "执行组件镜像拉取"
 if docker image inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
   pass "执行组件镜像本地已存在：$AGENT_IMAGE"
 else
-  if docker pull "$AGENT_IMAGE" >/dev/null 2>&1; then
+  pull_output="$(docker pull "$AGENT_IMAGE" 2>&1)" && pull_rc=0 || pull_rc=$?
+  if [ "$pull_rc" -eq 0 ]; then
     pass "执行组件镜像拉取成功：$AGENT_IMAGE"
   else
-    if image_has_registry_prefix "$AGENT_IMAGE" && registry_likely_http "$agent_image_first_component" && ! docker_insecure_registry_configured "$agent_image_first_component"; then
-      fail "执行组件镜像拉取失败且 Docker 未允许 HTTP 私有仓库：$agent_image_first_component。请追加 --auto-configure-docker-registry 授权脚本自动配置，或手动配置 insecure-registries 后重试。"
-    else
-      fail "执行组件镜像拉取失败且本机不存在：$AGENT_IMAGE。请先配置 CRAWLER_AGENT_IMAGE 为执行节点可访问的私有仓库镜像，或在本机预先构建/加载该镜像后重试。"
-    fi
+    printf '%s\n' "$pull_output" >&2
+    pull_reason="$(printf '%s\n' "$pull_output" | tail -n 5 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')"
+    fail "执行组件镜像拉取失败：$AGENT_IMAGE；Docker：${pull_reason:-未知错误}"
     exit 1
   fi
 fi
 
 stage "启动 Agent 容器"
 if docker ps -a --format '{{.Names}}' | grep -qx "$AGENT_CONTAINER_NAME"; then
-  if [ "$REPLACE_EXISTING_AGENT" = "1" ] || [ "$FORCE" = "1" ]; then
-    warn "将替换已有 Agent 容器：$AGENT_CONTAINER_NAME。请确认该节点没有正在运行的关键任务。"
+  existing_running="$(docker inspect -f '{{.State.Running}}' "$AGENT_CONTAINER_NAME" 2>/dev/null || echo false)"
+  if [ "$existing_running" != "true" ]; then
+    pass "检测到已停止的旧 Agent 容器，将自动移除后重新接入：$AGENT_CONTAINER_NAME"
+    docker rm -f "$AGENT_CONTAINER_NAME" >/dev/null 2>&1 || { fail "无法移除已停止的旧 Agent 容器：$AGENT_CONTAINER_NAME"; exit 1; }
+  elif [ "$REPLACE_EXISTING_AGENT" = "1" ] || [ "$FORCE" = "1" ]; then
+    warn "将替换正在运行的 Agent 容器：$AGENT_CONTAINER_NAME。请确认该节点没有正在运行的关键任务。"
     docker rm -f "$AGENT_CONTAINER_NAME" >/dev/null 2>&1 || { fail "无法移除已有 Agent 容器：$AGENT_CONTAINER_NAME"; exit 1; }
   else
-    fail "已存在 Agent 容器：$AGENT_CONTAINER_NAME。为避免误中断任务，默认不替换；如确认重新接入，请追加 --replace-existing-agent。"
+    fail "已存在正在运行的 Agent 容器：$AGENT_CONTAINER_NAME。为避免误中断任务，默认不替换；如确认重新接入，请追加 --replace-existing-agent。"
     exit 1
   fi
 fi
-docker run -d --name "$AGENT_CONTAINER_NAME" --restart=always --network host --env-file "$ENV_FILE" -v /var/run/docker.sock:/var/run/docker.sock -v "$AGENT_STATE_DIR":/var/lib/crawler-agent -v "$AGENT_PROJECT_ROOT":/data/crawler-agent "$AGENT_IMAGE" >/dev/null || { fail "Agent 容器启动失败，请检查镜像、Docker 权限和挂载目录。"; exit 1; }
+docker run -d --name "$AGENT_CONTAINER_NAME" --restart=always --network host --env-file "$ENV_FILE" -e AGENT_HOST_CONFIG_DIR=/var/lib/crawler-agent-host-config -v /var/run/docker.sock:/var/run/docker.sock -v "$AGENT_HOME":/var/lib/crawler-agent-host-config -v "$AGENT_STATE_DIR":/var/lib/crawler-agent -v "$AGENT_PROJECT_ROOT":/data/crawler-agent "$AGENT_IMAGE" >/dev/null || { fail "Agent 容器启动失败，请检查镜像、Docker 权限和挂载目录。"; exit 1; }
 pass "crawler-agent 已安装/启动：$AGENT_CONTAINER_NAME"
 echo "✅ Agent 接入完成。请回到控制台查看心跳、Docker、磁盘、镜像仓库和首次 doctor 结果。"

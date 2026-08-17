@@ -42,11 +42,12 @@ export function resetUserPassword(userId: number, payload: UserPasswordResetRequ
 
 export function listServers(companyId?: number) { return request<ServerNode[]>(http.get('/servers', { params: { companyId } })) }
 export function createServer(payload: ServerCreateRequest) { return request<ServerNode>(http.post('/servers', payload)) }
-export function deleteServer(serverId: number) { return request<{ serverId: number; deleted: boolean; cleanupCounts: Record<string, number> }>(http.delete(`/servers/${serverId}`)) }
+export function deleteServer(serverId: number) { return request<{ serverId: number; deleted: boolean; decommissioning?: boolean; cleanupCounts: Record<string, number>; message?: string; manualCleanupCommand?: string }>(http.delete(`/servers/${serverId}`)) }
 export function registerAgent(payload: AgentRegistrationRequest) { return request<{ agentToken: string }>(http.post('/agents', payload)) }
 
 export function createAgentJoinToken(payload: AgentJoinTokenCreateRequest) { return request<AgentJoinTokenResult>(http.post('/servers/agent-join-tokens', payload)) }
 export function listAgentJoinTokens(companyId?: number) { return request<Record<string, unknown>[]>(http.get('/servers/agent-join-tokens', { params: { companyId } })) }
+export function deleteAgentJoinToken(tokenId: number) { return request<{ tokenId: number; deleted: boolean }>(http.delete(`/servers/agent-join-tokens/${tokenId}`)) }
 
 
 export function getSpiderProjectCicdOneClickGuide(params?: { provider?: 'github' | 'gitlab'; companyId?: number; detectedBaseUrl?: string }) { return request<SpiderProjectCicdGuide>(http.get('/cicd/spider-projects/one-click-guide', { params })) }
