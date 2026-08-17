@@ -149,7 +149,7 @@
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
         <div v-if="controlPreflight.nextAction" class="check-suggestion">下一步：{{ controlPreflight.nextAction }}</div>
-        <el-button size="small" @click="router.push('/dashboard?focus=platformPreflight')">查看运行总览平台自检</el-button>
+        <el-button size="small" @click="router.push('/dashboard?focus=platformPreflight')">查看平台状态</el-button>
       </div>
       <el-form label-position="top" class="drawer-form">
         <el-form-item label="所属公司"><el-input :model-value="selectedCompanyName" disabled /></el-form-item>

@@ -123,7 +123,7 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.69`） > 最新 commit message 中的版本号（如 `运行总览事实检测纠偏v1.0.69`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.70`） > 最新 commit message 中的版本号（如 `精简运行总览信息层级v1.0.70`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -141,6 +141,10 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
+
+## 1.0.70 运行总览极简信息层级
+
+1.0.70 将运行总览首页收敛为核心指标、平台状态和当前异常三层信息；正常状态只显示结论与少量计数，检测项、待自动验证、安全与接入建议、检测历史全部下沉到“查看详情”抽屉，避免运行首页被检测过程和历史记录占满。
 
 ## 1.0.69 运行总览事实检测纠偏
 

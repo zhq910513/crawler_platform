@@ -1124,7 +1124,7 @@ def test_preflight_unknown_external_conditions_are_pending_not_warning(monkeypat
     from app.models import CrawlerAgent
     from app.services.system_config_service import SystemConfigService
 
-    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.69'
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.70'
     monkeypatch.setattr(settings, 'crawler_agent_image', target_image)
     monkeypatch.setattr(settings, 'crawler_agent_image_digest', '')
     monkeypatch.setattr(SystemConfigService, '_http_probe', staticmethod(lambda url, timeout=1.0: {'ok': False, 'statusCode': 0, 'url': url, 'message': 'simulated control-plane loopback failure'}))
@@ -1160,7 +1160,7 @@ def test_preflight_runtime_evidence_overrides_control_plane_loopback_probe(monke
     client = TestClient(app)
     _, headers = login(client)
     _, _, agents, _ = create_flow(client, headers, 'runtimeevidence', ['srv-runtimeevidence-a'])
-    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.69'
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.70'
     actual_digest = 'sha256:' + ('9' * 64)
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
         'agentInstanceId': 'runtime-evidence-agent',
@@ -1203,7 +1203,7 @@ def test_preflight_reports_confirmed_offline_agent_as_runtime_warning(monkeypatc
     client = TestClient(app)
     _, headers = login(client)
     _, _, agents, _ = create_flow(client, headers, 'offlineevidence', ['srv-offlineevidence-a'])
-    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.69'
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.70'
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
         'agentInstanceId': 'offline-evidence-agent',
         'agentImage': target_image,

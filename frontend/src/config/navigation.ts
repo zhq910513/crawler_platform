@@ -20,7 +20,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: 'business',
     title: '经营驾驶舱',
     items: [
-      { path: '/dashboard', title: '运行总览', subtitle: '整体运行情况与待处理事项', adminOnly: true, icon: Histogram, flow: 'business' },
+      { path: '/dashboard', title: '运行总览', subtitle: '平台运行状态与自动检测', adminOnly: true, icon: Histogram, flow: 'business' },
       { path: '/running-center', title: '运行中心', subtitle: '按公司、项目、任务查看运行状态与处理建议', icon: DataAnalysis, flow: 'business' },
     ],
   },
