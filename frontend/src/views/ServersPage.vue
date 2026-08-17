@@ -82,7 +82,7 @@
         <div class="preflight-header">
           <div>
             <div class="preflight-title">接入前检查</div>
-            <div class="muted">平台自检：必须处理 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
+            <div class="muted">自动检测：已确认异常 {{ controlPreflight.blockingCount }}，运行提醒 {{ controlPreflight.warningCount }}，待场景验证 {{ controlPreflight.pendingCount }}。待场景项无需提前人工确认。</div>
           </div>
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
@@ -173,8 +173,8 @@ function percent(value?: number | null) { if (value === null || value === undefi
 function boolText(value?: boolean | null) { if (value === null || value === undefined) return '-'; return value ? '可用' : '不可用' }
 function healthTag(status: string) { if (status === 'HEALTHY') return 'success'; if (status === 'OFFLINE' || status === 'UNHEALTHY') return 'danger'; return 'warning' }
 function capacityTag(status: string) { if (status === 'NORMAL') return 'success'; if (status === 'EXHAUSTED' || status === 'FULL' || status === 'DRAINED') return 'danger'; return 'warning' }
-function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '必须处理'; return '需确认' }
+function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; if (status === 'PENDING') return 'info'; return 'warning' }
+function preflightLabel(status: string) { if (status === 'PASS') return '正常'; if (status === 'FAIL') return '已确认异常'; if (status === 'PENDING') return '待场景验证'; return '运行提醒' }
 function goDashboardPreflight() { router.push('/dashboard?focus=platformPreflight') }
 function isLoopbackUrl(value: string) { try { const host = new URL(value).hostname.toLowerCase(); return ['127.0.0.1', 'localhost', '0.0.0.0', '::1'].includes(host) } catch { return false } }
 const configuredControlPlaneUrl = ref('')

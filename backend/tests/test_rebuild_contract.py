@@ -1117,6 +1117,126 @@ def test_control_plane_preflight_surfaces_required_ports_before_agent_join() -> 
     assert 'bash deploy/scripts/prepare-agent-image.sh' in unavailable['manualCommand']
 
 
+def test_preflight_unknown_external_conditions_are_pending_not_warning(monkeypatch) -> None:
+    migrate()
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.models import CrawlerAgent
+    from app.services.system_config_service import SystemConfigService
+
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.69'
+    monkeypatch.setattr(settings, 'crawler_agent_image', target_image)
+    monkeypatch.setattr(settings, 'crawler_agent_image_digest', '')
+    monkeypatch.setattr(SystemConfigService, '_http_probe', staticmethod(lambda url, timeout=1.0: {'ok': False, 'statusCode': 0, 'url': url, 'message': 'simulated control-plane loopback failure'}))
+    monkeypatch.setattr(SystemConfigService, '_registry_probe', lambda self, registry: {'ok': False, 'statusCode': 0, 'url': registry, 'message': 'simulated registry probe failure'})
+    monkeypatch.setattr(SystemConfigService, '_registry_tag_probe', lambda self, image: {'ok': False, 'message': 'simulated tag probe failure', 'image': image})
+    monkeypatch.setattr(SystemConfigService, '_registry_digest_probe', lambda self, image: {'ok': False, 'message': 'simulated digest probe failure', 'image': image, 'digest': ''})
+    with SessionLocal() as db:
+        for agent in db.query(CrawlerAgent).all():
+            agent.connection_status = 'UNREGISTERED'
+            agent.last_heartbeat_at = None
+        db.commit()
+        preflight = SystemConfigService(db).inspect_control_plane_preflight('http://203.0.113.10:8080')
+
+    assert preflight['status'] == 'PASS'
+    assert preflight['warningCount'] == 0
+    assert preflight['blockingCount'] == 0
+    assert preflight['pendingCount'] >= 4
+    assert preflight['readyForRemoteAgent'] is True
+    assert preflight['securityAdvisoryCount'] >= 1
+    assert not any(item['key'] == 'agent_registry_security' for item in preflight['checks'])
+    assert all(item['status'] != 'WARN' for item in preflight['checks'])
+    pending = [item for item in preflight['checks'] if item['status'] == 'PENDING']
+    assert pending
+    assert all(item.get('automationType') == 'AUTO_VERIFY' for item in pending)
+    assert all(item.get('executionChannel') == 'AUTO_VERIFY' for item in pending)
+    assert all(item.get('handler') == '平台自动验证' for item in pending)
+    assert all(not item.get('actionEndpoint') and not item.get('manualCommand') for item in pending)
+    assert '无需提前人工确认' in preflight['summary']
+
+
+def test_preflight_runtime_evidence_overrides_control_plane_loopback_probe(monkeypatch) -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    _, _, agents, _ = create_flow(client, headers, 'runtimeevidence', ['srv-runtimeevidence-a'])
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.69'
+    actual_digest = 'sha256:' + ('9' * 64)
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
+        'agentInstanceId': 'runtime-evidence-agent',
+        'agentImage': target_image,
+        'agentImageDigest': actual_digest,
+        'agentImageActualDigest': actual_digest,
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+    })
+    assert heartbeat.status_code == 200
+
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.services.system_config_service import SystemConfigService
+    monkeypatch.setattr(settings, 'crawler_agent_image', target_image)
+    monkeypatch.setattr(settings, 'crawler_agent_image_digest', '')
+    monkeypatch.setattr(SystemConfigService, '_http_probe', staticmethod(lambda url, timeout=1.0: {'ok': False, 'statusCode': 0, 'url': url, 'message': 'simulated control-plane loopback failure'}))
+    monkeypatch.setattr(SystemConfigService, '_registry_probe', lambda self, registry: {'ok': False, 'statusCode': 0, 'url': registry, 'message': 'simulated registry probe failure'})
+    monkeypatch.setattr(SystemConfigService, '_registry_tag_probe', lambda self, image: {'ok': False, 'message': 'simulated tag probe failure', 'image': image})
+    monkeypatch.setattr(SystemConfigService, '_registry_digest_probe', lambda self, image: {'ok': False, 'message': 'simulated digest probe failure', 'image': image, 'digest': ''})
+    with SessionLocal() as db:
+        preflight = SystemConfigService(db).inspect_control_plane_preflight('http://203.0.113.10:8080')
+
+    by_key = {item['key']: item for item in preflight['checks']}
+    assert by_key['control_plane_health']['status'] == 'PASS'
+    assert by_key['control_plane_health']['evidenceSource'] == '执行节点实时心跳'
+    assert by_key['agent_registry']['status'] == 'PASS'
+    assert by_key['agent_registry']['evidenceSource'] == '执行节点实时镜像证据'
+    assert by_key['agent_image_tag']['status'] == 'PASS'
+    assert by_key['agent_image_digest']['status'] == 'PASS'
+    assert by_key['agent_image_digest']['details']['digest'] == actual_digest
+    assert by_key['agent_runtime_heartbeat']['status'] == 'PASS'
+    assert by_key['agent_runtime_docker']['status'] == 'PASS'
+    assert preflight['warningCount'] == 0
+    assert preflight['status'] == 'PASS'
+
+
+def test_preflight_reports_confirmed_offline_agent_as_runtime_warning(monkeypatch) -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    _, _, agents, _ = create_flow(client, headers, 'offlineevidence', ['srv-offlineevidence-a'])
+    target_image = 'registry.example.test:5000/crawler_platform_agent:1.0.69'
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
+        'agentInstanceId': 'offline-evidence-agent',
+        'agentImage': target_image,
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+    })
+    assert heartbeat.status_code == 200
+
+    from app.config import settings
+    from app.db import SessionLocal
+    from app.models import CrawlerAgent
+    from app.services.system_config_service import SystemConfigService
+    monkeypatch.setattr(settings, 'crawler_agent_image', target_image)
+    monkeypatch.setattr(SystemConfigService, '_http_probe', staticmethod(lambda url, timeout=1.0: {'ok': True, 'statusCode': 200, 'url': url, 'message': 'ok'}))
+    monkeypatch.setattr(SystemConfigService, '_registry_probe', lambda self, registry: {'ok': True, 'statusCode': 200, 'url': registry, 'message': 'ok'})
+    monkeypatch.setattr(SystemConfigService, '_registry_tag_probe', lambda self, image: {'ok': True, 'message': 'ok', 'image': image})
+    monkeypatch.setattr(SystemConfigService, '_registry_digest_probe', lambda self, image: {'ok': True, 'message': 'ok', 'image': image, 'digest': 'sha256:' + ('8' * 64)})
+    with SessionLocal() as db:
+        agent = db.query(CrawlerAgent).filter(CrawlerAgent.agent_code == 'agent-srv-offlineevidence-a').one()
+        agent.connection_status = 'OFFLINE'
+        db.commit()
+        preflight = SystemConfigService(db).inspect_control_plane_preflight('http://203.0.113.10:8080')
+        agent.connection_status = 'UNREGISTERED'
+        agent.last_heartbeat_at = None
+        db.commit()
+
+    heartbeat_check = next(item for item in preflight['checks'] if item['key'] == 'agent_runtime_heartbeat')
+    assert heartbeat_check['status'] == 'WARN'
+    assert heartbeat_check['evidenceSource'] == '执行节点连接状态与最近心跳'
+    assert preflight['warningCount'] >= 1
+    assert preflight['status'] == 'WARN'
+
+
 def test_agent_join_token_bootstrap_and_install_script() -> None:
     migrate()
     client = TestClient(app)
@@ -1131,7 +1251,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     })
     assert remote_preflight.status_code == 400
     assert remote_preflight.json()['code'] == 40075
-    assert '平台自检' in remote_preflight.json()['message']
+    assert '自动检测' in remote_preflight.json()['message']
     assert '执行组件镜像地址' in remote_preflight.json()['message']
     token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
         'companyId': company['companyId'],

@@ -144,7 +144,7 @@
         <div class="preflight-header">
           <div>
             <div class="preflight-title">接入前检查</div>
-            <div class="muted">平台自检：必须处理 {{ controlPreflight.blockingCount }}，需确认 {{ controlPreflight.warningCount }}。完整详情放在运行总览。</div>
+            <div class="muted">自动检测：已确认异常 {{ controlPreflight.blockingCount }}，运行提醒 {{ controlPreflight.warningCount }}，待场景验证 {{ controlPreflight.pendingCount }}。待场景项无需提前人工确认。</div>
           </div>
           <el-tag :type="preflightTag(controlPreflight.status)" effect="light">{{ preflightLabel(controlPreflight.status) }}</el-tag>
         </div>
@@ -292,8 +292,8 @@ function resolveControlBaseUrl(value?: string) {
 }
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
-function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; return 'warning' }
-function preflightLabel(status: string) { if (status === 'PASS') return '通过'; if (status === 'FAIL') return '必须处理'; return '需确认' }
+function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; if (status === 'PENDING') return 'info'; return 'warning' }
+function preflightLabel(status: string) { if (status === 'PASS') return '正常'; if (status === 'FAIL') return '已确认异常'; if (status === 'PENDING') return '待场景验证'; return '运行提醒' }
 function serverBlockReason(server: ServerNode) {
   if (server.manageStatus !== 'ENABLED') return '已停用'
   if (!['HEALTHY', 'DEGRADED'].includes(server.healthStatus)) return server.healthStatus === 'OFFLINE' ? '离线' : '健康异常'

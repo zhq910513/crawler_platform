@@ -123,7 +123,7 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.68`） > 最新 commit message 中的版本号（如 `平台访问入口统一v1.0.68`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.69`） > 最新 commit message 中的版本号（如 `运行总览事实检测纠偏v1.0.69`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 只需要单独同步版本时，可执行：
 
@@ -141,6 +141,10 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
 
+
+## 1.0.69 运行总览事实检测纠偏
+
+1.0.69 将运行总览从“预设管理员待办清单”纠正为“真实运行事实观察面”：主动探测失败但没有足够外部证据时使用“待场景验证”，不再自动变成运行告警；已有在线执行节点心跳、Docker 状态和实际运行镜像 digest 会作为更强运行证据。安全组、Registry 认证/TLS 等平台无法直接读取的云侧治理项独立为安全建议，不参与运行健康、异常数量或节点接入就绪判定。
 
 ## 1.0.68 Agent 镜像下发与运行版本说明
 

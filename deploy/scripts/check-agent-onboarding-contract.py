@@ -48,32 +48,47 @@ if "平台镜像仓库公网访问" not in system_config_service or "/api/v1/age
     errors.append("控制端预检未覆盖平台镜像仓库公网访问或安装脚本地址")
 if "controlPreflight" not in frontend or "接入前检查" not in frontend or "查看运行总览平台自检" not in frontend:
     errors.append("执行节点接入前端未展示控制端接入预检")
-if "完整平台自检已移到运行总览" not in settings_page:
-    errors.append("系统设置页应只保留控制端地址配置，并提示到运行总览查看完整平台自检")
+if "运行总览会自动检测当前可证明的运行条件" not in settings_page:
+    errors.append("系统设置页必须说明运行总览按真实证据自动检测，控制端无法证明的网络项等待目标节点验证")
 
 if "执行节点验证脚本" in dashboard_page or "复制执行节点验证" in dashboard_page:
     errors.append("运行总览平台自检不能再引导复制执行节点验证脚本")
-if "platformPreflight" not in dashboard_page or "平台自检" not in dashboard_page or "重新检测" not in dashboard_page or "平台自检详情" not in dashboard_page or "本次检测变化" not in dashboard_page:
-    errors.append("运行总览未作为平台自检主入口展示摘要、详情抽屉和手动重新检测变化")
+if "platformPreflight" not in dashboard_page or "运行状态自动检测" not in dashboard_page or "重新检测" not in dashboard_page or "运行状态自动检测详情" not in dashboard_page or "本次检测变化" not in dashboard_page:
+    errors.append("运行总览未作为运行事实自动检测主入口展示摘要、详情抽屉和手动重新检测变化")
 if "prepareAgentImageAction" not in dashboard_page or "自动准备执行组件镜像" not in dashboard_page or "受控白名单动作" not in dashboard_page:
     errors.append("运行总览平台自检缺少一键准备执行组件镜像的受控动作入口")
 if "actionAvailable" not in dashboard_page or "fallbackScriptCandidate" not in dashboard_page or "securityGroupChecklistText" not in dashboard_page:
-    errors.append("运行总览必须按真实动作能力区分页面一键处理、平台服务器兜底和云安全组确认")
+    errors.append("运行总览必须按真实动作能力区分页面一键处理、平台服务器兜底和独立安全治理建议")
 
 if "status-chip-grid" not in dashboard_page or "chip-label" not in dashboard_page:
     errors.append("运行总览平台自检状态区必须使用分组胶囊，避免状态、数量和时间挤压在一起")
-if "preflightIcon" not in dashboard_page or "?" in re.search(r"preflightIcon[^\n]*", dashboard_page).group(0):
-    errors.append("运行总览需确认状态不能继续使用问号图标，应使用信息提示语义")
+icon_line = re.search(r"preflightIcon[^\n]*", dashboard_page)
+if "preflightIcon" not in dashboard_page or (icon_line and "?" in icon_line.group(0)):
+    errors.append("运行总览待场景验证/运行提醒不能继续使用问号图标，应使用明确状态语义")
 if "nodeVerificationScript" in dashboard_page or "执行节点验证脚本" in dashboard_page or "set -Eeuo pipefail" in dashboard_page:
     errors.append("运行总览不得展示执行节点验证脚本；执行节点验证应放在执行节点接入流程")
-if "securityGroupChecklist" not in dashboard_page or "安全组规则清单" not in dashboard_page:
-    errors.append("运行总览需确认状态必须展示平台服务器安全组 / 防火墙规则清单")
-if "slice(0, 3)" in dashboard_page and "history-changes" not in dashboard_page:
-    errors.append("运行总览当前重点事项不能固定只展示 3 项导致数量不一致")
+if "securityGroupChecklist" not in dashboard_page or "安全治理建议（不影响运行状态）" not in dashboard_page:
+    errors.append("运行总览必须把安全组 / 防火墙内容隔离为不影响运行状态的安全治理建议")
+if "currentProblems" not in dashboard_page or "['FAIL', 'WARN'].includes(item.status)" not in dashboard_page:
+    errors.append("运行总览当前异常必须只聚合已确认 FAIL/WARN，不能把 PENDING 当成待办")
 if "slice(0, 6)" not in dashboard_page or "hiddenProblemCount" not in dashboard_page:
-    errors.append("运行总览当前重点事项必须展示更多确认项，并提示剩余项")
+    errors.append("运行总览当前异常列表必须支持展示完整数量语义，并提示剩余项")
 if "normalizePreflightText" not in dashboard_page or "必须处理项" not in dashboard_page:
     errors.append("运行总览历史快照必须对旧文案做展示归一")
+if '"PENDING"' not in system_config_service or '"pendingCount"' not in system_config_service or '"verifiedCount"' not in system_config_service:
+    errors.append("控制端自动检测缺少 PENDING/已验证计数，未知状态仍可能被误判为运行告警")
+if '"AUTO_VERIFY"' not in system_config_service or 'effective_automation_type = "AUTO_VERIFY"' not in system_config_service:
+    errors.append("PENDING 必须从后端契约开始归属平台自动验证，不能残留人工处理角色或修复动作")
+if '"runtimeEvidence"' not in system_config_service or "_runtime_agent_evidence" not in system_config_service:
+    errors.append("控制端自动检测缺少执行节点实时心跳/Docker/digest 运行证据")
+if '"securityAdvisories"' not in system_config_service or "security_advisories.append" not in system_config_service:
+    errors.append("云侧不可自动读取的安全治理信息必须独立返回，不能混入运行健康检查")
+if 'warning_count = sum(1 for item in checks if item["status"] == "WARN")' not in system_config_service:
+    errors.append("运行提醒数量必须只统计已确认 WARN，不能统计 PENDING 或安全建议")
+if '"readyForRemoteAgent": blocking_count == 0' not in system_config_service:
+    errors.append("远程节点接入就绪必须只由已确认阻断项决定，PENDING 不得误阻断")
+if "runtimeIssues" not in dashboard_page or "pendingChecks" not in dashboard_page:
+    errors.append("运行总览必须分离真实运行异常与待场景验证项")
 if "configured_digest" not in system_config_service or "部署阶段已记录执行组件镜像校验值" not in system_config_service:
     errors.append("控制端预检必须使用部署阶段已记录的执行组件镜像校验值降低镜像版本/校验值误报")
 if "平台可一键处理" in dashboard_page or "平台脚本可处理" in dashboard_page:
@@ -129,4 +144,4 @@ if errors:
     for item in errors:
         print("- " + item, file=sys.stderr)
     sys.exit(1)
-print("执行节点接入合约检查通过：安装脚本、控制端地址、配置助手和前端向导符合要求。")
+print("执行节点接入合约检查通过：节点接入、运行事实自动检测、PENDING 语义和安全治理隔离符合要求。")

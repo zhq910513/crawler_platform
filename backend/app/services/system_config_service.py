@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from urllib.error import HTTPError, URLError
+from datetime import timedelta
 import json
 import os
 from pathlib import Path
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.errors import AppError
-from app.models import PlatformPreflightSnapshot, SysConfig, SysUser
+from app.models import CrawlerAgent, CrawlerServer, PlatformPreflightSnapshot, SysConfig, SysUser
 from app.schemas import SystemSettingsUpdate
 from app.services.audit import write_operation_log
 from app.services.permissions import require_super_admin
@@ -64,7 +65,9 @@ class SystemConfigService:
         base = (control_plane_url or self.resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")
         checks: list[dict] = []
         required_ports: list[dict] = []
+        security_advisories: list[dict] = []
         checked_at = utcnow().isoformat()
+        runtime_evidence = self._runtime_agent_evidence()
         platform_action_capability = self._platform_action_capability_payload()
         prepare_agent_image_command = platform_action_capability["manualCommand"]
         source_key = (check_source or "AUTO").strip().upper()
@@ -100,13 +103,32 @@ class SystemConfigService:
             action_available: bool | None = None,
             action_unavailable_reason: str = "",
             manual_command: str = "",
+            evidence_source: str = "",
+            evidence_scope: str = "",
         ) -> None:
             resolved_action_available = bool(action_endpoint) if action_available is None else bool(action_available)
-            if automation_type == "PLATFORM_SCRIPT" and action_endpoint:
+            effective_automation_type = automation_type
+            effective_handler = handler
+            effective_action_label = action_label
+            effective_auto_action_command = auto_action_command
+            effective_action_endpoint = action_endpoint
+            effective_action_button_label = action_button_label
+            effective_manual_command = manual_command
+            if status_value == "PENDING":
+                resolved_action_available = False
+                effective_automation_type = "AUTO_VERIFY"
+                effective_handler = "平台自动验证"
+                effective_action_label = "等待自动验证"
+                effective_auto_action_command = ""
+                effective_action_endpoint = ""
+                effective_action_button_label = ""
+                effective_manual_command = ""
+                action_unavailable_reason = ""
+            elif automation_type == "PLATFORM_SCRIPT" and action_endpoint:
                 resolved_action_available = bool(platform_action_capability.get("available")) if action_available is None else bool(action_available)
                 if not resolved_action_available and not action_unavailable_reason:
                     action_unavailable_reason = str(platform_action_capability.get("reason") or "当前页面未启用白名单动作执行能力。")
-            resolved_channel = execution_channel or self._execution_channel(automation_type, resolved_action_available)
+            resolved_channel = execution_channel or self._execution_channel(effective_automation_type, resolved_action_available)
             checks.append({
                 "key": key,
                 "label": label,
@@ -118,18 +140,20 @@ class SystemConfigService:
                 "verifyCommand": verify_command,
                 "impact": impact or "影响执行节点接入链路。",
                 "route": route,
-                "actionLabel": action_label,
+                "actionLabel": effective_action_label,
                 "category": category,
                 "canIgnore": bool(can_ignore),
-                "automationType": automation_type,
-                "handler": handler,
-                "autoActionCommand": auto_action_command,
-                "actionEndpoint": action_endpoint,
-                "actionButtonLabel": action_button_label,
+                "automationType": effective_automation_type,
+                "handler": effective_handler,
+                "autoActionCommand": effective_auto_action_command,
+                "actionEndpoint": effective_action_endpoint,
+                "actionButtonLabel": effective_action_button_label,
                 "actionAvailable": resolved_action_available,
                 "actionUnavailableReason": action_unavailable_reason,
                 "executionChannel": resolved_channel,
-                "manualCommand": manual_command or (prepare_agent_image_command if automation_type == "PLATFORM_SCRIPT" else ""),
+                "manualCommand": effective_manual_command or (prepare_agent_image_command if effective_automation_type == "PLATFORM_SCRIPT" else ""),
+                "evidenceSource": evidence_source,
+                "evidenceScope": evidence_scope,
                 "details": details or {},
             })
 
@@ -176,7 +200,7 @@ class SystemConfigService:
                 "protocol": "TCP",
                 "reason": "执行节点下载安装脚本、调用 /health、上报心跳和领取任务。",
                 "impact": "平台入口需要对执行节点开放，用于下载安装脚本、上报心跳和领取任务。",
-                "action": f"在云防火墙/安全组确认 {port}/TCP 的入站规则；来源建议限制为管理员、业务访问方和执行节点公网 IP，处理后点击运行总览的重新检测。",
+                "action": f"如需治理云侧访问范围，请按实际访问方最小范围配置 {port}/TCP；平台不读取云安全组规则本身，真实连通性由主动探测和目标节点预检验证。",
                 "actionLabel": "放行平台入口端口",
                 "verifyCommand": health_command,
                 "automationType": "CLOUD_CONSOLE",
@@ -198,56 +222,68 @@ class SystemConfigService:
                     category="平台访问入口",
                 )
             elif self._is_private_host(host):
+                private_host_verified = runtime_evidence["onlineAgentCount"] > 0
                 add_check(
                     "control_plane_public_host",
-                    "公网地址可用性",
-                    "WARN",
-                    "当前地址看起来是内网地址，只有同一内网/VPN 内的执行节点才能访问。",
+                    "控制端网络范围",
+                    "PASS" if private_host_verified else "PENDING",
+                    (
+                        f"当前使用内网/VPN 地址，已有 {runtime_evidence['onlineAgentCount']} 个在线执行节点持续上报心跳，现有节点通信已由运行事实验证。"
+                        if private_host_verified
+                        else "当前使用内网/VPN 地址；尚无在线执行节点可提供链路证据，新节点接入时会在目标节点自动验证网络可达性。"
+                    ),
                     False,
-                    "如果执行节点不在同一网络，请改成公网 IP 或域名；如果这是内网专用部署，请确认平台服务器入口端口仅对内网/VPN 开放。",
-                    {"host": host},
-                    action="操作员确认该控制端地址的网络边界：公网节点请配置公网 IP/域名，内网节点请确认 VPN/内网路由和入口端口策略。",
-                    verify_command=health_command,
-                    impact="如果执行节点不在同一内网/VPN，会无法下载脚本和上报心跳。",
-                    route="/settings?focus=controlPlaneUrl",
-                    action_label="确认入口网络策略",
+                    "新节点接入时由目标节点预检自动验证；无需因为平台无法读取云网络策略而提前人工确认。",
+                    {"host": host, "runtimeEvidence": runtime_evidence},
+                    impact="该地址适用于同一内网/VPN 的节点；其他网络的新节点会在接入预检时得到明确结果。",
                     category="平台访问入口",
                     can_ignore=True,
+                    evidence_source="执行节点实时心跳" if private_host_verified else "等待目标节点预检",
+                    evidence_scope="已有在线执行节点" if private_host_verified else "新节点接入场景",
                 )
             else:
                 add_check("control_plane_public_host", "公网地址可用性", "PASS", "控制端地址不是本机回环地址。", False, "", {"host": host}, impact="远程节点可以使用该地址作为控制端入口。", category="平台访问入口")
 
             health = self._http_probe(f"{base}/health")
+            health_runtime_verified = not health["ok"] and runtime_evidence["onlineAgentCount"] > 0
             add_check(
                 "control_plane_health",
-                "平台健康接口",
-                "PASS" if health["ok"] else "WARN",
-                "控制端 /health 可访问。" if health["ok"] else f"控制端本机未能确认 /health 可访问：{health['message']}。这可能是云服务器 NAT 回环或容器网络限制，不代表执行节点一定不可访问。",
+                "平台通信链路",
+                "PASS" if health["ok"] or health_runtime_verified else "PENDING",
+                (
+                    "控制端 /health 主动探测成功。"
+                    if health["ok"]
+                    else (
+                        f"控制端本机公网回环探测失败（{health['message']}），但已有 {runtime_evidence['onlineAgentCount']} 个在线执行节点持续上报心跳，现有节点到平台的通信链路已由运行事实验证。"
+                        if health_runtime_verified
+                        else f"控制端本机未能通过公网地址验证 /health（{health['message']}）；当前没有在线执行节点提供外部链路证据，将在新节点接入时自动验证。"
+                    )
+                ),
                 False,
-                "请确认平台服务器入口端口、安全组、防火墙和 Web/API 容器端口映射；控制端自测公网地址失败可能是 NAT 回环限制，不等于外部不可访问。",
-                health,
-                action=f"操作员在云控制台或服务器防火墙确认平台入口 {port}/TCP 已按最小来源放行，并确认 docker compose 端口映射和 Web 容器健康。",
+                "新节点会在目标服务器执行 /health 预检；控制端本机公网回环失败不会被直接判定为运行异常。",
+                {**health, "runtimeEvidence": runtime_evidence},
                 verify_command=health_command,
-                impact="如果平台入口端口未正确开放，执行节点后续心跳、领取任务都会失败。",
-                action_label="确认平台入口端口",
+                impact="已有在线节点的实时心跳可证明其到平台的通信链路；未来新节点仍按目标节点网络单独验证。",
                 category="平台访问入口",
                 can_ignore=True,
+                evidence_source="控制端主动探测" if health["ok"] else ("执行节点实时心跳" if health_runtime_verified else "等待目标节点预检"),
+                evidence_scope="当前平台入口" if health["ok"] else ("已有在线执行节点" if health_runtime_verified else "新节点接入场景"),
             )
             installer = self._http_probe(f"{base}/api/v1/agent-installers/linux.sh")
             add_check(
                 "agent_installer",
-                "安装脚本地址",
-                "PASS" if installer["ok"] else "WARN",
-                "安装脚本可下载。" if installer["ok"] else f"控制端本机未能确认安装脚本可下载：{installer['message']}。请确认平台入口端口、反向代理和安全组策略。",
+                "安装脚本服务",
+                "PASS" if installer["ok"] else "PENDING",
+                "安装脚本主动探测可下载。" if installer["ok"] else f"控制端本机未能通过公网地址确认安装脚本（{installer['message']}）；这不是已确认故障，新节点接入时会从目标服务器再次自动验证。",
                 False,
-                "请确认平台入口端口和反向代理允许访问 /api/v1/agent-installers/linux.sh；控制端本机自测失败可能是公网回环限制。",
+                "由新节点接入预检自动验证安装脚本下载；只有目标节点实际验证失败时才进入接入故障处理。",
                 installer,
-                action="操作员确认平台入口端口、安全组、防火墙和 Web/API 反向代理已经放行安装脚本下载路径。",
                 verify_command=installer_command,
-                impact="安装脚本不可下载时，执行节点无法完成自动接入。",
-                action_label="确认安装脚本入口",
-                category="平台访问入口",
+                impact="该项仅影响未来新节点安装，不影响已在线节点；当前无法从控制端证明时保持待场景验证。",
+                category="节点接入能力",
                 can_ignore=True,
+                evidence_source="控制端主动探测" if installer["ok"] else "等待目标节点预检",
+                evidence_scope="当前安装脚本入口" if installer["ok"] else "新节点接入场景",
             )
 
         image = str(settings.crawler_agent_image or "").strip()
@@ -297,6 +333,7 @@ class SystemConfigService:
             scheme_hint = "http" if registry_port in {5000, 80} or registry_host in {"localhost", "127.0.0.1"} else "https"
             registry_command = f"curl -i {scheme_hint}://{registry}/v2/"
             pull_command = f"docker pull {image}"
+            image_runtime_agents = [item for item in runtime_evidence["agents"] if item.get("agentImage") == image and item.get("actualDigest")]
             required_ports.append({
                 "name": "平台镜像仓库公网访问",
                 "host": registry_host,
@@ -304,40 +341,61 @@ class SystemConfigService:
                 "protocol": "TCP",
                 "reason": "执行节点需要从平台镜像仓库拉取执行组件镜像。",
                 "impact": "平台镜像仓库需要对执行节点来源 IP 开放，用于拉取执行组件镜像。",
-                "action": f"在平台服务器或云安全组确认 {registry_port}/TCP 仅对执行节点来源 IP 放行；HTTP registry 的执行节点 Docker 配置由接入安装流程处理。",
+                "action": f"如需治理镜像仓库暴露范围，请将 {registry_port}/TCP 限制到执行节点来源 IP；平台不读取云安全组规则本身，HTTP registry 的节点侧 Docker 配置由接入安装流程处理。",
                 "actionLabel": "放行镜像仓库端口",
                 "verifyCommand": registry_command,
                 "automationType": "CLOUD_CONSOLE",
                 "handler": "云控制台",
             })
             registry_probe = self._registry_probe(registry)
+            registry_runtime_verified = not registry_probe["ok"] and bool(image_runtime_agents)
             add_check(
                 "agent_registry",
-                "平台镜像仓库公网访问",
-                "PASS" if registry_probe["ok"] else "WARN",
-                f"平台镜像仓库公网访问可访问：{registry}" if registry_probe["ok"] else f"控制端本机未能确认平台镜像仓库公网访问可访问：{registry_probe['message']}。请确认平台服务器 registry 容器、5000/TCP 监听、云安全组和本机防火墙策略。",
+                "镜像分发链路",
+                "PASS" if registry_probe["ok"] or registry_runtime_verified else "PENDING",
+                (
+                    f"镜像仓库主动探测可访问：{registry}"
+                    if registry_probe["ok"]
+                    else (
+                        f"控制端本机仓库探测失败（{registry_probe['message']}），但已有 {len(image_runtime_agents)} 个在线执行节点正在运行目标镜像并持续上报实际 digest，现有节点镜像分发事实已验证。"
+                        if registry_runtime_verified
+                        else f"控制端本机未能确认镜像仓库可访问（{registry_probe['message']}）；当前没有在线节点提供目标镜像运行证据，新节点接入时会自动执行 registry / docker pull 验证。"
+                    )
+                ),
                 False,
-                "确认平台服务器 registry 容器、本机 5000/TCP 监听、云安全组和防火墙规则；HTTP registry 的节点侧 Docker 配置在执行节点接入流程中处理。",
-                {**registry_probe, "image": image, "registry": registry},
-                action=f"操作员在云控制台确认平台服务器 {registry_port}/TCP 仅对执行节点来源 IP 放行；不要对全部公网开放。",
+                "新节点接入时由目标节点验证 registry 和 docker pull；控制端本机探测失败不会自动升级为人工待办。",
+                {**registry_probe, "image": image, "registry": registry, "runtimeAgents": image_runtime_agents},
                 verify_command=registry_command,
-                impact="镜像仓库不可达时，远程执行节点无法启动平台执行组件；已在线节点不受影响。",
-                action_label="确认仓库端口策略",
+                impact="现有在线节点的目标镜像运行事实只证明这些节点已完成镜像分发；新节点仍按目标环境单独验证。",
                 category="执行组件镜像分发",
                 can_ignore=True,
-                automation_type="CLOUD_CONSOLE",
-                handler="云控制台",
-                auto_action_command="",
+                evidence_source="Registry 主动探测" if registry_probe["ok"] else ("执行节点实时镜像证据" if registry_runtime_verified else "等待目标节点预检"),
+                evidence_scope="当前镜像仓库" if registry_probe["ok"] else ("已有在线执行节点" if registry_runtime_verified else "新节点接入场景"),
             )
             configured_digest = str(settings.crawler_agent_image_digest or "").strip()
             if configured_digest:
                 tag_probe = {"ok": True, "source": "configured_digest", "image": image, "digest": configured_digest}
                 tag_status = "PASS"
                 tag_message = f"部署阶段已记录执行组件镜像版本：{image}。"
+                tag_evidence_source = "部署配置"
+                tag_evidence_scope = "当前发布镜像"
             else:
                 tag_probe = self._registry_tag_probe(image)
-                tag_status = "PASS" if tag_probe["ok"] else "WARN"
-                tag_message = f"执行组件镜像版本可查询：{image}" if tag_probe["ok"] else f"控制端本机未能确认执行组件镜像版本已推送：{tag_probe['message']}。请在执行节点或平台服务器验证 docker pull。"
+                if tag_probe["ok"]:
+                    tag_status = "PASS"
+                    tag_message = f"执行组件镜像版本可查询：{image}"
+                    tag_evidence_source = "Registry 主动探测"
+                    tag_evidence_scope = "当前镜像 tag"
+                elif image_runtime_agents:
+                    tag_status = "PASS"
+                    tag_message = f"控制端本机未能查询镜像 tag（{tag_probe['message']}），但已有 {len(image_runtime_agents)} 个在线执行节点正在运行该镜像，现有节点镜像版本已由运行事实验证。"
+                    tag_evidence_source = "执行节点实时镜像证据"
+                    tag_evidence_scope = "已有在线执行节点"
+                else:
+                    tag_status = "PENDING"
+                    tag_message = f"控制端本机未能查询镜像 tag（{tag_probe['message']}）；新节点接入时会自动通过 docker pull 验证。"
+                    tag_evidence_source = "等待目标节点预检"
+                    tag_evidence_scope = "新节点接入场景"
             add_check(
                 "agent_image_tag",
                 "执行组件镜像版本",
@@ -354,18 +412,38 @@ class SystemConfigService:
                 can_ignore=True,
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
-                auto_action_command=prepare_agent_image_command,
+                auto_action_command=prepare_agent_image_command if tag_status == "FAIL" else "",
                 action_endpoint="/platform-actions/agent-image-preparations" if tag_status == "FAIL" else "",
                 action_button_label="自动准备执行组件镜像" if tag_status == "FAIL" else "",
+                evidence_source=tag_evidence_source,
+                evidence_scope=tag_evidence_scope,
             )
             if configured_digest:
                 digest_probe = {"ok": True, "source": "configured_digest", "digest": configured_digest}
                 digest_status = "PASS"
                 digest_message = f"部署阶段已记录执行组件镜像校验值：{configured_digest}"
+                digest_evidence_source = "部署配置"
+                digest_evidence_scope = "当前发布镜像"
             else:
                 digest_probe = self._registry_digest_probe(image)
-                digest_status = "PASS" if digest_probe["ok"] else "WARN"
-                digest_message = f"执行组件镜像校验值已记录：{digest_probe.get('digest')}" if digest_probe["ok"] else f"未能确认执行组件镜像校验值：{digest_probe['message']}。请用平台脚本重新准备镜像或在执行节点 docker pull 后上报校验值。"
+                if digest_probe["ok"]:
+                    digest_status = "PASS"
+                    digest_message = f"执行组件镜像校验值已读取：{digest_probe.get('digest')}"
+                    digest_evidence_source = "Registry manifest"
+                    digest_evidence_scope = "当前镜像 tag"
+                elif image_runtime_agents:
+                    actual_digests = sorted({str(item.get("actualDigest") or "") for item in image_runtime_agents if item.get("actualDigest")})
+                    runtime_digest = actual_digests[0] if len(actual_digests) == 1 else " / ".join(actual_digests)
+                    digest_probe = {**digest_probe, "ok": True, "source": "running_agents", "digest": runtime_digest, "runtimeAgents": image_runtime_agents}
+                    digest_status = "PASS"
+                    digest_message = f"控制端本机未能读取 registry digest，但在线执行节点已上报实际运行镜像校验值：{runtime_digest}"
+                    digest_evidence_source = "执行节点实际运行 digest"
+                    digest_evidence_scope = "已有在线执行节点"
+                else:
+                    digest_status = "PENDING"
+                    digest_message = f"当前未取得镜像 digest（{digest_probe['message']}）；新节点成功拉取后会自动上报实际运行 digest。"
+                    digest_evidence_source = "等待目标节点上报"
+                    digest_evidence_scope = "新节点接入场景"
             add_check(
                 "agent_image_digest",
                 "执行组件镜像校验值",
@@ -382,52 +460,210 @@ class SystemConfigService:
                 can_ignore=True,
                 automation_type="PLATFORM_SCRIPT",
                 handler="平台部署脚本",
-                auto_action_command=prepare_agent_image_command,
+                auto_action_command=prepare_agent_image_command if digest_status == "FAIL" else "",
                 action_endpoint="/platform-actions/agent-image-preparations" if digest_status == "FAIL" else "",
                 action_button_label="自动准备执行组件镜像" if digest_status == "FAIL" else "",
+                evidence_source=digest_evidence_source,
+                evidence_scope=digest_evidence_scope,
             )
             security = self._registry_security_posture(registry, registry_port, scheme_hint)
-            add_check(
-                "agent_registry_security",
-                "内置镜像仓库安全策略",
-                security["status"],
-                security["message"],
-                False,
-                security["suggestion"],
-                security,
-                action=security["action"],
-                verify_command=security.get("verifyCommand", ""),
-                impact="内置 registry 若未鉴权且对公网全开放，可能被未授权拉取或污染镜像。",
-                action_label="收紧镜像仓库访问",
-                category="执行组件镜像分发",
-                can_ignore=True,
-                automation_type="CLOUD_CONSOLE" if not security.get("authEnabled") else "MANUAL",
-                handler="云控制台" if not security.get("authEnabled") else "平台配置",
-            )
+            if security["status"] != "PASS":
+                security_advisories.append({
+                    "key": "agent_registry_security",
+                    "label": "镜像仓库安全建议",
+                    "level": "ADVICE",
+                    "message": security["message"],
+                    "suggestion": security["suggestion"],
+                    "action": security["action"],
+                    "verifyCommand": security.get("verifyCommand", ""),
+                    "scope": "安全治理，不参与运行健康与接入就绪判定",
+                    "details": security,
+                })
+
+        online_agents = runtime_evidence["agents"]
+        unavailable_agents = runtime_evidence["unavailableAgents"]
+        if online_agents:
+            if unavailable_agents:
+                add_check(
+                    "agent_runtime_heartbeat",
+                    "执行节点实时通信",
+                    "WARN",
+                    f"当前有 {len(online_agents)} 个执行节点持续上报实时心跳，同时有 {len(unavailable_agents)} 个已接入且启用的执行节点处于离线、过期或心跳超时状态。",
+                    False,
+                    "查看执行节点最近心跳和 lastError；这是已有节点的实时运行事实。",
+                    {"onlineAgents": online_agents, "unavailableAgents": unavailable_agents},
+                    impact=f"{len(unavailable_agents)} 个已接入且启用的执行节点当前不能提供新鲜心跳，可能影响绑定到这些节点的任务。",
+                    route="/servers",
+                    action_label="查看执行节点",
+                    category="现有运行事实",
+                    evidence_source="执行节点连接状态与最近心跳",
+                    evidence_scope="已接入且启用的执行节点",
+                )
+            else:
+                add_check(
+                    "agent_runtime_heartbeat",
+                    "执行节点实时通信",
+                    "PASS",
+                    f"当前有 {len(online_agents)} 个执行节点持续上报实时心跳。",
+                    False,
+                    "",
+                    runtime_evidence,
+                    impact="这些在线节点已经提供了节点到平台的实时通信证据。",
+                    category="现有运行事实",
+                    evidence_source="执行节点实时心跳",
+                    evidence_scope="已有在线执行节点",
+                )
+            bad_docker = [item for item in online_agents if str(item.get("dockerStatus") or "").upper() not in {"", "OK", "READY", "UNKNOWN"}]
+            unknown_docker = [item for item in online_agents if str(item.get("dockerStatus") or "").upper() in {"", "UNKNOWN"}]
+            if bad_docker:
+                add_check(
+                    "agent_runtime_docker",
+                    "执行节点 Docker",
+                    "WARN",
+                    f"检测到 {len(bad_docker)} 个在线执行节点明确上报 Docker 异常。",
+                    False,
+                    "查看执行节点详情中的 dockerStatus 和 lastError；这是实时运行异常，不是云侧策略确认项。",
+                    {"agents": bad_docker},
+                    impact="对应执行节点可能无法正常启动任务容器。",
+                    route="/servers",
+                    action_label="查看执行节点",
+                    category="现有运行事实",
+                    evidence_source="执行节点实时心跳",
+                    evidence_scope="明确上报异常的在线执行节点",
+                )
+            elif unknown_docker:
+                add_check(
+                    "agent_runtime_docker",
+                    "执行节点 Docker",
+                    "PENDING",
+                    f"{len(unknown_docker)} 个在线执行节点尚未提供明确 Docker 状态；后续心跳会继续自动更新。",
+                    False,
+                    "无需人工确认，等待节点后续心跳补齐状态。",
+                    {"agents": unknown_docker},
+                    impact="当前没有证据证明 Docker 异常，因此不计入运行告警。",
+                    category="现有运行事实",
+                    evidence_source="等待执行节点心跳补齐",
+                    evidence_scope="Docker 状态未知的在线执行节点",
+                )
+            else:
+                add_check(
+                    "agent_runtime_docker",
+                    "执行节点 Docker",
+                    "PASS",
+                    f"{len(online_agents)} 个在线执行节点均上报 Docker 正常。",
+                    False,
+                    "",
+                    {"agents": online_agents},
+                    impact="现有在线节点具备容器执行基础能力。",
+                    category="现有运行事实",
+                    evidence_source="执行节点实时心跳",
+                    evidence_scope="已有在线执行节点",
+                )
+        else:
+            if unavailable_agents:
+                add_check(
+                    "agent_runtime_heartbeat",
+                    "执行节点实时通信",
+                    "WARN",
+                    f"当前没有执行节点提供新鲜在线心跳，且有 {len(unavailable_agents)} 个已接入且启用的执行节点处于离线、过期或心跳超时状态。",
+                    False,
+                    "查看执行节点最近心跳和 lastError；如果节点已计划下线，应先按既有节点管理流程停用或移除。",
+                    {"unavailableAgents": unavailable_agents},
+                    impact="当前已接入且启用的执行节点均不能提供实时通信证据，可能影响任务执行。",
+                    route="/servers",
+                    action_label="查看执行节点",
+                    category="现有运行事实",
+                    evidence_source="执行节点连接状态与最近心跳",
+                    evidence_scope="已接入且启用的执行节点",
+                )
+            else:
+                add_check(
+                    "agent_runtime_heartbeat",
+                    "执行节点实时通信",
+                    "PENDING",
+                    (
+                        f"系统已登记 {runtime_evidence['registeredAgentCount']} 个执行组件记录，但尚未形成已接入节点的实时心跳证据；新节点完成接入后会自动验证。"
+                        if runtime_evidence["registeredAgentCount"]
+                        else "当前尚未接入执行节点；没有运行任务需要节点时这是正常状态，新节点接入后会自动建立实时心跳证据。"
+                    ),
+                    False,
+                    "节点接入后由心跳自动验证，无需提前人工确认。",
+                    runtime_evidence,
+                    impact="当前没有已接入节点的在线证据；是否影响业务由实际任务等待状态决定。",
+                    category="现有运行事实",
+                    evidence_source="等待执行节点实时心跳",
+                    evidence_scope="执行节点运行场景",
+                )
+
+        configured_digest = str(settings.crawler_agent_image_digest or "").strip()
+        digest_reporting_agents = [item for item in online_agents if item.get("actualDigest")]
+        if configured_digest and digest_reporting_agents:
+            mismatched = [item for item in digest_reporting_agents if item.get("actualDigest") != configured_digest]
+            if mismatched:
+                add_check(
+                    "agent_runtime_digest_alignment",
+                    "在线节点镜像一致性",
+                    "WARN",
+                    f"检测到 {len(mismatched)} 个在线执行节点实际运行 digest 与当前发布 digest 不一致。",
+                    False,
+                    "查看执行节点镜像版本；现有任务不中断，节点空闲后按既有镜像更新流程收敛。",
+                    {"expectedDigest": configured_digest, "agents": mismatched},
+                    impact="这些节点当前运行的执行组件版本与平台发布版本不一致。",
+                    route="/servers",
+                    action_label="查看执行节点",
+                    category="现有运行事实",
+                    evidence_source="执行节点实际运行 digest",
+                    evidence_scope="digest 不一致的在线执行节点",
+                )
+            else:
+                add_check(
+                    "agent_runtime_digest_alignment",
+                    "在线节点镜像一致性",
+                    "PASS",
+                    f"{len(digest_reporting_agents)} 个在线执行节点实际运行 digest 与当前发布 digest 一致。",
+                    False,
+                    "",
+                    {"expectedDigest": configured_digest, "agents": digest_reporting_agents},
+                    impact="已上报 digest 的在线节点与当前发布镜像一致。",
+                    category="现有运行事实",
+                    evidence_source="执行节点实际运行 digest",
+                    evidence_scope="已上报 digest 的在线执行节点",
+                )
 
         blocking_count = sum(1 for item in checks if item["blocking"] and item["status"] == "FAIL")
         warning_count = sum(1 for item in checks if item["status"] == "WARN")
+        pending_count = sum(1 for item in checks if item["status"] == "PENDING")
+        verified_count = sum(1 for item in checks if item["status"] == "PASS")
         if blocking_count:
-            summary = f"平台自检发现 {blocking_count} 个必须处理项，按提示处理后点击重新检测。"
+            summary = f"自动检测发现 {blocking_count} 个已确认阻断项；已验证 {verified_count} 项，待场景验证 {pending_count} 项。"
         elif warning_count:
-            summary = f"平台侧没有必须处理项，可以生成接入命令；仍有 {warning_count} 个平台服务器外部访问策略需要超管确认。"
+            summary = f"当前没有接入阻断，但检测到 {warning_count} 个已确认运行提醒；已验证 {verified_count} 项，待场景验证 {pending_count} 项。"
+        elif pending_count:
+            summary = f"当前未发现运行异常；已自动验证 {verified_count} 项，另有 {pending_count} 项将在对应场景自动验证，无需提前人工确认。"
         else:
-            summary = "平台自检通过，执行节点接入基础条件已具备。"
+            summary = f"当前未发现运行异常，{verified_count} 个自动检测项均已验证。"
         if blocking_count:
-            next_action = "先处理平台侧必须处理项；CI/CD 会自动准备执行组件镜像，页面一键处理仅在白名单动作启用时可用。"
+            next_action = "只处理已确认阻断项；可自动处理的项目优先由平台或 CI/CD 完成，处理后重新检测。"
         elif warning_count:
-            next_action = "请确认云服务器安全组、防火墙和内置镜像仓库访问策略；确认后可继续新增或重新接入执行节点。"
+            next_action = "查看已确认的实时运行提醒；安全治理建议与无法自动读取的云侧策略不会计入运行异常。"
+        elif pending_count:
+            next_action = "无需人工确认；待场景项会在新节点接入、后续心跳或实际镜像拉取时自动补充证据。"
         else:
-            next_action = "平台侧接入条件已就绪，可以继续新增或重新接入执行节点。"
+            next_action = "无需处理；平台会继续通过主动探测和执行节点心跳更新运行事实。"
         security_group_checklist = self._security_group_checklist(base, required_ports, checks)
         return {
             "readyForRemoteAgent": blocking_count == 0,
-            "status": "PASS" if blocking_count == 0 and warning_count == 0 else ("WARN" if blocking_count == 0 else "FAIL"),
+            "status": "FAIL" if blocking_count else ("WARN" if warning_count else "PASS"),
             "summary": summary,
             "blockingCount": blocking_count,
             "warningCount": warning_count,
+            "pendingCount": pending_count,
+            "verifiedCount": verified_count,
+            "securityAdvisoryCount": len(security_advisories),
             "checks": checks,
             "requiredPorts": required_ports,
+            "securityAdvisories": security_advisories,
+            "runtimeEvidence": runtime_evidence,
             "controlPlaneUrl": base,
             "agentImage": image,
             "agentImageDigest": settings.crawler_agent_image_digest or self._agent_image_digest_from_checks(checks),
@@ -440,6 +676,43 @@ class SystemConfigService:
             "platformActionAvailable": bool(platform_action_capability.get("available")),
             "platformActionCapability": platform_action_capability,
             "securityGroupChecklist": security_group_checklist,
+        }
+
+    def _runtime_agent_evidence(self) -> dict:
+        now = utcnow()
+        live_after = now - timedelta(seconds=max(30, int(settings.agent_offline_seconds or 120)))
+        agents = list(self.db.scalars(select(CrawlerAgent)).all())
+        live_agents: list[dict] = []
+        unavailable_agents: list[dict] = []
+        for agent in agents:
+            server = self.db.get(CrawlerServer, agent.server_id)
+            metrics = dict(server.metrics or {}) if server else {}
+            payload = {
+                "agentId": agent.agent_id,
+                "serverId": agent.server_id,
+                "agentCode": agent.agent_code,
+                "connectionStatus": str(agent.connection_status or "UNREGISTERED"),
+                "lastHeartbeatAt": agent.last_heartbeat_at.isoformat() if agent.last_heartbeat_at else "",
+                "agentImage": str(agent.agent_image or ""),
+                "reportedDigest": str(agent.agent_image_digest or ""),
+                "actualDigest": str(agent.agent_image_actual_digest or ""),
+                "dockerStatus": str(metrics.get("dockerStatus") or "UNKNOWN"),
+                "serverHealthStatus": str(server.health_status if server else "UNKNOWN"),
+                "lastError": str(agent.last_error or metrics.get("lastError") or ""),
+            }
+            if agent.connection_status == "ONLINE" and agent.last_heartbeat_at and agent.last_heartbeat_at >= live_after:
+                live_agents.append(payload)
+                continue
+            if server and server.manage_status == "ENABLED" and agent.connection_status in {"ONLINE", "STALE", "OFFLINE"}:
+                unavailable_agents.append(payload)
+        return {
+            "registeredAgentCount": len(agents),
+            "onlineAgentCount": len(live_agents),
+            "unavailableAgentCount": len(unavailable_agents),
+            "freshnessSeconds": max(30, int(settings.agent_offline_seconds or 120)),
+            "checkedAt": now.isoformat(),
+            "agents": live_agents,
+            "unavailableAgents": unavailable_agents,
         }
 
     @staticmethod
@@ -475,13 +748,13 @@ class SystemConfigService:
                 "risk": "SSH 全网开放会增加暴力破解和误操作风险。",
             })
         return {
-            "title": "平台服务器安全组 / 防火墙规则清单",
-            "summary": "请在云服务器控制台和本机防火墙确认以下入站规则；平台无法在未授权情况下自动修改云安全组。",
+            "title": "平台服务器安全组 / 防火墙安全建议",
+            "summary": "以下内容属于安全治理建议，不参与运行健康和接入就绪判定。平台当前没有云厂商安全组读取授权，因此不会把无法读取云侧规则解释成异常或人工待办。",
             "controlPlaneUrl": control_plane_url,
             "rules": rules,
             "notes": [
-                "平台自检以控制端服务器为视角：确认本机服务、端口监听、镜像仓库和外部访问策略。",
-                "执行节点连通性验证已放到执行节点接入流程；新增节点时再在目标节点执行验证脚本。",
+                "运行总览优先使用主动探测、执行节点心跳、Docker 状态和实际镜像 digest 作为运行证据。",
+                "新执行节点的网络、registry 与 docker pull 由目标节点接入预检自动验证。",
             ],
         }
 
@@ -500,6 +773,8 @@ class SystemConfigService:
             return "NODE_INSTALLER"
         if automation_type == "CLOUD_CONSOLE":
             return "CLOUD_CONSOLE"
+        if automation_type == "AUTO_VERIFY":
+            return "AUTO_VERIFY"
         return "MANUAL"
 
     @staticmethod
@@ -514,7 +789,7 @@ class SystemConfigService:
             "manual": 0,
         }
         for item in checks:
-            if item.get("status") == "PASS":
+            if item.get("status") not in {"FAIL", "WARN"}:
                 continue
             kind = str(item.get("automationType") or "MANUAL")
             channel = str(item.get("executionChannel") or "")
@@ -544,7 +819,7 @@ class SystemConfigService:
             return {
                 "enabled": False,
                 "available": False,
-                "reason": "当前部署未启用页面白名单动作执行能力；CI/CD 仍会在部署阶段自动处理，页面只展示平台服务器兜底命令和安全组确认引导。",
+                "reason": "当前部署未启用页面白名单动作执行能力；CI/CD 仍会在部署阶段自动处理，页面仅展示平台服务器兜底命令。安全治理建议独立展示，不参与运行异常判定。",
                 "manualCommand": manual_command,
                 "channel": "CICD_OR_SERVER_SCRIPT",
             }
@@ -611,11 +886,15 @@ class SystemConfigService:
 
     @staticmethod
     def _snapshot_payload(row: PlatformPreflightSnapshot) -> dict:
+        result = dict(row.result_json or {})
         return {
             "snapshotId": row.snapshot_id,
             "status": row.status,
             "blockingCount": row.blocking_count,
             "warningCount": row.warning_count,
+            "pendingCount": int(result.get("pendingCount") or 0),
+            "verifiedCount": int(result.get("verifiedCount") or 0),
+            "securityAdvisoryCount": int(result.get("securityAdvisoryCount") or 0),
             "checkSource": row.check_source,
             "checkSourceLabel": row.check_source_label,
             "controlPlaneUrl": row.control_plane_url,
@@ -633,13 +912,15 @@ class SystemConfigService:
         if not previous:
             return ["首次保存平台自检快照"]
         changes: list[str] = []
-        status_label = {"PASS": "通过", "WARN": "需确认", "FAIL": "必须处理"}
+        status_label = {"PASS": "正常", "WARN": "运行提醒", "FAIL": "已确认异常", "PENDING": "待场景验证"}
         if previous.get("status") != current.get("status"):
             changes.append(f"总体状态：{status_label.get(str(previous.get('status')), previous.get('status'))} -> {status_label.get(str(current.get('status')), current.get('status'))}")
         if int(previous.get("blockingCount") or 0) != int(current.get("blockingCount") or 0):
             changes.append(f"必须处理项：{previous.get('blockingCount', 0)} -> {current.get('blockingCount', 0)}")
         if int(previous.get("warningCount") or 0) != int(current.get("warningCount") or 0):
-            changes.append(f"需确认项：{previous.get('warningCount', 0)} -> {current.get('warningCount', 0)}")
+            changes.append(f"运行提醒：{previous.get('warningCount', 0)} -> {current.get('warningCount', 0)}")
+        if int(previous.get("pendingCount") or 0) != int(current.get("pendingCount") or 0):
+            changes.append(f"待场景验证：{previous.get('pendingCount', 0)} -> {current.get('pendingCount', 0)}")
         if str(previous.get("agentImage") or "") != str(current.get("agentImage") or ""):
             changes.append("执行组件镜像地址已变化")
         if str(previous.get("agentImageDigest") or "") != str(current.get("agentImageDigest") or ""):

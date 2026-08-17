@@ -383,6 +383,7 @@ export interface DashboardSummary {
   taskCount: number
   runningCount: number
   waitingCount: number
+  runtimeIssues?: ControlPlanePreflightCheck[]
   platformPreflight?: ControlPlanePreflight
   platformPreflightHistory?: PlatformPreflightSnapshot[]
 }
@@ -683,7 +684,7 @@ export interface CredentialSubjectBindingUpdateRequest {
 export interface ControlPlanePreflightCheck {
   key: string
   label: string
-  status: 'PASS' | 'WARN' | 'FAIL'
+  status: 'PASS' | 'PENDING' | 'WARN' | 'FAIL'
   message: string
   blocking: boolean
   suggestion: string
@@ -703,6 +704,8 @@ export interface ControlPlanePreflightCheck {
   actionUnavailableReason?: string
   executionChannel?: string
   manualCommand?: string
+  evidenceSource?: string
+  evidenceScope?: string
   details?: Record<string, unknown>
 }
 
@@ -726,8 +729,13 @@ export interface ControlPlanePreflight {
   summary: string
   blockingCount: number
   warningCount: number
+  pendingCount: number
+  verifiedCount: number
+  securityAdvisoryCount: number
   checks: ControlPlanePreflightCheck[]
   requiredPorts: ControlPlaneRequiredPort[]
+  securityAdvisories?: Array<{ key: string; label: string; level: string; message: string; suggestion?: string; action?: string; verifyCommand?: string; scope?: string; details?: Record<string, unknown> }>
+  runtimeEvidence?: { registeredAgentCount: number; onlineAgentCount: number; unavailableAgentCount?: number; freshnessSeconds?: number; checkedAt?: string; agents: Array<{ agentId: number; serverId: number; agentCode?: string; connectionStatus?: string; lastHeartbeatAt?: string; agentImage?: string; reportedDigest?: string; actualDigest?: string; dockerStatus?: string; serverHealthStatus?: string; lastError?: string }>; unavailableAgents?: Array<{ agentId: number; serverId: number; agentCode?: string; connectionStatus?: string; lastHeartbeatAt?: string; agentImage?: string; reportedDigest?: string; actualDigest?: string; dockerStatus?: string; serverHealthStatus?: string; lastError?: string }> }
   agentImage: string
   agentImageDigest?: string
   controlPlaneUrl?: string
@@ -755,6 +763,9 @@ export interface PlatformPreflightSnapshot {
   status: 'PASS' | 'WARN' | 'FAIL' | string
   blockingCount: number
   warningCount: number
+  pendingCount?: number
+  verifiedCount?: number
+  securityAdvisoryCount?: number
   checkSource: string
   checkSourceLabel: string
   controlPlaneUrl: string

@@ -9,7 +9,7 @@
         </el-form-item>
         <div class="base-status"><el-tag :type="settings?.controlPlanePublicBaseUrlConfigured ? 'success' : 'warning'" effect="light">{{ settings?.controlPlanePublicBaseUrlConfigured ? '已配置' : '未配置' }}</el-tag><span class="muted">来源：{{ settings?.controlPlanePublicBaseUrlSource || '-' }}</span></div>
         <el-alert v-if="settings?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="settings.controlPlanePublicBaseUrlWarnings.join('；')" />
-        <el-alert class="preflight-link" type="info" show-icon :closable="false" title="完整平台自检已移到运行总览。修改公网地址后，请到运行总览点击重新检测，确认端口、安装脚本和节点镜像仓库是否就绪。" />
+        <el-alert class="preflight-link" type="info" show-icon :closable="false" title="运行总览会自动检测当前可证明的运行条件。修改地址后可重新检测；无法从控制端证明的网络项会等待目标节点接入时自动验证，不会直接变成人工待办。" />
         <div v-if="baseForm.controlPlanePublicBaseUrl" class="command-preview">连通性验证：curl -fsSL {{ baseForm.controlPlanePublicBaseUrl }}/health && echo</div>
       </el-form>
     </div>
