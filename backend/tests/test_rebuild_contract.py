@@ -1269,6 +1269,8 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert '--join-token' in token_body['installCommand']
     assert '--auto-configure-docker-registry' not in token_body['installCommand']
     assert '--replace-existing-agent' not in token_body['installCommand']
+    assert 'exit $rc' not in token_body['installCommand']
+    assert '当前 SSH 会话不会退出' in token_body['installCommand']
     assert token_body['controlPlaneUrl'].startswith(('http://', 'https://'))
     assert 'connectivityCommand' in token_body
     assert any('执行组件镜像未配置私有仓库前缀' in item for item in token_body.get('warnings') or [])
@@ -1337,9 +1339,9 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert release_version == '1.0.73'
-    assert "AGENT_IMAGE='crawler_platform_agent:1.1.1'" in env_resp.text
-    assert "AGENT_AGENT_VERSION='1.1.1'" in env_resp.text
+    assert release_version == '1.0.74'
+    assert "AGENT_IMAGE='crawler_platform_agent:1.1.2'" in env_resp.text
+    assert "AGENT_AGENT_VERSION='1.1.2'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
     server = next(row for row in servers if row['serverCode'] == 'join-srv-01')
     assert server['labels']['region'] == 'cn'
@@ -1867,6 +1869,29 @@ def test_agent_join_command_preserves_detected_external_port() -> None:
     assert "AGENT_CONTROL_PLANE_URL='http://42.193.226.138:8080'" in env_resp.text
 
 
+def test_agent_join_token_blocks_mismatched_agent_image_runtime_target(monkeypatch) -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, 'crawler_agent_version', '1.1.2')
+    monkeypatch.setattr(settings, 'crawler_agent_image', '42.193.226.138:5000/crawler_platform_agent:1.0.71')
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'mismatchco', 'companyName': '错配公司'}).json()['data']
+    resp = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'mismatch-srv-01',
+        'serverName': '错配节点',
+        'agentCode': 'mismatch-agent-01',
+        'installTarget': 'LOCAL',
+    })
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body['code'] == 40085
+    assert 'AGENT_AGENT_VERSION=1.1.2' in body['message']
+    assert 'crawler_platform_agent:1.0.71' in body['message']
+
+
 def test_agent_bootstrap_resume_env_reuses_long_credential_without_join_token() -> None:
     migrate()
     client = TestClient(app)
@@ -1888,8 +1913,8 @@ def test_agent_bootstrap_resume_env_reuses_long_credential_without_join_token() 
     assert resume.status_code == 200
     assert "AGENT_AGENT_TOKEN" not in resume.text
     assert "AGENT_AGENT_CODE='resume-agent-01'" in resume.text
-    assert "AGENT_IMAGE='crawler_platform_agent:1.1.1'" in resume.text
-    assert "AGENT_AGENT_VERSION='1.1.1'" in resume.text
+    assert "AGENT_IMAGE='crawler_platform_agent:1.1.2'" in resume.text
+    assert "AGENT_AGENT_VERSION='1.1.2'" in resume.text
 
 
 def test_decommission_drain_converges_to_agent_command_after_runs_finish() -> None:
@@ -1901,7 +1926,7 @@ def test_decommission_drain_converges_to_agent_command_after_runs_finish() -> No
     heartbeat_headers = agent['headers']
     hb = client.post('/api/v1/agent-heartbeats', headers=heartbeat_headers, json={
         'agentInstanceId': 'drain-decom-inst',
-        'agentVersion': '1.1.1',
+        'agentVersion': '1.1.2',
         'dockerStatus': 'OK',
         'availableSlots': 2,
         'runningContainers': 0,
@@ -1931,7 +1956,7 @@ def test_decommission_drain_converges_to_agent_command_after_runs_finish() -> No
         db.commit()
     hb2 = client.post('/api/v1/agent-heartbeats', headers=heartbeat_headers, json={
         'agentInstanceId': 'drain-decom-inst',
-        'agentVersion': '1.1.1',
+        'agentVersion': '1.1.2',
         'dockerStatus': 'OK',
         'availableSlots': 2,
         'runningContainers': 0,

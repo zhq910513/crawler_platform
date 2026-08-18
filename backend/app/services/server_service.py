@@ -289,6 +289,7 @@ class ServerService:
             raise AppError("Agent 编码已被其他公司使用", code=40033)
         if agent and agent.connection_status == "ONLINE":
             raise AppError("该执行节点 Agent 当前在线；在线节点不应重新生成 Join Token，请使用维护、升级或移除流程。", code=40077, http_status=status.HTTP_400_BAD_REQUEST)
+        self._assert_agent_runtime_target_consistent()
         raw_token = secrets.token_urlsafe(40)
         expires_at = utcnow() + timedelta(hours=payload.expires_in_hours)
         control_plane_url = self._resolve_control_plane_url(payload.control_plane_url, detected_base_url, payload.install_target)
@@ -376,6 +377,7 @@ class ServerService:
 
 
     def precheck_agent_join_token(self, join_token: str) -> dict:
+        self._assert_agent_runtime_target_consistent()
         token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(join_token), CrawlerAgentJoinToken.status == "ACTIVE"))
         if not token:
             raise AppError("Agent 接入令牌无效或已使用", code=40160, http_status=status.HTTP_401_UNAUTHORIZED)
@@ -401,6 +403,7 @@ class ServerService:
 
 
     def resume_agent_bootstrap_env(self, agent: CrawlerAgent, detected_base_url: str = "") -> str:
+        self._assert_agent_runtime_target_consistent()
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
             raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
@@ -430,6 +433,7 @@ class ServerService:
 
     def consume_agent_join_token(self, payload: AgentBootstrapEnvRequest, detected_base_url: str = "") -> str:
         from sqlalchemy import select
+        self._assert_agent_runtime_target_consistent()
         token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(payload.join_token), CrawlerAgentJoinToken.status == "ACTIVE"))
         if not token:
             raise AppError("Agent 接入令牌无效或已使用", code=40160, http_status=status.HTTP_401_UNAUTHORIZED)
@@ -546,6 +550,33 @@ class ServerService:
         return "\n".join(lines)
 
     @staticmethod
+    def _agent_image_tag(image: str) -> str:
+        value = str(image or "").strip()
+        if not value:
+            return ""
+        last = value.rsplit("/", 1)[-1]
+        if ":" not in last:
+            return ""
+        return last.rsplit(":", 1)[-1].strip()
+
+    def _assert_agent_runtime_target_consistent(self) -> None:
+        image = str(settings.crawler_agent_image or "").strip()
+        version = str(settings.crawler_agent_version or "").strip()
+        if not image:
+            raise AppError("执行组件镜像地址为空，请先准备 Agent 镜像。", code=40082, http_status=status.HTTP_400_BAD_REQUEST)
+        if not version:
+            raise AppError("Agent 目标版本为空，请先配置 AGENT_AGENT_VERSION。", code=40083, http_status=status.HTTP_400_BAD_REQUEST)
+        tag = self._agent_image_tag(image)
+        if not tag:
+            raise AppError(f"执行组件镜像必须带明确 tag，当前为：{image}", code=40084, http_status=status.HTTP_400_BAD_REQUEST)
+        if tag != version:
+            raise AppError(
+                f"Agent 运行目标未准备完成：AGENT_AGENT_VERSION={version}，但 CRAWLER_AGENT_IMAGE={image}。请先执行 prepare-agent-image.sh 准备并写入 {version} 镜像。",
+                code=40085,
+                http_status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    @staticmethod
     def _image_has_registry_prefix(image: str) -> bool:
         first = (image or "").split("/", 1)[0]
         if not first or first == image:
@@ -573,7 +604,11 @@ class ServerService:
             "rc=$?",
             "set -e",
             "rm -f \"$tmp_installer\"",
-            "exit $rc",
+            "if [ \"$rc\" -eq 0 ]; then",
+            "  echo \"Agent 安装脚本执行完成，退出码：0。请回到控制台确认首次心跳。\"",
+            "else",
+            "  echo \"Agent 安装脚本已结束，退出码：$rc。当前 SSH 会话不会退出，请根据上方错误处理后重试。\" >&2",
+            "fi",
         ])
 
     def _resolve_control_plane_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:

@@ -4,7 +4,7 @@ FROM python:3.12-slim
 WORKDIR /opt/crawler-agent
 
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG AGENT_VERSION=1.1.1
+ARG AGENT_VERSION=1.1.2
 ARG APP_GIT_COMMIT=unknown
 ARG APP_BUILD_TIME=unknown
 

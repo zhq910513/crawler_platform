@@ -48,7 +48,7 @@ cp_require_docker
 [ -f .env ] || cp_die ".env 不存在。请先从 .env.example 初始化并完成基础配置。"
 
 VERSION="${VERSION:-$(cp_env_value .env AGENT_AGENT_VERSION)}"
-VERSION="${VERSION:-1.1.1}"
+VERSION="${VERSION:-1.1.2}"
 [ -n "$VERSION" ] || cp_die "无法确定 Agent 镜像版本，请配置 AGENT_AGENT_VERSION 或传入 --version。"
 
 REGISTRY_PORT="${REGISTRY_PORT:-$(cp_env_value .env CRAWLER_AGENT_REGISTRY_PORT)}"

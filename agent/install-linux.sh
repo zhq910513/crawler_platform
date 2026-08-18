@@ -5,7 +5,7 @@ AGENT_HOME="${AGENT_HOME:-/opt/crawler-agent}"
 AGENT_STATE_DIR="${AGENT_STATE_DIR:-/var/lib/crawler-agent}"
 AGENT_PROJECT_DATA_ROOT="${AGENT_PROJECT_DATA_ROOT:-/data/crawler-platform/projects}"
 AGENT_CONTAINER_NAME="${AGENT_CONTAINER_NAME:-crawler-agent}"
-AGENT_VERSION="${AGENT_VERSION:-${AGENT_AGENT_VERSION:-1.1.1}}"
+AGENT_VERSION="${AGENT_VERSION:-${AGENT_AGENT_VERSION:-1.1.2}}"
 AGENT_IMAGE="${AGENT_IMAGE:-crawler_platform_agent:${AGENT_VERSION}}"
 ENV_FILE="${ENV_FILE:-$AGENT_HOME/.env}"
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
@@ -53,7 +53,7 @@ if docker run -d --name "$AGENT_CONTAINER_NAME" --restart=always --network host 
   sleep 3
   if [ "$(docker inspect -f '{{.State.Running}}' "$AGENT_CONTAINER_NAME" 2>/dev/null || echo false)" = "true" ]; then
     [ "$had_existing" = "0" ] || docker rm -f "$backup_name" >/dev/null 2>&1 || warn "旧 Agent 副本清理失败：$backup_name"
-    echo "✅ crawler-agent 已安装/启动：$AGENT_CONTAINER_NAME"
+    echo "✅ crawler-agent 容器已启动：$AGENT_CONTAINER_NAME。请回到控制台确认首次心跳。"
     exit 0
   fi
 fi

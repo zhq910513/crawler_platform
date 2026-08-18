@@ -40,7 +40,7 @@ set_env_key APP_GIT_COMMIT "$RELEASE_GIT_COMMIT"
 set_env_key APP_BUILD_TIME "$build_time"
 # Agent 版本独立于平台版本；平台 patch 不再改写 AGENT_AGENT_VERSION。
 agent_version="$(cp_env_value .env AGENT_AGENT_VERSION)"
-agent_version="${agent_version:-1.1.1}"
+agent_version="${agent_version:-1.1.2}"
 set_env_key AGENT_AGENT_VERSION "$agent_version"
 
 mkdir -p .release

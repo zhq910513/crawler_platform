@@ -387,5 +387,5 @@ fi
 
 stage "启动 Agent 容器"
 replace_agent_container_with_rollback || exit 1
-pass "crawler-agent 已安装/启动：$AGENT_CONTAINER_NAME"
-echo "✅ Agent 接入完成。请回到控制台查看心跳、Docker、磁盘、镜像仓库和首次 doctor 结果。"
+pass "crawler-agent 容器已启动：$AGENT_CONTAINER_NAME"
+echo "✅ Agent 容器已启动，正在等待首次心跳。请回到控制台确认节点变为在线；如 30 秒后仍接入中，请查看 docker logs --tail 200 $AGENT_CONTAINER_NAME。"

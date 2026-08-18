@@ -21,7 +21,7 @@ def _first_non_empty_env(*names: str) -> str:
 
 def default_agent_version() -> str:
     # Agent 是服务器基础设施，版本独立于平台 APP_VERSION。
-    return _first_non_empty_env("AGENT_AGENT_VERSION", "CRAWLER_AGENT_VERSION") or "1.1.1"
+    return _first_non_empty_env("AGENT_AGENT_VERSION", "CRAWLER_AGENT_VERSION") or "1.1.2"
 
 
 def default_agent_image() -> str:
