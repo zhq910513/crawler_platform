@@ -67,14 +67,16 @@ if ! printf '%s' "$version_json" | grep -Eq '"gitCommit"[[:space:]]*:[[:space:]]
   cp_warn "/version.json gitCommit 与当前 Git commit 不一致；请确认 web 镜像是否完成重建。"
 fi
 
-if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
-  cp_info "部署后自动准备执行组件镜像分发。"
-  if ! bash deploy/scripts/prepare-agent-image.sh --version "$RELEASE_VERSION"; then
+if [ "${AUTO_PREPARE_AGENT_IMAGE:-0}" = "1" ]; then
+  cp_info "按显式要求准备独立 Agent 镜像。"
+  if ! bash deploy/scripts/prepare-agent-image.sh; then
     if [ "${STRICT_AGENT_IMAGE_PREPARE:-0}" = "1" ]; then
       cp_die "执行组件镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断发布升级。"
     fi
-    cp_warn "执行组件镜像自动准备未完成；请到运行总览查看平台自检并按提示处理。"
+    cp_warn "执行组件镜像自动准备未完成；平台 patch 已完成，Agent 镜像请单独处理。"
   fi
+else
+  cp_info "平台发布不触碰 Agent 镜像；如 Agent 代码变化，请单独执行 prepare-agent-image.sh。"
 fi
 
 bash deploy/scripts/record-platform-preflight-snapshot.sh DEPLOY || true

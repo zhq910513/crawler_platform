@@ -102,6 +102,11 @@ export interface ServerNode {
   environment: string
   maxContainerSlots: number
   manageStatus: string
+  desiredState?: string
+  desiredAgentVersion?: string
+  lifecycleStatus?: string
+  lifecycleAction?: string
+  lifecycleError?: string
   healthStatus: string
   capacityStatus: string
   metrics: AgentMetrics

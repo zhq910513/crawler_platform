@@ -121,11 +121,11 @@ cp_node_tool_sh() {
 
 cp_curl_tool() {
   if cp_command_exists curl; then
-    curl "$@"
+    curl --connect-timeout "${CP_CURL_CONNECT_TIMEOUT:-3}" --max-time "${CP_CURL_MAX_TIME:-15}" "$@"
     return $?
   fi
   cp_require_docker || return 1
-  docker run --rm --network host -v "${ROOT_DIR:-$(pwd)}:${ROOT_DIR:-$(pwd)}" -w "${ROOT_DIR:-$(pwd)}" "$(cp_tool_curl_image)" "$@"
+  docker run --rm --network host -v "${ROOT_DIR:-$(pwd)}:${ROOT_DIR:-$(pwd)}" -w "${ROOT_DIR:-$(pwd)}" "$(cp_tool_curl_image)" --connect-timeout "${CP_CURL_CONNECT_TIMEOUT:-3}" --max-time "${CP_CURL_MAX_TIME:-15}" "$@"
 }
 
 cp_env_value() {
@@ -222,9 +222,9 @@ cp_wait_http() {
   start="$(date +%s)"
   while :; do
     if cp_command_exists curl; then
-      curl -fsS "$url" >/dev/null 2>&1 && return 0
+      curl -fsS --connect-timeout 3 --max-time 10 "$url" >/dev/null 2>&1 && return 0
     else
-      docker run --rm --network host curlimages/curl:8.10.1 -fsS "$url" >/dev/null 2>&1 && return 0
+      docker run --rm --network host curlimages/curl:8.10.1 --connect-timeout 3 --max-time 10 -fsS "$url" >/dev/null 2>&1 && return 0
     fi
     now="$(date +%s)"
     if [ $((now-start)) -ge "$timeout" ]; then return 1; fi

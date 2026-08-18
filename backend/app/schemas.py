@@ -354,8 +354,12 @@ class AgentJoinTokenCreate(ApiModel):
     install_target: Literal["LOCAL", "REMOTE"] = "REMOTE"
     control_plane_url: str = Field(default="", max_length=500)
     expires_in_hours: int = Field(default=24, ge=1, le=720)
-    replace_existing_agent: bool = False
+    replace_existing_agent: bool = True
     auto_configure_docker_registry: bool = False
+
+
+class AgentBootstrapPrecheckRequest(ApiModel):
+    join_token: str = Field(min_length=10, max_length=500)
 
 
 class AgentBootstrapEnvRequest(ApiModel):
@@ -393,7 +397,7 @@ class AgentHeartbeat(ApiModel):
     agent_image: str = Field(default="", max_length=500)
     agent_image_digest: str = Field(default="", max_length=120)
     agent_image_actual_digest: str = Field(default="", max_length=120)
-    protocol_version: str = Field(default="3.0", max_length=30)
+    protocol_version: str = Field(default="1.0", max_length=30)
     health_status: Literal["HEALTHY", "UNHEALTHY", "OFFLINE", "UNKNOWN"] | None = None
     capacity_status: Literal["NORMAL", "BUSY", "FULL", "DRAINED", "EXHAUSTED", "UNKNOWN"] | None = None
     docker_status: str = Field(default="UNKNOWN", max_length=500)

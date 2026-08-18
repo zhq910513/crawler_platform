@@ -29,6 +29,7 @@ from app.services.audit import write_operation_log
 from app.config import settings
 from app.services.system_config_service import SystemConfigService
 from app.services.agent_command_service import AgentCommandService
+from app.services.alert_service import AlertService
 from app.utils import sha256_text, utcnow
 
 
@@ -117,7 +118,28 @@ class ServerService:
             active_scope = or_(active_scope, CrawlerTaskRun.agent_id == agent.agent_id)
         active_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.run_status.in_(active_statuses), active_scope)) or 0)
         if active_count:
-            raise AppError("节点存在运行中任务，不能清理，请等待任务结束后再操作", code=40074, http_status=status.HTTP_400_BAD_REQUEST)
+            # Desired State：用户发起移除后，平台先进入 Drain，不再把“等待任务结束”交给人工二次点击。
+            server.previous_manage_status = server.manage_status or server.previous_manage_status or "ENABLED"
+            server.manage_status = "MAINTENANCE"
+            server.desired_state = "DECOMMISSIONED"
+            server.lifecycle_status = "DRAINING"
+            server.lifecycle_action = "DECOMMISSION"
+            server.lifecycle_error = ""
+            server.lifecycle_started_at = utcnow()
+            write_operation_log(
+                self.db, user, None, operation_type="DECOMMISSION_SERVER_DRAINING", resource_type="server",
+                resource_id=str(server_id), before_data=before,
+                after_data={"deleted": False, "decommissioning": True, "activeRuns": active_count},
+            )
+            self.db.commit()
+            return {
+                "server_id": server_id,
+                "deleted": False,
+                "decommissioning": True,
+                "draining": True,
+                "active_runs": active_count,
+                "message": "已进入维护/Drain 状态，不再接收新任务；运行任务结束后平台会自动继续退役。",
+            }
 
         # 在线节点优先通过现有心跳指令通道退役，避免平台记录删除后远端 crawler-agent
         # 仍以 restart=always 持续运行并反复使用已失效 Token。
@@ -125,6 +147,11 @@ class ServerService:
         supports_decommission = bool(agent and isinstance(agent.capabilities, dict) and agent.capabilities.get("agentDecommission") is True)
         if agent and supports_decommission and agent.connection_status == "ONLINE" and agent.last_heartbeat_at and agent.last_heartbeat_at >= offline_before:
             server.manage_status = "DISABLED"
+            server.desired_state = "DECOMMISSIONED"
+            server.lifecycle_status = "DECOMMISSIONING"
+            server.lifecycle_action = "DECOMMISSION"
+            server.lifecycle_error = ""
+            server.lifecycle_started_at = utcnow()
             metrics = dict(server.metrics or {})
             if not any(isinstance(item, dict) and item.get("commandType") == "AGENT_DECOMMISSION" and item.get("status") == "PENDING" for item in metrics.get("pendingAgentCommands", []) or []):
                 AgentCommandService(self.db).enqueue_agent_decommission(server=server, agent_id=agent.agent_id)
@@ -150,6 +177,15 @@ class ServerService:
         live_but_legacy = bool(agent and not supports_decommission and agent.connection_status == "ONLINE" and agent.last_heartbeat_at and agent.last_heartbeat_at >= offline_before)
         cleanup_counts = self._delete_server_records(server, agent)
         cleanup_command = self._agent_local_cleanup_command()
+        if agent and (live_but_legacy or not supports_decommission):
+            AlertService(self.db).raise_event(
+                severity="P1",
+                alert_type="AGENT_REMOTE_CLEANUP_UNCONFIRMED",
+                title="远端 Agent 清理未确认",
+                content=f"节点 {before.get('server_name') or before.get('server_code') or server_id} 已从平台移除并撤销凭据，但平台无法确认远端 crawler-agent 容器已停止。请在目标服务器执行：{cleanup_command}",
+                fingerprint=f"agent-remote-cleanup:{server.company_id}:{server_id}",
+                company_id=server.company_id,
+            )
         write_operation_log(
             self.db, user, None, operation_type="DELETE_SERVER", resource_type="server", resource_id=str(server_id),
             before_data=before,
@@ -203,6 +239,26 @@ class ServerService:
         cleanup_counts["crawler_server"] = cleanup_counts.get("crawler_server", 0) + 1
         return cleanup_counts
 
+
+    def finalize_agent_decommission_unconfirmed(self, server: CrawlerServer, agent: CrawlerAgent | None, reason: str = "") -> dict:
+        before = self._server_payload(server)
+        server_id = server.server_id
+        cleanup_command = self._agent_local_cleanup_command()
+        cleanup_counts = self._delete_server_records(server, agent)
+        AlertService(self.db).raise_event(
+            severity="P1",
+            alert_type="AGENT_REMOTE_CLEANUP_UNCONFIRMED",
+            title="远端 Agent 清理未确认",
+            content=f"节点 {before.get('server_name') or before.get('server_code') or server_id} 已从平台移除并撤销凭据，但平台无法确认远端 crawler-agent 容器已停止。原因：{reason or 'Agent 不在线或不支持自动退役'}。请在目标服务器执行：{cleanup_command}",
+            fingerprint=f"agent-remote-cleanup:{before.get('company_id')}:{server_id}",
+            company_id=before.get('company_id'),
+        )
+        write_operation_log(
+            self.db, None, None, operation_type="DECOMMISSION_SERVER_UNCONFIRMED", resource_type="server", resource_id=str(server_id),
+            before_data=before, after_data={"deleted": True, "cleanupCounts": cleanup_counts, "remoteAgentCleanupUnconfirmed": True, "reason": reason, "manualCleanupCommand": cleanup_command},
+        )
+        return {"deleted": True, "cleanup_counts": cleanup_counts, "manual_cleanup_command": cleanup_command}
+
     def finalize_agent_decommission(self, agent: CrawlerAgent) -> dict:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
@@ -231,6 +287,8 @@ class ServerService:
         agent = self.agents.by_code(payload.agent_code)
         if agent and agent.company_id != company_id:
             raise AppError("Agent 编码已被其他公司使用", code=40033)
+        if agent and agent.connection_status == "ONLINE":
+            raise AppError("该执行节点 Agent 当前在线；在线节点不应重新生成 Join Token，请使用维护、升级或移除流程。", code=40077, http_status=status.HTTP_400_BAD_REQUEST)
         raw_token = secrets.token_urlsafe(40)
         expires_at = utcnow() + timedelta(hours=payload.expires_in_hours)
         control_plane_url = self._resolve_control_plane_url(payload.control_plane_url, detected_base_url, payload.install_target)
@@ -262,8 +320,8 @@ class ServerService:
         )
         self.db.add(token)
         self.db.flush()
-        command = self._install_command(raw_token, control_plane_url, payload.replace_existing_agent, payload.auto_configure_docker_registry)
-        connectivity_command = f"curl -fsSL {control_plane_url.rstrip('/')}/health && echo"
+        command = self._install_command(raw_token, control_plane_url, payload.replace_existing_agent, payload.auto_configure_docker_registry, "replace_existing_agent" in payload.model_fields_set)
+        connectivity_command = f"curl -fsS --connect-timeout 3 --max-time 10 {control_plane_url.rstrip('/')}/health && echo"
         node_verification_script = self._node_verification_script(control_plane_url)
         write_operation_log(self.db, user, None, operation_type="CREATE_AGENT_JOIN_TOKEN", resource_type="agent", resource_id=str(token.token_id), after_data={"tokenId": token.token_id, "companyId": token.company_id, "agentCode": token.agent_code, "serverCode": token.server_code})
         self.db.commit()
@@ -285,7 +343,7 @@ class ServerService:
             "warnings": [
                 *self._control_plane_url_warnings(payload.control_plane_url, control_plane_url, detected_base_url),
                 *self._agent_image_warnings(),
-                ("安装命令已授权替换已有执行组件容器，仅用于重新接入或修复失败接入。" if payload.replace_existing_agent else "安装命令不会静默替换已有执行组件容器；如脚本发现已有容器，会阻断并提示使用重新接入。"),
+                ("默认启用智能替换：已有 Agent 无任务时可回滚替换，有任务时会在消耗 Join Token 前停止并提示等待。" if payload.replace_existing_agent else "已选择保守模式：发现已有 Agent 会在消耗 Join Token 前停止。"),
                 ("已明确授权安装脚本在 Registry 网络验证通过后配置 Docker HTTP 私有仓库；该动作会备份 daemon.json 并重启 Docker。" if payload.auto_configure_docker_registry else "默认不会修改 Docker daemon.json 或重启 Docker；如检测到 HTTP 私有仓库尚未配置，脚本会在消耗接入凭证前停止。"),
             ],
             "controlPlanePreflight": control_preflight,
@@ -317,6 +375,16 @@ class ServerService:
         return {"token_id": token_id, "deleted": True}
 
 
+    def precheck_agent_join_token(self, join_token: str) -> dict:
+        token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(join_token), CrawlerAgentJoinToken.status == "ACTIVE"))
+        if not token:
+            raise AppError("Agent 接入令牌无效或已使用", code=40160, http_status=status.HTTP_401_UNAUTHORIZED)
+        if token.expires_at and token.expires_at < utcnow():
+            token.status = "EXPIRED"
+            self.db.commit()
+            raise AppError("Agent 接入令牌已过期", code=40161, http_status=status.HTTP_401_UNAUTHORIZED)
+        return {"accepted": True, "invitationStatus": token.invitation_status, "tokenId": token.token_id}
+
     def report_agent_join_failure(self, payload: AgentBootstrapFailureReport) -> dict:
         token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(payload.join_token)))
         if not token:
@@ -330,6 +398,35 @@ class ServerService:
         token.last_preflight_report = {**previous_report, **(payload.install_report or {}), "failureStage": token.failure_stage, "failureReason": token.failure_reason}
         self.db.commit()
         return {"accepted": True, "invitationStatus": token.invitation_status, "failureStage": token.failure_stage}
+
+
+    def resume_agent_bootstrap_env(self, agent: CrawlerAgent, detected_base_url: str = "") -> str:
+        server = self.db.get(CrawlerServer, agent.server_id)
+        if not server:
+            raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        if server.desired_state == "DECOMMISSIONED" or server.lifecycle_action == "DECOMMISSION":
+            raise AppError("该节点正在退役，不能复用旧 Agent 凭据续跑安装", code=40931, http_status=status.HTTP_409_CONFLICT)
+        control_plane_url = SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or detected_base_url.rstrip("/")
+        server.desired_agent_version = settings.crawler_agent_version
+        if server.lifecycle_status in {"BOOTSTRAPPING", "INSTALLING"}:
+            server.lifecycle_error = ""
+        self.db.commit()
+        work_dir = (server.work_dir or "/data/crawler-agent").rstrip("/")
+        capabilities = agent.capabilities or server.capabilities or {}
+        lines = {
+            "AGENT_CONTROL_PLANE_URL": control_plane_url,
+            "AGENT_AGENT_CODE": agent.agent_code,
+            "AGENT_SERVER_CODE": server.server_code,
+            "AGENT_MAX_SLOTS": str(server.max_container_slots),
+            "AGENT_PROJECT_DATA_ROOT": work_dir + "/projects",
+            "AGENT_RUN_ROOT": work_dir + "/runs",
+            "AGENT_SPOOL_DIR": work_dir + "/spool",
+            "AGENT_IMAGE": settings.crawler_agent_image,
+            "AGENT_EXPECTED_IMAGE_DIGEST": settings.crawler_agent_image_digest,
+            "AGENT_AGENT_VERSION": settings.crawler_agent_version,
+            "AGENT_CAPABILITIES_JSON": __import__('json').dumps(capabilities, ensure_ascii=False),
+        }
+        return "\n".join(f"{k}={self._quote_env(v)}" for k, v in lines.items()) + "\n"
 
     def consume_agent_join_token(self, payload: AgentBootstrapEnvRequest, detected_base_url: str = "") -> str:
         from sqlalchemy import select
@@ -352,6 +449,8 @@ class ServerService:
                 registry_credential_ref=token.registry_credential_ref,
                 work_dir=token.work_dir,
                 manage_status="ENABLED",
+                desired_state="ONLINE",
+                desired_agent_version=settings.crawler_agent_version,
             )
             self.servers.add(server)
             self.db.flush()
@@ -364,6 +463,11 @@ class ServerService:
             server.capabilities = token.capabilities or server.capabilities or {}
             server.registry_credential_ref = token.registry_credential_ref or server.registry_credential_ref
             server.work_dir = token.work_dir or server.work_dir
+        server.desired_state = "ONLINE"
+        server.desired_agent_version = settings.crawler_agent_version
+        server.lifecycle_status = "BOOTSTRAPPING"
+        server.lifecycle_action = "JOIN"
+        server.lifecycle_error = ""
         raw_agent_token = secrets.token_urlsafe(36)
         agent = self.agents.by_code(token.agent_code)
         if agent and agent.server_id != server.server_id:
@@ -448,15 +552,29 @@ class ServerService:
             return False
         return "." in first or ":" in first or first == "localhost"
 
-    def _install_command(self, token: str, base: str, replace_existing_agent: bool = False, auto_configure_docker_registry: bool = False) -> str:
+    def _install_command(self, token: str, base: str, replace_existing_agent: bool = True, auto_configure_docker_registry: bool = False, explicit_replace_flag: bool = False) -> str:
         public_base = base.rstrip("/")
         flags: list[str] = []
         if auto_configure_docker_registry:
             flags.append("--auto-configure-docker-registry")
-        if replace_existing_agent:
+        if replace_existing_agent and explicit_replace_flag:
             flags.append("--replace-existing-agent")
+        elif not replace_existing_agent:
+            flags.append("--no-replace-existing-agent")
         suffix = (" " + " ".join(flags)) if flags else ""
-        return f"curl -fsSL --connect-timeout 3 --max-time 15 {public_base}/api/v1/agent-installers/linux.sh | bash -s -- --control-plane-url {public_base} --join-token {self._quote_shell(token)}{suffix}"
+        quoted_base = self._quote_shell(public_base)
+        quoted_token = self._quote_shell(token)
+        return "\n".join([
+            "set -Eeuo pipefail",
+            "tmp_installer=\"$(mktemp)\"",
+            f"curl -fsS --connect-timeout 3 --max-time 15 {quoted_base}/api/v1/agent-installers/linux.sh -o \"$tmp_installer\"",
+            "set +e",
+            f"bash \"$tmp_installer\" --control-plane-url {quoted_base} --join-token {quoted_token}{suffix}",
+            "rc=$?",
+            "set -e",
+            "rm -f \"$tmp_installer\"",
+            "exit $rc",
+        ])
 
     def _resolve_control_plane_url(self, requested_url: str = "", detected_base_url: str = "", install_target: str = "REMOTE") -> str:
         base = (requested_url or SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or "").strip().rstrip("/")

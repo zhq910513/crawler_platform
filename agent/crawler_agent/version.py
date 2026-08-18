@@ -30,21 +30,13 @@ def release_metadata() -> dict[str, str]:
         if file_data:
             break
 
+    # Agent 是服务器基础设施，版本不能回退读取平台 APP_VERSION 或仓库根 VERSION，
+    # 否则普通平台 patch 会把 Agent 伪装成同版本。
     version = (
         os.getenv("AGENT_AGENT_VERSION")
         or os.getenv("AGENT_VERSION")
-        or os.getenv("APP_VERSION")
         or str(file_data.get("version") or "").strip()
     )
-    if not version:
-        repo_root_version = Path(__file__).resolve().parents[2] / "VERSION"
-        for candidate in (Path("/opt/crawler-agent/VERSION"), Path("VERSION"), repo_root_version):
-            try:
-                if candidate.exists():
-                    version = candidate.read_text(encoding="utf-8").strip()
-                    break
-            except Exception:
-                pass
 
     return {
         "appName": str(file_data.get("appName") or "crawler_platform_agent"),

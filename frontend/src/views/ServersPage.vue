@@ -45,8 +45,8 @@
       </el-table-column>
       <el-table-column label="操作" width="190" fixed="right">
         <template #default="s">
-          <el-button link type="primary" :disabled="s.row.metrics?.decommissionStatus === 'PENDING'" @click="rejoinNode(s.row)">重新接入</el-button>
-          <el-button link type="danger" :disabled="s.row.metrics?.decommissionStatus === 'PENDING'" @click="cleanupNode(s.row)">清理</el-button>
+          <el-button v-if="canRejoinNode(s.row)" link type="primary" :disabled="s.row.lifecycleStatus === 'DRAINING' || s.row.lifecycleStatus === 'DECOMMISSIONING'" @click="rejoinNode(s.row)">重新接入</el-button>
+          <el-button link type="danger" :disabled="s.row.lifecycleStatus === 'DRAINING' || s.row.lifecycleStatus === 'DECOMMISSIONING'" @click="cleanupNode(s.row)">移除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -171,7 +171,7 @@ const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
 const onboardingVisible = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
-const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: false, autoConfigureDockerRegistry: false })
+const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: true, autoConfigureDockerRegistry: false })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
 
@@ -179,8 +179,11 @@ function hasRuntimeMetrics(row: ServerNode) { return Boolean(row.agentLastHeartb
 function metricText(value?: number | null) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value))}%` }
 function invitationFor(row: ServerNode) { return joinInvitations.value.find((item) => String(item.server_code || item.serverCode || '') === row.serverCode) }
 function nodeStatusText(row: ServerNode) {
-  if (row.metrics?.decommissionStatus === 'PENDING') return '清理中'
-  if (row.metrics?.decommissionStatus === 'FAILED') return '清理失败'
+  if (row.lifecycleStatus === 'DRAINING') return '维护中'
+  if (row.lifecycleStatus === 'DECOMMISSIONING' || row.desiredState === 'DECOMMISSIONED') return '移除中'
+  if (row.lifecycleStatus === 'UPGRADING') return '升级中'
+  if (row.metrics?.decommissionStatus === 'PENDING') return '移除中'
+  if (row.metrics?.decommissionStatus === 'FAILED') return '移除失败'
   if (row.agentConnectionStatus === 'ONLINE') return '在线'
   if (row.agentConnectionStatus === 'OFFLINE') return '离线'
   const invitation = invitationFor(row)
@@ -189,8 +192,8 @@ function nodeStatusText(row: ServerNode) {
   if (status === 'FAILED') return '接入失败'
   return '待接入'
 }
-function nodeStatusTag(row: ServerNode) { const text = nodeStatusText(row); if (text === '在线') return 'success'; if (['离线', '接入失败', '清理失败'].includes(text)) return 'danger'; return 'info' }
-function nodeStatusHint(row: ServerNode) { const text = nodeStatusText(row); if (text === '接入中') return '等待首次心跳'; if (text === '清理中') return '等待 Agent 退役确认'; return '' }
+function nodeStatusTag(row: ServerNode) { const text = nodeStatusText(row); if (text === '在线') return 'success'; if (['离线', '接入失败', '移除失败', '版本不兼容'].includes(text)) return 'danger'; return 'info' }
+function nodeStatusHint(row: ServerNode) { const text = nodeStatusText(row); if (text === '接入中') return '等待首次心跳'; if (text === '维护中') return '停止接新任务，等待当前任务结束'; if (text === '移除中') return '等待 Drain/退役收敛'; if (text === '升级中') return '等待 Agent 稳定上线'; return row.lifecycleError || '' }
 function invitationStatusText(row: Record<string, any>) { const status = String(row.invitation_status || row.invitationStatus || ''); return ({ PENDING: '待接入', CONFIG_ISSUED: '接入中', FAILED: '接入失败' } as Record<string, string>)[status] || zh(status) }
 function invitationResultText(row: Record<string, any>) { return String(row.failure_reason || row.failureReason || row.failure_stage || row.failureStage || '-') }
 function canCleanupInvitation(row: Record<string, any>) { const code = String(row.server_code || row.serverCode || ''); return !rows.value.some((item) => item.serverCode === code) }
@@ -238,7 +241,7 @@ function applyInstallTarget() {
 }
 function openOnboarding() {
   joinResult.value = null
-  joinForm.replaceExistingAgent = false
+  joinForm.replaceExistingAgent = true
   joinForm.autoConfigureDockerRegistry = false
   onboardingVisible.value = true
   if (!joinForm.companyId) joinForm.companyId = form.companyId
@@ -261,9 +264,10 @@ function rejoinNode(row: ServerNode) {
   applyInstallTarget()
   onboardingVisible.value = true
 }
+function canRejoinNode(row: ServerNode) { return row.agentConnectionStatus !== 'ONLINE' }
 async function cleanupNode(row: ServerNode) {
   try {
-    await ElMessageBox.confirm(`确认清理执行节点 ${row.serverName}？在线节点会先自动退役远端 Agent；离线节点会立即失效旧 Token 并清理平台记录。`, '清理执行节点', { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(`确认移除执行节点 ${row.serverName}？在线节点会先自动退役远端 Agent；离线节点会立即失效旧 Token 并清理平台记录。`, '移除执行节点', { type: 'warning', confirmButtonText: '确认移除', cancelButtonText: '取消' })
   } catch {
     return
   }
@@ -271,7 +275,7 @@ async function cleanupNode(row: ServerNode) {
   if (result.decommissioning) {
     ElMessage.success(result.message || '已下发 Agent 退役指令，确认后节点会自动移除')
   } else {
-    ElMessage.success('节点及接入记录已清理')
+    ElMessage.success('节点及接入记录已移除')
     if (result.manualCleanupCommand) {
       await ElMessageBox.alert(`平台已使旧 Agent Token 失效。若目标机仍残留 crawler-agent，请在目标机执行：\n\n${result.manualCleanupCommand}`, '远端残留检查', { confirmButtonText: '知道了' })
     }
@@ -282,7 +286,7 @@ async function cleanupInvitation(row: Record<string, any>) {
   const tokenId = Number(row.token_id || row.tokenId || 0)
   if (!tokenId) return
   try {
-    await ElMessageBox.confirm(`确认清理“${row.server_name || row.serverName || '该节点'}”的接入记录？`, '清理接入记录', { type: 'warning', confirmButtonText: '确认清理', cancelButtonText: '取消' })
+    await ElMessageBox.confirm(`确认移除“${row.server_name || row.serverName || '该节点'}”的接入记录？`, '清理接入记录', { type: 'warning', confirmButtonText: '确认移除', cancelButtonText: '取消' })
   } catch {
     return
   }

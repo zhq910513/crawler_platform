@@ -143,6 +143,13 @@ class CrawlerServer(Base, TimestampMixin):
     environment: Mapped[str] = mapped_column(String(30), default="production", index=True, nullable=False)
     max_container_slots: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     manage_status: Mapped[str] = mapped_column(String(20), default="ENABLED", index=True, nullable=False)
+    desired_state: Mapped[str] = mapped_column(String(30), default="ONLINE", index=True, nullable=False)
+    desired_agent_version: Mapped[str] = mapped_column(String(50), default="", nullable=False)
+    lifecycle_status: Mapped[str] = mapped_column(String(30), default="IDLE", index=True, nullable=False)
+    lifecycle_action: Mapped[str] = mapped_column(String(50), default="", index=True, nullable=False)
+    lifecycle_error: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    lifecycle_started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    previous_manage_status: Mapped[str] = mapped_column(String(20), default="", nullable=False)
     health_status: Mapped[str] = mapped_column(String(20), default="UNKNOWN", index=True, nullable=False)
     capacity_status: Mapped[str] = mapped_column(String(20), default="UNKNOWN", index=True, nullable=False)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
@@ -166,8 +173,9 @@ class CrawlerAgent(Base, TimestampMixin):
     agent_image: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     agent_image_digest: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     agent_image_actual_digest: Mapped[str] = mapped_column(String(120), default="", nullable=False)
-    protocol_version: Mapped[str] = mapped_column(String(30), default="3.0", nullable=False)
+    protocol_version: Mapped[str] = mapped_column(String(30), default="1.0", nullable=False)
     agent_instance_id: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    upgrade_stable_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     connection_status: Mapped[str] = mapped_column(String(20), default="UNREGISTERED", index=True, nullable=False)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
     heartbeat_interval_seconds: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
@@ -582,6 +590,7 @@ class CrawlerTaskRun(Base, TimestampMixin):
     retryable: Mapped[bool | None] = mapped_column(Boolean)
     diagnosis_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    execution_node_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class CrawlerRunContainerSnapshot(Base):

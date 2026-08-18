@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
-from app.schemas import AgentBootstrapEnvRequest, AgentBootstrapFailureReport
+from app.deps import get_agent
+from app.models import CrawlerAgent
+from app.schemas import AgentBootstrapEnvRequest, AgentBootstrapFailureReport, AgentBootstrapPrecheckRequest
 from app.services.server_service import ServerService
 from app.services.system_config_service import SystemConfigService
 
@@ -33,10 +35,22 @@ def get_linux_agent_installer() -> PlainTextResponse:
     return PlainTextResponse(script, media_type="text/x-shellscript; charset=utf-8")
 
 
+@router.post("/agent-bootstrap/precheck")
+def precheck_agent_bootstrap(payload: AgentBootstrapPrecheckRequest, db: Session = Depends(get_db)):
+    return ServerService(db).precheck_agent_join_token(payload.join_token)
+
+
 @router.post("/agent-bootstrap/env", response_class=PlainTextResponse)
 def create_agent_bootstrap_env(payload: AgentBootstrapEnvRequest, request: Request, db: Session = Depends(get_db)) -> PlainTextResponse:
     detected = SystemConfigService.detected_base_url_from_request(request)
     content = ServerService(db).consume_agent_join_token(payload, detected)
+    return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+
+@router.get("/agent-bootstrap/resume-env", response_class=PlainTextResponse)
+def resume_agent_bootstrap_env(request: Request, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)) -> PlainTextResponse:
+    detected = SystemConfigService.detected_base_url_from_request(request)
+    content = ServerService(db).resume_agent_bootstrap_env(agent, detected)
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
 

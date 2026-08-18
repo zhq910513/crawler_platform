@@ -1330,12 +1330,16 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert 'insecure-registries' in script.text
     assert 'grep -F "\\"$reg\\""' in script.text
     assert 'grep -F '"'"'"$reg"'"'"'' not in script.text
+    assert '长期 Agent 凭据检查' in script.text
+    assert '/api/v1/agent-bootstrap/resume-env' in script.text
+    assert '跳过一次性 Join Token 换取配置' in script.text
     env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'test-host', 'installReport': {'pass': 5}})
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert f"AGENT_IMAGE='crawler_platform_agent:{release_version}'" in env_resp.text
-    assert f"AGENT_AGENT_VERSION='{release_version}'" in env_resp.text
+    assert release_version == '1.0.73'
+    assert "AGENT_IMAGE='crawler_platform_agent:1.1.1'" in env_resp.text
+    assert "AGENT_AGENT_VERSION='1.1.1'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
     server = next(row for row in servers if row['serverCode'] == 'join-srv-01')
     assert server['labels']['region'] == 'cn'
@@ -1852,7 +1856,7 @@ def test_agent_join_command_preserves_detected_external_port() -> None:
     assert token_body['controlPlaneUrl'] == 'http://42.193.226.138:8080'
     assert 'http://42.193.226.138:8080/api/v1/agent-installers/linux.sh' in token_body['installCommand']
     assert '--control-plane-url http://42.193.226.138:8080' in token_body['installCommand']
-    assert token_body['connectivityCommand'] == 'curl -fsSL http://42.193.226.138:8080/health && echo'
+    assert token_body['connectivityCommand'] == 'curl -fsS --connect-timeout 3 --max-time 10 http://42.193.226.138:8080/health && echo'
     assert token_body['warnings']
     env_resp = client.post('/api/v1/agent-bootstrap/env', headers={
         'host': '42.193.226.138:8080',
@@ -1861,3 +1865,153 @@ def test_agent_join_command_preserves_detected_external_port() -> None:
     }, json={'joinToken': token_body['joinToken'], 'hostname': 'port-test-host', 'installReport': {'pass': 7}})
     assert env_resp.status_code == 200
     assert "AGENT_CONTROL_PLANE_URL='http://42.193.226.138:8080'" in env_resp.text
+
+
+def test_agent_bootstrap_resume_env_reuses_long_credential_without_join_token() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'resumeco', 'companyName': '续跑公司'}).json()['data']
+    token_body = client.post('/api/v1/servers/agent-join-tokens', headers=headers, json={
+        'companyId': company['companyId'],
+        'serverCode': 'resume-srv-01',
+        'serverName': '续跑节点',
+        'agentCode': 'resume-agent-01',
+        'installTarget': 'LOCAL',
+    }).json()['data']
+    env_resp = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'resume-host'})
+    assert env_resp.status_code == 200
+    raw_token = next(line for line in env_resp.text.splitlines() if line.startswith('AGENT_AGENT_TOKEN=')).split('=', 1)[1].strip("'")
+    second = client.post('/api/v1/agent-bootstrap/env', json={'joinToken': token_body['joinToken'], 'hostname': 'resume-host'})
+    assert second.status_code == 401
+    resume = client.get('/api/v1/agent-bootstrap/resume-env', headers={'Authorization': 'Agent ' + raw_token})
+    assert resume.status_code == 200
+    assert "AGENT_AGENT_TOKEN" not in resume.text
+    assert "AGENT_AGENT_CODE='resume-agent-01'" in resume.text
+    assert "AGENT_IMAGE='crawler_platform_agent:1.1.1'" in resume.text
+    assert "AGENT_AGENT_VERSION='1.1.1'" in resume.text
+
+
+def test_decommission_drain_converges_to_agent_command_after_runs_finish() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, meta = create_flow(client, headers, 'drain_decom', ['srv-drain-decom-a'])
+    agent = agents[0]
+    heartbeat_headers = agent['headers']
+    hb = client.post('/api/v1/agent-heartbeats', headers=heartbeat_headers, json={
+        'agentInstanceId': 'drain-decom-inst',
+        'agentVersion': '1.1.1',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {'agentDecommission': True, 'agentUpgrade': True},
+    })
+    assert hb.status_code == 200
+    # 制造一个正在运行的实例，删除节点应先进入 Drain，而不是要求人工二次点击。
+    from app.db import SessionLocal
+    from app.models import CrawlerServer, CrawlerTask, CrawlerTaskRun
+    from app.utils import utcnow
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task_body = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'drain_decom_task', 'taskName': '退役Drain任务', 'status': 'ENABLED'}).json()['data']
+    with SessionLocal() as db:
+        server = db.query(CrawlerServer).filter(CrawlerServer.server_code == 'srv-drain-decom-a').one()
+        run = CrawlerTaskRun(company_id=company['companyId'], project_id=project['projectId'], task_id=task_body['taskId'], server_id=server.server_id, run_status='RUNNING', routing_status='ROUTED', trigger_key='drain-decom-run', heartbeat_at=utcnow())
+        db.add(run)
+        db.commit()
+        server_id = server.server_id
+        run_id = run.run_id
+    delete_resp = client.delete(f'/api/v1/servers/{server_id}', headers=headers)
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()['data']['draining'] is True
+    with SessionLocal() as db:
+        run = db.get(CrawlerTaskRun, run_id)
+        run.run_status = 'SUCCEEDED'
+        db.commit()
+    hb2 = client.post('/api/v1/agent-heartbeats', headers=heartbeat_headers, json={
+        'agentInstanceId': 'drain-decom-inst',
+        'agentVersion': '1.1.1',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {'agentDecommission': True, 'agentUpgrade': True},
+    })
+    assert hb2.status_code == 200
+    commands = hb2.json()['data']['pendingAgentCommands']
+    assert any(item['commandType'] == 'AGENT_DECOMMISSION' for item in commands)
+
+
+def test_agent_version_never_falls_back_to_platform_app_version(monkeypatch) -> None:
+    import importlib
+    import sys
+    agent_root = Path(__file__).resolve().parents[2] / 'agent'
+    sys.path.insert(0, str(agent_root))
+    try:
+        agent_version = importlib.import_module('crawler_agent.version')
+    finally:
+        try:
+            sys.path.remove(str(agent_root))
+        except ValueError:
+            pass
+    agent_version.release_metadata.cache_clear()
+    monkeypatch.delenv('AGENT_AGENT_VERSION', raising=False)
+    monkeypatch.delenv('AGENT_VERSION', raising=False)
+    monkeypatch.setenv('APP_VERSION', '9.9.9')
+    assert agent_version.default_version() != '9.9.9'
+    assert agent_version.default_version() == '0.0.0'
+    agent_version.release_metadata.cache_clear()
+
+
+def test_decommission_drain_finishes_unconfirmed_without_continuing_deleted_heartbeat() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, _ = create_flow(client, headers, 'drain_unconfirmed', ['srv-drain-unconfirmed-a'])
+    heartbeat_headers = agents[0]['headers']
+    hb = client.post('/api/v1/agent-heartbeats', headers=heartbeat_headers, json={
+        'agentInstanceId': 'drain-unconfirmed-inst',
+        'agentVersion': '1.0.71',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {'agentDecommission': False, 'agentUpgrade': False},
+    })
+    assert hb.status_code == 200
+    from app.db import SessionLocal
+    from app.models import CrawlerServer, CrawlerTaskRun, SysAlertEvent
+    from app.utils import utcnow
+    defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    task_body = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'drain_unconfirmed_task', 'taskName': '退役未确认任务', 'status': 'ENABLED'}).json()['data']
+    with SessionLocal() as db:
+        server = db.query(CrawlerServer).filter(CrawlerServer.server_code == 'srv-drain-unconfirmed-a').one()
+        run = CrawlerTaskRun(company_id=company['companyId'], project_id=project['projectId'], task_id=task_body['taskId'], server_id=server.server_id, run_status='RUNNING', routing_status='ROUTED', trigger_key='drain-unconfirmed-run', heartbeat_at=utcnow())
+        db.add(run)
+        db.commit()
+        server_id = server.server_id
+        run_id = run.run_id
+    delete_resp = client.delete(f'/api/v1/servers/{server_id}', headers=headers)
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()['data']['draining'] is True
+    with SessionLocal() as db:
+        run = db.get(CrawlerTaskRun, run_id)
+        run.run_status = 'SUCCEEDED'
+        db.commit()
+    hb2 = client.post('/api/v1/agent-heartbeats', headers=heartbeat_headers, json={
+        'agentInstanceId': 'drain-unconfirmed-inst',
+        'agentVersion': '1.0.71',
+        'dockerStatus': 'OK',
+        'availableSlots': 2,
+        'runningContainers': 0,
+        'currentRuns': {'runIds': []},
+        'capabilities': {'agentDecommission': False, 'agentUpgrade': False},
+    })
+    assert hb2.status_code == 200
+    assert hb2.json()['data']['connectionStatus'] == 'DECOMMISSIONED'
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    assert all(item['serverId'] != server_id for item in servers)
+    with SessionLocal() as db:
+        alert = db.query(SysAlertEvent).filter(SysAlertEvent.alert_type == 'AGENT_REMOTE_CLEANUP_UNCONFIRMED', SysAlertEvent.company_id == company['companyId']).one()
+        assert f':{company["companyId"]}:{server_id}' in alert.fingerprint

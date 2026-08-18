@@ -43,17 +43,54 @@ class AgentService:
         agent.current_runs = payload.current_runs
         agent.last_error = payload.last_error
         self._update_server_health_capacity(server, payload)
-        self._sync_project_server_scheduling(server)
+        lifecycle_removed = self._converge_agent_lifecycle(server, agent, payload)
+        if lifecycle_removed:
+            self.db.commit()
+            return {
+                "serverId": server.server_id,
+                "connectionStatus": "DECOMMISSIONED",
+                "serverCapacityStatus": server.capacity_status,
+                "replacedPreviousInstance": replaced,
+                "pendingAgentCommands": [],
+                "agentCommandCount": 0,
+                "pendingImagePulls": [],
+                "imageUpdateCount": 0,
+                "pendingContainerCleanups": [],
+                "containerCleanupCount": 0,
+            }
         token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.agent_code == agent.agent_code).order_by(CrawlerAgentJoinToken.created_at.desc()).limit(1))
-        if token and token.invitation_status in {"PENDING", "CONFIG_ISSUED", "FAILED"}:
+        if token and token.status == "USED" and token.invitation_status in {"CONFIG_ISSUED", "FAILED"}:
             token.invitation_status = "ACTIVATED"
             token.activated_at = utcnow()
             token.failure_stage = ""
             token.failure_reason = ""
+        elif token and token.status == "ACTIVE" and token.invitation_status == "PENDING":
+            # 旧 Agent 恢复在线时，未使用的一次性 Join Token 不能被隐藏成“已完成”。
+            token.status = "CANCELLED"
+            token.invitation_status = "CANCELLED"
+        self._sync_project_server_scheduling(server)
+        if server.lifecycle_status in {"BOOTSTRAPPING", "INSTALLING"}:
+            server.lifecycle_status = "IDLE"
+            server.lifecycle_action = ""
+            server.lifecycle_error = ""
+        if server.desired_agent_version and agent.agent_version == server.desired_agent_version:
+            agent.upgrade_stable_count = min(int(agent.upgrade_stable_count or 0) + 1, 3)
+            if server.lifecycle_action == "AGENT_UPGRADE" and agent.upgrade_stable_count >= 3:
+                server.lifecycle_status = "IDLE"
+                server.lifecycle_action = ""
+                if server.previous_manage_status:
+                    server.manage_status = server.previous_manage_status
+                    server.previous_manage_status = ""
+        else:
+            agent.upgrade_stable_count = 0
         self.db.flush()
         RoutingService(self.db).reroute_or_wait_unclaimed(commit=False)
-        pending_agent_commands = AgentCommandService(self.db).pending_for_server(server)
-        pending_image_pulls = self._pending_image_pulls(server, payload) if not pending_agent_commands else []
+        all_agent_commands = AgentCommandService(self.db).pending_for_server(server)
+        if server.lifecycle_status in {"DRAINING", "DECOMMISSIONING", "UPGRADING"}:
+            pending_agent_commands = [item for item in all_agent_commands if item.get("commandType") in {"AGENT_UPGRADE", "AGENT_DECOMMISSION"}]
+        else:
+            pending_agent_commands = all_agent_commands
+        pending_image_pulls = self._pending_image_pulls(server, payload) if not pending_agent_commands and server.lifecycle_status not in {"DRAINING", "DECOMMISSIONING", "UPGRADING"} else []
         pending_cleanups = ContainerCleanupService(self.db).pending_for_server(server)
         self.db.commit()
         return {
@@ -73,7 +110,15 @@ class AgentService:
         if payload.agent_instance_id and payload.agent_instance_id != agent.agent_instance_id:
             raise AppError("Agent 实例已被替代，禁止领取任务", code=40373, http_status=status.HTTP_403_FORBIDDEN)
         server = self.db.get(CrawlerServer, agent.server_id)
-        if not server or server.manage_status != "ENABLED" or server.health_status == "UNHEALTHY" or server.capacity_status in {"EXHAUSTED", "FULL", "DRAINED"} or agent.connection_status != "ONLINE":
+        if (
+            not server
+            or server.manage_status != "ENABLED"
+            or server.desired_state not in {"ONLINE", ""}
+            or server.lifecycle_status not in {"", "IDLE"}
+            or server.health_status == "UNHEALTHY"
+            or server.capacity_status in {"EXHAUSTED", "FULL", "DRAINED"}
+            or agent.connection_status != "ONLINE"
+        ):
             return None
         run = self.db.scalar(select(CrawlerTaskRun).where(CrawlerTaskRun.server_id == server.server_id, CrawlerTaskRun.run_status == "QUEUED", CrawlerTaskRun.routing_status == "ROUTED").order_by(CrawlerTaskRun.created_at.asc()))
         if not run:
@@ -110,6 +155,19 @@ class AgentService:
                 lease_token=lease_token,
                 lease_expires_at=now + timedelta(seconds=settings.agent_lease_seconds),
                 heartbeat_at=now,
+                execution_node_snapshot={
+                    "serverId": server.server_id,
+                    "serverCode": server.server_code,
+                    "serverName": server.server_name,
+                    "agentId": agent.agent_id,
+                    "agentCode": agent.agent_code,
+                    "agentVersion": agent.agent_version,
+                    "protocolVersion": agent.protocol_version,
+                    "agentImage": agent.agent_image,
+                    "agentImageDigest": agent.agent_image_digest,
+                    "agentImageActualDigest": agent.agent_image_actual_digest,
+                    "capturedAt": now.isoformat(),
+                },
                 updated_at=now,
             )
         ).rowcount
@@ -219,7 +277,22 @@ class AgentService:
                 metrics = dict(server.metrics or {})
                 metrics["decommissionStatus"] = "FAILED"
                 metrics["decommissionError"] = (payload.message or "远端 Agent 退役失败")[:1000]
+                server.lifecycle_status = "BLOCKED"
+                server.lifecycle_error = metrics["decommissionError"]
                 server.metrics = metrics
+        elif ack.get("accepted") and command.get("commandType") == "AGENT_UPGRADE":
+            if payload.success:
+                result = payload.result or {}
+                target_version = str(result.get("targetVersion") or (command.get("payload") or {}).get("targetVersion") or server.desired_agent_version or "")
+                server.lifecycle_status = "UPGRADING"
+                server.lifecycle_action = "AGENT_UPGRADE"
+                server.lifecycle_error = ""
+                if target_version:
+                    server.desired_agent_version = target_version
+                agent.upgrade_stable_count = 0
+            else:
+                server.lifecycle_status = "BLOCKED"
+                server.lifecycle_error = (payload.message or "Agent 升级失败")[:1000]
         self.db.commit()
         return {"accepted": bool(ack.get("accepted")), "commandId": payload.command_id, "reason": ack.get("reason", ""), "decommissioned": decommissioned}
 
@@ -318,6 +391,49 @@ class AgentService:
         run_service.aggregate_sharded_parent(run.parent_run_id)
         self.db.commit()
         return run
+
+
+    def _active_run_count_for_agent(self, server: CrawlerServer, agent: CrawlerAgent, payload: AgentHeartbeat | None = None) -> int:
+        active_statuses = {"QUEUED", "ROUTED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
+        db_count = int(self.db.scalar(select(func.count()).select_from(CrawlerTaskRun).where(CrawlerTaskRun.run_status.in_(active_statuses), (CrawlerTaskRun.server_id == server.server_id) | (CrawlerTaskRun.agent_id == agent.agent_id))) or 0)
+        observed_count = len(self._current_run_ids(payload)) if payload is not None else 0
+        return max(db_count, observed_count)
+
+    def _converge_agent_lifecycle(self, server: CrawlerServer, agent: CrawlerAgent, payload: AgentHeartbeat) -> bool:
+        action = str(server.lifecycle_action or "").upper()
+        if action not in {"DECOMMISSION", "AGENT_UPGRADE"}:
+            return False
+        if self._active_run_count_for_agent(server, agent, payload) > 0:
+            server.manage_status = "MAINTENANCE"
+            server.lifecycle_status = "DRAINING"
+            return False
+        command_service = AgentCommandService(self.db)
+        if action == "DECOMMISSION" or server.desired_state == "DECOMMISSIONED":
+            supports_decommission = bool(isinstance(agent.capabilities, dict) and agent.capabilities.get("agentDecommission") is True)
+            server.manage_status = "DISABLED"
+            if supports_decommission and agent.connection_status == "ONLINE":
+                server.lifecycle_status = "DECOMMISSIONING"
+                command_service.enqueue_agent_decommission(server=server, agent_id=agent.agent_id)
+            else:
+                from app.services.server_service import ServerService
+                ServerService(self.db).finalize_agent_decommission_unconfirmed(server, agent, reason="Agent 不支持自动退役或当前不可达")
+                return True
+            return False
+        if action == "AGENT_UPGRADE":
+            supports_upgrade = bool(isinstance(agent.capabilities, dict) and agent.capabilities.get("agentUpgrade") is True)
+            if not supports_upgrade:
+                server.lifecycle_status = "BLOCKED"
+                server.lifecycle_error = "当前 Agent 不支持无 Join 自升级，请使用一次受控迁移安装。"
+                return False
+            target_version = server.desired_agent_version or settings.crawler_agent_version
+            target_image = settings.crawler_agent_image
+            if not target_image:
+                server.lifecycle_status = "BLOCKED"
+                server.lifecycle_error = "Agent 目标镜像未配置，无法升级。"
+                return False
+            server.lifecycle_status = "UPGRADING"
+            command_service.enqueue_agent_upgrade(server=server, agent_id=agent.agent_id, target_version=target_version, target_image=target_image, target_digest=settings.crawler_agent_image_digest)
+        return False
 
     def _can_server_claim(self, project: CrawlerProject, server_id: int | None) -> bool:
         if not server_id:

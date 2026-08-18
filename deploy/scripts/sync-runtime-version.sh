@@ -38,10 +38,10 @@ set_env_key APP_VERSION "$RELEASE_VERSION"
 set_env_key PLATFORM_IMAGE_TAG "$RELEASE_VERSION"
 set_env_key APP_GIT_COMMIT "$RELEASE_GIT_COMMIT"
 set_env_key APP_BUILD_TIME "$build_time"
-# AgentConfig uses AGENT_ prefix; keep platform release metadata available to dockerized/standalone agents.
-set_env_key AGENT_AGENT_VERSION "$RELEASE_VERSION"
-set_env_key AGENT_GIT_COMMIT "$RELEASE_GIT_COMMIT"
-set_env_key AGENT_BUILD_TIME "$build_time"
+# Agent 版本独立于平台版本；平台 patch 不再改写 AGENT_AGENT_VERSION。
+agent_version="$(cp_env_value .env AGENT_AGENT_VERSION)"
+agent_version="${agent_version:-1.1.1}"
+set_env_key AGENT_AGENT_VERSION "$agent_version"
 
 mkdir -p .release
 cp_runtime_metadata_json "crawler_platform" "$RELEASE_VERSION" "$RELEASE_GIT_COMMIT" "$build_time" > .release/version.json
@@ -50,9 +50,7 @@ APP_VERSION=$RELEASE_VERSION
 PLATFORM_IMAGE_TAG=$RELEASE_VERSION
 APP_GIT_COMMIT=$RELEASE_GIT_COMMIT
 APP_BUILD_TIME=$build_time
-AGENT_AGENT_VERSION=$RELEASE_VERSION
-AGENT_GIT_COMMIT=$RELEASE_GIT_COMMIT
-AGENT_BUILD_TIME=$build_time
+AGENT_AGENT_VERSION=$agent_version
 EOF_ENV
 
 cp_info "运行版本已同步：version=${RELEASE_VERSION} source=${RELEASE_VERSION_SOURCE:-unknown} gitCommit=${RELEASE_GIT_COMMIT} buildTime=${build_time}"

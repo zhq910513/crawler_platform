@@ -199,6 +199,109 @@ class RunExecutor:
             return False
 
 
+
+    def prepare_agent_upgrade(self, upgrade: dict[str, Any]) -> dict[str, Any]:
+        running_ids = sorted(self.running_platform_run_ids())
+        if running_ids:
+            raise RuntimeError(f"仍有平台任务容器运行，拒绝升级 Agent：{running_ids}")
+        payload = upgrade.get("payload") if isinstance(upgrade.get("payload"), dict) else upgrade
+        target_image = str((payload or {}).get("agentImage") or (payload or {}).get("targetImage") or "").strip()
+        target_version = str((payload or {}).get("targetVersion") or "").strip()
+        target_digest = str((payload or {}).get("expectedImageDigest") or (payload or {}).get("targetDigest") or "").strip()
+        if not target_image:
+            raise RuntimeError("Agent 升级缺少目标镜像")
+        current_ref = str(os.getenv("HOSTNAME") or "").strip()
+        if not current_ref:
+            raise RuntimeError("无法识别当前 Agent 容器，拒绝自动升级")
+        current = self.client.containers.get(current_ref)
+        old_name = getattr(current, "name", "") or f"crawler-agent-old-{current.id[:12]}"
+        backup_name = f"{old_name}-old-{int(time.time())}"
+        env: dict[str, str] = {}
+        for item in (current.attrs.get("Config", {}) or {}).get("Env", []) or []:
+            if isinstance(item, str) and "=" in item:
+                key, value = item.split("=", 1)
+                env[key] = value
+        if target_version:
+            env["AGENT_AGENT_VERSION"] = target_version
+        env["AGENT_IMAGE"] = target_image
+        env["AGENT_EXPECTED_IMAGE_DIGEST"] = target_digest
+        env["AGENT_INSTANCE_ID"] = f"upgrade-{int(time.time())}-{os.urandom(3).hex()}"
+        host_config = current.attrs.get("HostConfig", {}) or {}
+        binds = list(host_config.get("Binds") or [])
+        network_mode = str(host_config.get("NetworkMode") or "host")
+        restart_policy = {"Name": "always"}
+        logger.info("agent upgrade pull image=%s target_version=%s digest=%s", target_image, target_version, target_digest)
+        self.client.images.pull(target_image)
+        try:
+            current.update(restart_policy={"Name": "no"})
+            current.rename(backup_name)
+        except Exception as exc:
+            raise RuntimeError(f"保留旧 Agent 容器失败：{exc}") from exc
+        new_container = None
+        try:
+            new_container = self.client.containers.run(
+                target_image,
+                detach=True,
+                name=old_name,
+                restart_policy=restart_policy,
+                network_mode=network_mode,
+                environment=env,
+                volumes=binds,
+            )
+            time.sleep(3)
+            new_container.reload()
+            if new_container.status != "running":
+                logs = self._container_logs_text(new_container, tail=80)[-1000:]
+                raise RuntimeError(f"新 Agent 容器启动后未保持运行 status={new_container.status} logs={logs}")
+            return {
+                "oldContainerId": current.id,
+                "oldContainerName": backup_name,
+                "newContainerId": new_container.id,
+                "newContainerName": old_name,
+                "targetImage": target_image,
+                "targetVersion": target_version,
+                "expectedImageDigest": target_digest,
+                "rollbackAvailable": True,
+            }
+        except Exception as exc:
+            try:
+                if new_container is not None:
+                    new_container.remove(force=True)
+            except Exception:
+                logger.warning("remove failed upgraded agent container failed", exc_info=True)
+            try:
+                current.reload()
+                if getattr(current, "status", "") == "running":
+                    current.stop(timeout=10)
+                current.rename(old_name)
+                current.update(restart_policy={"Name": "always"})
+                current.start()
+            except Exception:
+                logger.warning("restore old agent container failed backup_name=%s", backup_name, exc_info=True)
+            raise RuntimeError(f"Agent 升级启动失败，已尝试恢复旧容器：{exc}") from exc
+
+
+    def cleanup_stopped_agent_backups(self) -> int:
+        removed = 0
+        try:
+            containers = self.client.containers.list(all=True, filters={"name": "crawler-agent-old"})
+        except Exception as exc:
+            logger.warning("scan old agent backup containers failed: %s", exc, exc_info=True)
+            return 0
+        for container in containers:
+            try:
+                name = getattr(container, "name", "") or ""
+                if not name.startswith("crawler-agent-old-"):
+                    continue
+                container.reload()
+                if getattr(container, "status", "") == "running":
+                    continue
+                container.remove(force=True, v=False)
+                removed += 1
+            except Exception:
+                logger.warning("remove stopped old agent backup failed name=%s", getattr(container, "name", ""), exc_info=True)
+        return removed
+
     def prepare_agent_decommission(self) -> dict[str, Any]:
         running_ids = sorted(self.running_platform_run_ids())
         if running_ids:

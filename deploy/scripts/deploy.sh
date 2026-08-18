@@ -25,7 +25,7 @@ cp_compose up -d --force-recreate api scheduler maintenance web
 
 PORT="$(cp_env_value .env WEB_PORT)"; PORT="${PORT:-80}"
 if cp_wait_http "http://127.0.0.1:${PORT}/health" 120 2; then
-  if [ "${AUTO_PREPARE_AGENT_IMAGE:-1}" = "1" ]; then
+  if [ "${AUTO_PREPARE_AGENT_IMAGE:-0}" = "1" ]; then
     if ! bash deploy/scripts/prepare-agent-image.sh; then
       if [ "${STRICT_AGENT_IMAGE_PREPARE:-0}" = "1" ]; then
         cp_die "执行组件镜像自动准备失败，STRICT_AGENT_IMAGE_PREPARE=1 已阻断部署。"

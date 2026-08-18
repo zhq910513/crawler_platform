@@ -75,6 +75,24 @@ class AgentCommandService:
         server.metrics = metrics
         return command
 
+    def enqueue_agent_upgrade(self, *, server: CrawlerServer, agent_id: int, target_version: str, target_image: str, target_digest: str = "") -> dict[str, Any]:
+        command_id = f"agent-upgrade-{server.server_id}-{target_version}"
+        command = {
+            "commandId": command_id,
+            "commandType": "AGENT_UPGRADE",
+            "status": "PENDING",
+            "companyId": server.company_id,
+            "serverId": server.server_id,
+            "agentId": agent_id,
+            "createdAt": utcnow().isoformat(),
+            "payload": {"targetVersion": target_version, "agentImage": target_image, "expectedImageDigest": target_digest},
+        }
+        metrics = dict(server.metrics or {})
+        pending = [item for item in metrics.get(PENDING_KEY, []) if isinstance(item, dict) and item.get("commandType") != "AGENT_UPGRADE"]
+        pending.append(command)
+        metrics[PENDING_KEY] = pending[-100:]
+        server.metrics = metrics
+        return command
 
     def enqueue_agent_decommission(self, *, server: CrawlerServer, agent_id: int) -> dict[str, Any]:
         command_id = f"agent-decommission-{server.server_id}-{int(utcnow().timestamp())}"

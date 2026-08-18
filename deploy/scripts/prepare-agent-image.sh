@@ -21,7 +21,7 @@ Usage: bash deploy/scripts/prepare-agent-image.sh [options]
 自动准备执行组件镜像：构建、推送到内置 registry、写入 .env 并重启后端服务。
 
 Options:
-  --version VERSION              执行组件镜像版本，默认读取 .env APP_VERSION 或 VERSION 文件
+  --version VERSION              执行组件镜像版本，默认读取 .env AGENT_AGENT_VERSION；Agent 版本独立于平台版本
   --registry-public-host HOST    执行节点访问 registry 使用的主机/IP，默认从 CRAWLER_AGENT_REGISTRY_PUBLIC_HOST、CRAWLER_CONTROL_PUBLIC_BASE_URL 或 CI/CD 注入的 CP_DEPLOY_PUBLIC_HOST 推导
   --registry-port PORT           registry 对外端口，默认读取 CRAWLER_AGENT_REGISTRY_PORT 或 5000
   --no-restart                   只写 .env，不重启 api/scheduler/maintenance
@@ -47,9 +47,9 @@ done
 cp_require_docker
 [ -f .env ] || cp_die ".env 不存在。请先从 .env.example 初始化并完成基础配置。"
 
-VERSION="${VERSION:-$(cp_env_value .env APP_VERSION)}"
-VERSION="${VERSION:-$(cat VERSION 2>/dev/null | tr -d '[:space:]')}"
-[ -n "$VERSION" ] || cp_die "无法确定 执行组件镜像版本，请配置 APP_VERSION 或传入 --version。"
+VERSION="${VERSION:-$(cp_env_value .env AGENT_AGENT_VERSION)}"
+VERSION="${VERSION:-1.1.1}"
+[ -n "$VERSION" ] || cp_die "无法确定 Agent 镜像版本，请配置 AGENT_AGENT_VERSION 或传入 --version。"
 
 REGISTRY_PORT="${REGISTRY_PORT:-$(cp_env_value .env CRAWLER_AGENT_REGISTRY_PORT)}"
 REGISTRY_PORT="${REGISTRY_PORT:-5000}"
@@ -113,7 +113,7 @@ if [ "$SKIP_BUILD" != "1" ]; then
   cp_info "构建 执行组件镜像：$LOCAL_IMAGE"
   docker build \
     --build-arg "PIP_INDEX_URL=${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}" \
-    --build-arg "APP_VERSION=${VERSION}" \
+    --build-arg "AGENT_VERSION=${VERSION}" \
     --build-arg "APP_GIT_COMMIT=$(cp_env_value .env APP_GIT_COMMIT)" \
     --build-arg "APP_BUILD_TIME=$(cp_env_value .env APP_BUILD_TIME)" \
     -f agent/Dockerfile \
@@ -169,6 +169,7 @@ set_env_value() {
 
 backup=".env.bak_prepare_agent_image_$(date +%Y%m%d_%H%M%S)"
 cp .env "$backup"
+set_env_value AGENT_AGENT_VERSION "$VERSION"
 set_env_value CRAWLER_AGENT_IMAGE "$PUBLIC_AGENT_IMAGE"
 set_env_value CRAWLER_AGENT_IMAGE_DIGEST "$AGENT_IMAGE_DIGEST"
 set_env_value CRAWLER_AGENT_REGISTRY_PUBLIC_HOST "$REGISTRY_PUBLIC_HOST"

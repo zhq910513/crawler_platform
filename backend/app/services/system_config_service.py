@@ -191,8 +191,8 @@ class SystemConfigService:
             assert parsed is not None
             host = (parsed.hostname or "").lower()
             port = parsed.port or (80 if parsed.scheme == "http" else 443)
-            health_command = f"curl -fsSL {base}/health && echo"
-            installer_command = f"curl -fsSL {base}/api/v1/agent-installers/linux.sh | head -5"
+            health_command = f"curl -fsS --connect-timeout 3 --max-time 10 {base}/health && echo"
+            installer_command = f"tmp_installer=\"$(mktemp)\"; curl -fsS --connect-timeout 3 --max-time 15 {base}/api/v1/agent-installers/linux.sh -o \"$tmp_installer\"; head -5 \"$tmp_installer\"; rm -f \"$tmp_installer\""
             required_ports.append({
                 "name": "平台访问入口",
                 "host": host,

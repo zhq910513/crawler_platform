@@ -54,6 +54,7 @@ class AgentApp:
         self.docker_client = docker.from_env()
         self.image_prewarm_next_at: dict[str, float] = {}
         self.shutdown_requested = False
+        self.next_agent_backup_cleanup_at = 0.0
 
     def active_count(self) -> int:
         with self.lock:
@@ -120,7 +121,7 @@ class AgentApp:
             "projectDataRootWritable": path_writable(str(config.project_data_root)),
             "dockerSockAccessible": docker_status == "OK",
             "timezone": datetime.now().astimezone().tzname() or "",
-            "capabilities": {**config.capabilities(), "agentDecommission": True},
+            "capabilities": {**config.capabilities(), "agentDecommission": True, "agentUpgrade": True, "desiredState": True},
             "currentRuns": {"runIds": sorted(tracked_run_ids), "dockerRunIds": sorted(docker_run_ids), "orphanRunIds": orphan_run_ids},
             "lastError": self.last_error,
         }
@@ -139,6 +140,13 @@ class AgentApp:
                 if command_type == "PROJECT_DEPLOY_PREPARE":
                     result = self.executor.prepare_project_runtime(command)
                     self.api.agent_command_result(command, True, "项目镜像、目录和运行时自检已完成", result)
+                elif command_type == "AGENT_UPGRADE":
+                    if self.active_count() > 0:
+                        raise RuntimeError("仍有 Agent 进程内任务运行，拒绝升级")
+                    result = self.executor.prepare_agent_upgrade(command)
+                    self.api.agent_command_result(command, True, "新版 Agent 容器已启动，当前 Agent 准备退出", result)
+                    self.shutdown_requested = True
+                    return
                 elif command_type == "AGENT_DECOMMISSION":
                     if self.active_count() > 0:
                         raise RuntimeError("仍有 Agent 进程内任务运行，拒绝退役")
@@ -210,6 +218,11 @@ class AgentApp:
                         return
                     self.handle_container_cleanups(heartbeat_response or {})
                     self.handle_image_updates(heartbeat_response or {})
+                    if now >= self.next_agent_backup_cleanup_at:
+                        removed = self.executor.cleanup_stopped_agent_backups()
+                        if removed:
+                            logger.info("removed stopped old agent backup containers count=%s", removed)
+                        self.next_agent_backup_cleanup_at = now + 60
                     last_heartbeat = now
                 if self.active_count() < config.max_slots:
                     claim = self.api.claim()

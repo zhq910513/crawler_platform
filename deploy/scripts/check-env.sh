@@ -21,8 +21,9 @@ if [ "$app_version" != "$tag_version" ]; then
   echo "❌ APP_VERSION 与 PLATFORM_IMAGE_TAG 不一致：$app_version / $tag_version" >&2
   exit 1
 fi
-if [ "$app_version" != "1.0.71" ]; then
-  echo "⚠️  当前 APP_VERSION=$app_version；本次发布应统一为 1.0.71。" >&2
+expected_version="$(tr -d '[:space:]' < "$ROOT_DIR/VERSION" 2>/dev/null || true)"
+if [ -n "$expected_version" ] && [ "$app_version" != "$expected_version" ]; then
+  echo "⚠️  当前 APP_VERSION=$app_version；本次发布应统一为 $expected_version。" >&2
 fi
 
 if grep -qE 'ReplaceWith|change-this|Admin@123456' "$ENV_FILE"; then
