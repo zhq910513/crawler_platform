@@ -40,7 +40,7 @@ export const navigationGroups: NavigationGroup[] = [
     key: 'resources',
     title: '资源准备',
     items: [
-      { path: '/resources', title: '数据库配置', subtitle: '公司数据库、缓存与存储资源', icon: Coin, flow: 'resources' },
+      { path: '/resources', title: '数据资源配置', subtitle: '公司级数据库、缓存与存储资源池', icon: Coin, flow: 'resources' },
       { path: '/platforms', title: '采集目标', subtitle: '被采集网站与系统的接入准备情况', icon: Guide, flow: 'resources' },
       { path: '/accounts', title: '账号资源', subtitle: '采集账号健康、对象绑定与占用情况', icon: Key, flow: 'resources' },
     ],

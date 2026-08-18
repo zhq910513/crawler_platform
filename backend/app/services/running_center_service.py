@@ -163,7 +163,7 @@ class RunningCenterService:
             if "ACCOUNT" in (run.error_type or "") or "COOKIE" in (run.error_summary or "") or "TOKEN" in (run.error_summary or ""):
                 return self._state("ACCOUNT_ERROR", "账号异常", "任务失败可能与账号或登录状态有关，建议更新平台账号。", "更新账号", "danger")
             if "DB" in (run.error_type or "") or "数据库" in (run.error_summary or run.error_message or ""):
-                return self._state("DB_ERROR", "数据库异常", "任务失败可能与数据库连接或入库有关，建议测试数据库配置。", "测试数据库", "danger")
+                return self._state("DB_ERROR", "数据库异常", "任务失败可能与数据库连接或入库有关，建议校验数据资源配置。", "校验数据资源", "danger")
             return self._state("FAILED", "执行失败", "任务执行失败，建议先查看日志，再决定是否重新执行。", "查看日志", "danger")
         return self._state("UNKNOWN", "待确认", "当前状态需要进一步查看执行详情。", "查看详情", "info")
 

@@ -809,15 +809,44 @@ export interface SystemSettings {
 
 export interface CompanyResourceConfig {
   configId: number
+  resourceId: number
   companyId: number
-  resourceType: string
-  resourceLabel: string
+  projectId?: number | null
   resourceName: string
+  resourceCode: string
+  resourceCategory: string
+  resourceEngine: string
+  resourceRole: string
+  connectionMode: string
+  categoryLabel: string
+  engineLabel: string
+  roleLabel: string
+  resourceLabel: string
+  connectionSummary: string
+  configSummary: Record<string, unknown>
+  configMasked: Record<string, unknown>
+  remark: string
+  enabled: boolean
   testStatus: string
   lastTestAt: string | null
   lastTestMessage: string
-  configMasked: Record<string, unknown>
+  legacyResourceType?: string | null
   updatedAt: string
+}
+
+export interface CompanyResourceConfigPayload {
+  resourceId?: number
+  companyId: number
+  projectId?: number | null
+  resourceName: string
+  resourceCode: string
+  resourceCategory: string
+  resourceEngine: string
+  resourceRole: string
+  connectionMode: string
+  remark: string
+  enabled: boolean
+  config: Record<string, unknown>
 }
 
 export interface CompanySetupStep {

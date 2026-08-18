@@ -40,10 +40,21 @@ def test_setup_assistant_status_and_resource_config() -> None:
     settings = client.patch('/api/v1/system-settings', headers=headers, json={'controlPlanePublicBaseUrl': 'http://10.1.0.13:8080'}).json()['data']
     assert settings['controlPlanePublicBaseUrl'] == 'http://10.1.0.13:8080'
 
-    resource = client.post('/api/v1/company-resource-configs', headers=headers, json={'companyId': company['companyId'], 'resourceType': 'MYSQL_MAIN', 'resourceName': '主业务数据库', 'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u', 'password': 'secret'}}).json()['data']
+    resource = client.post('/api/v1/company-resource-configs', headers=headers, json={
+        'companyId': company['companyId'],
+        'resourceName': '主业务数据库',
+        'resourceCode': 'main_mysql',
+        'resourceCategory': 'RELATIONAL_DB',
+        'resourceEngine': 'MYSQL',
+        'resourceRole': 'MAIN_DB',
+        'connectionMode': 'HOST_PORT',
+        'remark': '平台主业务数据资源，用于初始化配置检查。',
+        'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u', 'password': 'secret'},
+    }).json()['data']
+    assert resource['resourceEngine'] == 'MYSQL'
     assert resource['configMasked']['password'] == '******'
     tested = client.post(f"/api/v1/company-resource-configs/{resource['configId']}/tests", headers=headers, json={}).json()['data']
-    assert tested['testStatus'] == 'PASSED'
+    assert tested['testStatus'] == 'CONFIG_VALID'
 
     status = client.get(f"/api/v1/companies/{company['companyId']}/setup-status", headers=headers).json()['data']
     database_step = [item for item in status['steps'] if item['key'] == 'database'][0]

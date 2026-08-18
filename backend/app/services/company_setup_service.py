@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from fastapi import status
@@ -8,8 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.errors import AppError
-from app.models import CrawlerAccountCredential, CrawlerAgent, CrawlerCompany, CrawlerProject, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerServer, CrawlerTask, CrawlerTaskSchedule, SysSecret, SysUser
-from app.security import decrypt_secret
+from app.models import CompanyResourceConfig, CrawlerAccountCredential, CrawlerAgent, CrawlerCompany, CrawlerProject, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerServer, CrawlerTask, CrawlerTaskSchedule, SysUser
 from app.services.permissions import is_super_admin, require_company_scope
 from app.services.system_config_service import SystemConfigService
 
@@ -48,16 +46,16 @@ class CompanySetupService:
         }
 
     def _counts(self, company_id: int) -> dict[str, Any]:
-        resource_rows = list(self.db.scalars(select(SysSecret).where(SysSecret.company_id == company_id, SysSecret.secret_code.like(f"company_resource:{company_id}:%"), SysSecret.enabled.is_(True))).all())
-        resource_total = len(resource_rows)
-        resource_passed = 0
-        for item in resource_rows:
-            try:
-                data = json.loads(decrypt_secret(item.encrypted_value))
-                if data.get("testStatus") == "PASSED":
-                    resource_passed += 1
-            except Exception:
-                pass
+        resource_total = self.db.scalar(select(func.count()).select_from(CompanyResourceConfig).where(CompanyResourceConfig.company_id == company_id, CompanyResourceConfig.enabled.is_(True))) or 0
+        resource_passed = self.db.scalar(
+            select(func.count())
+            .select_from(CompanyResourceConfig)
+            .where(
+                CompanyResourceConfig.company_id == company_id,
+                CompanyResourceConfig.enabled.is_(True),
+                CompanyResourceConfig.test_status.in_(["CONFIG_VALID", "CONNECTION_PASSED", "MANUAL_CONFIRMED"]),
+            )
+        ) or 0
         total_servers = self.db.scalar(select(func.count()).select_from(CrawlerServer).where(CrawlerServer.company_id == company_id, CrawlerServer.manage_status != "DISABLED")) or 0
         online_agents = self.db.scalar(select(func.count()).select_from(CrawlerAgent).join(CrawlerServer, CrawlerServer.server_id == CrawlerAgent.server_id).where(CrawlerServer.company_id == company_id, CrawlerAgent.connection_status == "ONLINE")) or 0
         projects = self.db.scalar(select(func.count()).select_from(CrawlerProject).where(CrawlerProject.company_id == company_id, CrawlerProject.status != "ARCHIVED")) or 0

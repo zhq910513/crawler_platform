@@ -122,6 +122,35 @@ class SysSecret(Base, TimestampMixin):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class CompanyResourceConfig(Base, TimestampMixin):
+    __tablename__ = "company_resource_config"
+    __table_args__ = (
+        UniqueConstraint("company_id", "resource_code", name="uk_company_resource_code"),
+        Index("ix_company_resource_company_engine_role", "company_id", "resource_engine", "resource_role"),
+    )
+
+    resource_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="CASCADE"), index=True)
+    resource_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_category: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    resource_engine: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    resource_role: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    connection_mode: Mapped[str] = mapped_column(String(50), default="HOST_PORT", nullable=False)
+    config_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    config_masked_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    config_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    remark: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    test_status: Mapped[str] = mapped_column(String(50), default="NOT_TESTED", index=True, nullable=False)
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_test_message: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    legacy_resource_type: Mapped[str | None] = mapped_column(String(50))
+    created_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
+    updated_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"))
+
+
 class CrawlerCompany(Base, TimestampMixin):
     __tablename__ = "crawler_company"
     company_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)

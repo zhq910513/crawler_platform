@@ -8,8 +8,8 @@ from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSIONS = ROOT / "migrations" / "versions"
-EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py", "0006_agent_deploy.py", "0007_account_status.py", "0008_task_contract_subject_binding.py", "0009_contract_runtime_gate.py", "0010_running_center_container_snapshots.py", "0011_preflight_snapshot.py", "0012_agent_join_invitation.py", "0013_agent_image_digest.py", "0014_agent_install_feedback.py", "0015_agent_lifecycle.py"]
-EXPECTED_HEAD = "0015_agent_lifecycle"
+EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py", "0006_agent_deploy.py", "0007_account_status.py", "0008_task_contract_subject_binding.py", "0009_contract_runtime_gate.py", "0010_running_center_container_snapshots.py", "0011_preflight_snapshot.py", "0012_agent_join_invitation.py", "0013_agent_image_digest.py", "0014_agent_install_feedback.py", "0015_agent_lifecycle.py", "0016_company_resource_pool.py"]
+EXPECTED_HEAD = "0016_company_resource_pool"
 OBSOLETE_FILES = {
     "0002_platform_1_0_2_observability.py",
     "0003_expand_schedule_cron_expression.py",

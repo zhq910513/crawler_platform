@@ -60,9 +60,9 @@ def test_normal_user_is_company_scoped_for_settings_and_agent_join() -> None:
     companies = client.get('/api/v1/companies', headers=user_headers).json()['data']
     assert [item['companyId'] for item in companies] == [company_a['companyId']]
 
-    own_resource = client.post('/api/v1/company-resource-configs', headers=user_headers, json={'companyId': company_a['companyId'], 'resourceType': 'MYSQL_MAIN', 'resourceName': '主业务数据库', 'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u'}})
+    own_resource = client.post('/api/v1/company-resource-configs', headers=user_headers, json={'companyId': company_a['companyId'], 'resourceName': '主业务数据库', 'resourceCode': 'main_mysql', 'resourceCategory': 'RELATIONAL_DB', 'resourceEngine': 'MYSQL', 'resourceRole': 'MAIN_DB', 'connectionMode': 'HOST_PORT', 'remark': '租户A自有主业务库。', 'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u'}})
     assert own_resource.status_code == 200
-    cross_resource = client.post('/api/v1/company-resource-configs', headers=user_headers, json={'companyId': company_b['companyId'], 'resourceType': 'MYSQL_MAIN', 'resourceName': '越权数据库', 'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u'}})
+    cross_resource = client.post('/api/v1/company-resource-configs', headers=user_headers, json={'companyId': company_b['companyId'], 'resourceName': '越权数据库', 'resourceCode': 'main_mysql', 'resourceCategory': 'RELATIONAL_DB', 'resourceEngine': 'MYSQL', 'resourceRole': 'MAIN_DB', 'connectionMode': 'HOST_PORT', 'remark': '不应允许跨公司写入。', 'config': {'host': '127.0.0.1', 'port': '3306', 'database': 'biz', 'username': 'u'}})
     assert cross_resource.status_code == 404
 
     join = client.post('/api/v1/servers/agent-join-tokens', headers=user_headers, json={'companyId': company_a['companyId'], 'serverCode': 'tenant26a-node', 'serverName': '租户A节点', 'agentCode': 'tenant26a-agent', 'maxContainerSlots': 2, 'controlPlaneUrl': 'http://127.0.0.1:8080', 'installTarget': 'LOCAL'})

@@ -68,7 +68,7 @@ const routes: RouteRecordRaw[] = [
     { path: 'running-center', name: 'running-center', component: runningCenterView, meta: { title: '运行中心', ...keepAliveMeta } },
     { path: 'companies', name: 'companies', component: companiesView, meta: { title: '公司管理', adminOnly: true, ...keepAliveMeta } },
     { path: 'users', name: 'users', component: usersView, meta: { title: '用户权限', adminOnly: true, ...keepAliveMeta } },
-    { path: 'resources', name: 'resources', component: resourcesView, meta: { title: '数据库配置', ...keepAliveMeta } },
+    { path: 'resources', name: 'resources', component: resourcesView, meta: { title: '数据资源配置', ...keepAliveMeta } },
     { path: 'servers', name: 'servers', component: serversView, meta: { title: '执行节点', ...keepAliveMeta } },
     { path: 'project-publish', name: 'project-publish', component: projectPublishView, meta: { title: '项目发布', ...keepAliveMeta } },
     { path: 'projects', name: 'projects', component: projectsView, meta: { title: '项目版本', ...keepAliveMeta } },

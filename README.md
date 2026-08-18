@@ -123,9 +123,9 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.76`） > 最新 commit message 中的平台版本号（如 `主动修复Agent生命周期续跑与收敛缺口v1.0.76`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.77`） > 最新 commit message 中的平台版本号（如 `主动修复Agent生命周期续跑与收敛缺口v1.0.77`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
-从 v1.0.72 起，平台版本、Agent 版本和通信协议版本正式解耦；v1.0.76 进一步修复前端镜像构建 npm 源 fallback、package-lock resolved 源治理、依赖锁定完整性门禁和发布门禁失败归因。平台普通 patch 发布不再默认构建、推送或替换 Agent；当前 Agent 独立版本为 `1.1.2`，协议版本为 `1.0`。只有 Agent 代码、协议能力或最低兼容要求发生变化时，才进入独立 Agent 镜像准备和节点升级流程。首次服务器接入使用 Join Token；后续 Agent 修复、升级和恢复应复用长期 Agent Credential，不要求重新 Join。
+从 v1.0.72 起，平台版本、Agent 版本和通信协议版本正式解耦；v1.0.77 将“数据库配置”重构为公司级数据资源池，显式拆分资源大类、具体类型、业务用途和连接方式，支持同一家公司配置多种数据库/存储类型以及多个同类型实例。平台普通 patch 发布不再默认构建、推送或替换 Agent；当前 Agent 独立版本为 `1.1.2`，协议版本为 `1.0`。只有 Agent 代码、协议能力或最低兼容要求发生变化时，才进入独立 Agent 镜像准备和节点升级流程。首次服务器接入使用 Join Token；后续 Agent 修复、升级和恢复应复用长期 Agent Credential，不要求重新 Join。
 
 只需要单独同步版本时，可执行：
 

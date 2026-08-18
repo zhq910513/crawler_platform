@@ -74,14 +74,26 @@ class SystemSettingsUpdate(ApiModel):
 
 
 class CompanyResourceConfigCreate(ApiModel):
+    resource_id: int | None = None
     company_id: int
-    resource_type: Literal["MYSQL_MAIN", "REDIS_CACHE", "MONGO_RAW", "OSS_MEDIA"]
-    resource_name: str = Field(default="", max_length=100)
+    project_id: int | None = None
+    resource_name: str = Field(min_length=1, max_length=100)
+    resource_code: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{1,99}$", min_length=2, max_length=100)
+    resource_category: Literal["RELATIONAL_DB", "DOCUMENT_DB", "CACHE_DB", "OBJECT_STORAGE"]
+    resource_engine: Literal["MYSQL", "POSTGRESQL", "SQLSERVER", "MONGODB", "REDIS", "ALIYUN_OSS", "S3", "MINIO"]
+    resource_role: Literal["MAIN_DB", "RESULT_DB", "SOURCE_DB", "RAW_STORAGE", "COOKIE_CACHE", "TASK_STATE_CACHE", "MEDIA_STORAGE", "TEMP_STORAGE", "ANALYTICS_DB", "LOG_STORAGE", "OTHER"]
+    connection_mode: Literal["HOST_PORT", "URI", "CLOUD_SERVICE"] = "HOST_PORT"
+    remark: str = Field(min_length=1, max_length=1000)
+    enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
 
 
 class CompanyResourceConfigTest(ApiModel):
     force_success: bool = False
+
+
+class CompanyResourceStatusUpdate(ApiModel):
+    enabled: bool
 
 class ServerCreate(ApiModel):
     company_id: int
