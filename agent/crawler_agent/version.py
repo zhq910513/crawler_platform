@@ -26,12 +26,15 @@ def _read_json(path: Path) -> dict[str, Any]:
 def release_metadata() -> dict[str, str]:
     file_data: dict[str, Any] = {}
     for candidate in (Path("/opt/crawler-agent/.release/version.json"), Path(".release/version.json")):
-        file_data = _read_json(candidate)
-        if file_data:
+        candidate_data = _read_json(candidate)
+        if not candidate_data:
+            continue
+        # 只接受明确标识为 Agent 的发布元数据。仓库根 .release/version.json 属于平台，
+        # 不能作为 Agent 版本兜底，否则普通平台 patch 会把 Agent 伪装成同版本。
+        if str(candidate_data.get("appName") or "").strip() == "crawler_platform_agent":
+            file_data = candidate_data
             break
 
-    # Agent 是服务器基础设施，版本不能回退读取平台 APP_VERSION 或仓库根 VERSION，
-    # 否则普通平台 patch 会把 Agent 伪装成同版本。
     version = (
         os.getenv("AGENT_AGENT_VERSION")
         or os.getenv("AGENT_VERSION")

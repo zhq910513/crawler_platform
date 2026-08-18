@@ -1339,7 +1339,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert release_version == '1.0.74'
+    assert release_version == '1.0.75'
     assert "AGENT_IMAGE='crawler_platform_agent:1.1.2'" in env_resp.text
     assert "AGENT_AGENT_VERSION='1.1.2'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
@@ -2040,3 +2040,24 @@ def test_decommission_drain_finishes_unconfirmed_without_continuing_deleted_hear
     with SessionLocal() as db:
         alert = db.query(SysAlertEvent).filter(SysAlertEvent.alert_type == 'AGENT_REMOTE_CLEANUP_UNCONFIRMED', SysAlertEvent.company_id == company['companyId']).one()
         assert f':{company["companyId"]}:{server_id}' in alert.fingerprint
+
+
+def test_frontend_docker_build_has_npm_registry_fallback_and_lockfile_canonical_source() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / 'frontend' / 'Dockerfile').read_text(encoding='utf-8')
+    normalizer = (root / 'frontend' / 'scripts' / 'normalize-package-lock-registry.cjs').read_text(encoding='utf-8')
+    lockfile = (root / 'frontend' / 'package-lock.json').read_text(encoding='utf-8')
+    release_gate = (root / 'deploy' / 'scripts' / 'commercial-release-gate.sh').read_text(encoding='utf-8')
+
+    assert 'ARG NPM_FALLBACK_REGISTRY=https://registry.npmjs.org' in dockerfile
+    assert 'npm_install_with_registry' in dockerfile
+    assert 'package-lock.original.json' in dockerfile
+    assert 'retrying with fallback registry' in dockerfile
+    assert 'node scripts/normalize-package-lock-registry.cjs "$registry"' in dockerfile
+    assert 'registry.npmmirror.com' not in lockfile
+    assert 'cdn.npmmirror.com' not in lockfile
+    assert 'https://registry.npmjs.org/picocolors/-/picocolors-1.1.2.tgz' in lockfile
+    assert 'registry.npmjs.org' in normalizer
+    assert 'frontend_build_ok=0' in release_gate
+    assert '已跳过 /version.json 连带检查' in release_gate
+    assert 'if [ "$frontend_build_ok" -eq 1 ]; then' in release_gate

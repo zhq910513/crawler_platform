@@ -62,14 +62,21 @@ fi
 if [ -f frontend/package.json ]; then
   if [ "$STRICT_FRONTEND_BUILD" = "1" ]; then
     log "前端镜像构建测试（Dockerfile 注入版本元信息）"
-    cp_compose build web || fail "前端镜像构建未通过"
-    log "前端 /version.json 镜像产物检查"
-    image_tag="$(cp_env_value .env PLATFORM_IMAGE_TAG)"
-    image_tag="${image_tag:-${RELEASE_VERSION:-latest}}"
-    version_json="$(docker run --rm --entrypoint cat "crawler_platform_web:${image_tag}" /usr/share/nginx/html/version.json 2>/dev/null || true)"
-    printf '%s\n' "$version_json"
-    if ! printf '%s' "$version_json" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"${RELEASE_VERSION:-}"'"'; then
-      fail "前端 /version.json 未正确写入发布版本"
+    frontend_build_ok=0
+    if cp_compose build web; then
+      frontend_build_ok=1
+    else
+      fail "前端镜像构建未通过；主因通常在前端依赖安装 / npm registry / tarball 下载阶段，请查看上方 npm error。已跳过 /version.json 连带检查。"
+    fi
+    if [ "$frontend_build_ok" -eq 1 ]; then
+      log "前端 /version.json 镜像产物检查"
+      image_tag="$(cp_env_value .env PLATFORM_IMAGE_TAG)"
+      image_tag="${image_tag:-${RELEASE_VERSION:-latest}}"
+      version_json="$(docker run --rm --entrypoint cat "crawler_platform_web:${image_tag}" /usr/share/nginx/html/version.json 2>/dev/null || true)"
+      printf '%s\n' "$version_json"
+      if ! printf '%s' "$version_json" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"${RELEASE_VERSION:-}"'"'; then
+        fail "前端 /version.json 未正确写入发布版本"
+      fi
     fi
   else
     log "前端构建测试（非严格模式）"
