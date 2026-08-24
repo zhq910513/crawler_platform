@@ -22,6 +22,33 @@ AUTO_RETRY_POLICIES = {"IDEMPOTENT", "CHECKPOINTABLE"}
 ACTIVE_RUN_STATUSES = {"QUEUED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"}
 
 
+def build_runtime_parameters(task: CrawlerTask, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Build the exact payload delivered to crawler_runtime.
+
+    The formal task contract stores configuration and credential bindings outside
+    business parameters. crawler_foundation reads runtime configs from
+    configBindings/config_bindings and account slots from accounts, so the
+    backend must inject the stored bindings when a run snapshot is created.
+
+    Only saved binding references are injected here. This function deliberately
+    does not decrypt resource configs, read Redis/DB/OSS credentials, or invent
+    client objects; those remain separate platform/Agent responsibilities.
+    """
+    payload: dict[str, Any] = {}
+    if isinstance(task.parameters, dict):
+        payload.update(task.parameters)
+    if isinstance(parameters, dict):
+        payload.update(parameters)
+    config_bindings = dict(task.config_bindings or {})
+    credential_bindings = dict(task.credential_bindings or {})
+    payload["configBindings"] = config_bindings
+    payload["config_bindings"] = config_bindings
+    payload["credentialBindings"] = credential_bindings
+    payload["credential_bindings"] = credential_bindings
+    payload["accounts"] = credential_bindings
+    return payload
+
+
 class RunService:
     def __init__(self, db: Session):
         self.db = db
@@ -171,7 +198,7 @@ class RunService:
         return f"schedule:{schedule.schedule_id}:{scheduled_at.isoformat()}:{suffix}"
 
     def _create_single_run(self, task: CrawlerTask, schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, parameters: dict[str, Any], release, trigger_type: str, shard_index: int | None, shard_count: int | None, hold_for_queue: bool, trigger_suffix: str) -> CrawlerTaskRun:
-        run = CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id if schedule else None, release_id=release.release_id, image_repository=release.image_repository, image_digest=release.image_digest, entry_module=task.entry_module, entry_function=task.entry_function, execution_mode=task.execution_mode, shard_index=shard_index, shard_count=shard_count, trigger_type=trigger_type, idempotency_policy=task.idempotency_policy, cpu_limit=task.cpu_limit, memory_limit_mb=task.memory_limit_mb, timeout_seconds=task.timeout_seconds, runtime_mode=task.runtime_mode, task_group=task.task_group, task_max_concurrency=task.task_max_concurrency, group_max_concurrency=task.group_max_concurrency, exclusive_mode=task.exclusive_mode, io_class=task.io_class, shm_size_mb=task.shm_size_mb, log_limit_mb=task.log_limit_mb, resource_locks=task.resource_locks or [], run_status="QUEUED", routing_status="PENDING", scheduled_at=scheduled_at, trigger_key=self._trigger_key(schedule, scheduled_at, trigger_type, trigger_suffix), attempt=1, max_attempts=max(1, task.max_retry_count + 1), parameters_snapshot={**(task.parameters or {}), **parameters})
+        run = CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id if schedule else None, release_id=release.release_id, image_repository=release.image_repository, image_digest=release.image_digest, entry_module=task.entry_module, entry_function=task.entry_function, execution_mode=task.execution_mode, shard_index=shard_index, shard_count=shard_count, trigger_type=trigger_type, idempotency_policy=task.idempotency_policy, cpu_limit=task.cpu_limit, memory_limit_mb=task.memory_limit_mb, timeout_seconds=task.timeout_seconds, runtime_mode=task.runtime_mode, task_group=task.task_group, task_max_concurrency=task.task_max_concurrency, group_max_concurrency=task.group_max_concurrency, exclusive_mode=task.exclusive_mode, io_class=task.io_class, shm_size_mb=task.shm_size_mb, log_limit_mb=task.log_limit_mb, resource_locks=task.resource_locks or [], run_status="QUEUED", routing_status="PENDING", scheduled_at=scheduled_at, trigger_key=self._trigger_key(schedule, scheduled_at, trigger_type, trigger_suffix), attempt=1, max_attempts=max(1, task.max_retry_count + 1), parameters_snapshot=build_runtime_parameters(task, parameters))
         self.db.add(run)
         self.db.flush()
         run.root_run_id = run.run_id
@@ -183,7 +210,7 @@ class RunService:
 
     def _create_sharded_run(self, task: CrawlerTask, schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, parameters: dict[str, Any], release, trigger_type: str, hold_for_queue: bool) -> CrawlerTaskRun:
         shard_count = max(1, min(task.max_parallel_nodes, task.required_node_count))
-        parent = CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id if schedule else None, release_id=release.release_id, image_repository=release.image_repository, image_digest=release.image_digest, entry_module=task.entry_module, entry_function=task.entry_function, execution_mode="SHARDED", shard_count=shard_count, trigger_type=trigger_type, idempotency_policy=task.idempotency_policy, cpu_limit=task.cpu_limit, memory_limit_mb=task.memory_limit_mb, timeout_seconds=task.timeout_seconds, runtime_mode=task.runtime_mode, task_group=task.task_group, task_max_concurrency=task.task_max_concurrency, group_max_concurrency=task.group_max_concurrency, exclusive_mode=task.exclusive_mode, io_class=task.io_class, shm_size_mb=task.shm_size_mb, log_limit_mb=task.log_limit_mb, resource_locks=task.resource_locks or [], run_status="RUNNING", routing_status="ROUTE_CANCELLED", routing_reason="父运行实例，用于聚合分片状态", scheduled_at=scheduled_at, trigger_key=self._trigger_key(schedule, scheduled_at, trigger_type, "parent"), started_at=utcnow(), attempt=1, max_attempts=max(1, task.max_retry_count + 1), parameters_snapshot={**(task.parameters or {}), **parameters})
+        parent = CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id if schedule else None, release_id=release.release_id, image_repository=release.image_repository, image_digest=release.image_digest, entry_module=task.entry_module, entry_function=task.entry_function, execution_mode="SHARDED", shard_count=shard_count, trigger_type=trigger_type, idempotency_policy=task.idempotency_policy, cpu_limit=task.cpu_limit, memory_limit_mb=task.memory_limit_mb, timeout_seconds=task.timeout_seconds, runtime_mode=task.runtime_mode, task_group=task.task_group, task_max_concurrency=task.task_max_concurrency, group_max_concurrency=task.group_max_concurrency, exclusive_mode=task.exclusive_mode, io_class=task.io_class, shm_size_mb=task.shm_size_mb, log_limit_mb=task.log_limit_mb, resource_locks=task.resource_locks or [], run_status="RUNNING", routing_status="ROUTE_CANCELLED", routing_reason="父运行实例，用于聚合分片状态", scheduled_at=scheduled_at, trigger_key=self._trigger_key(schedule, scheduled_at, trigger_type, "parent"), started_at=utcnow(), attempt=1, max_attempts=max(1, task.max_retry_count + 1), parameters_snapshot=build_runtime_parameters(task, parameters))
         self.db.add(parent)
         self.db.flush()
         parent.root_run_id = parent.run_id

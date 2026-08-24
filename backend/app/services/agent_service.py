@@ -15,6 +15,7 @@ from app.services.routing_service import RoutingService
 from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.agent_command_service import AgentCommandService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status
+from app.services.run_service import build_runtime_parameters
 from app.services.audit import write_operation_log
 from app.utils import utcnow
 
@@ -175,6 +176,12 @@ class AgentService:
             self.db.rollback()
             return None
         self.db.refresh(run)
+        runtime_parameters = run.parameters_snapshot or {}
+        if not isinstance(runtime_parameters, dict):
+            runtime_parameters = {}
+        if "accounts" not in runtime_parameters or not ("configBindings" in runtime_parameters or "config_bindings" in runtime_parameters):
+            runtime_parameters = build_runtime_parameters(task, runtime_parameters)
+            run.parameters_snapshot = runtime_parameters
         self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="执行节点已接收运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id}))
         self.db.commit()
         return {
@@ -191,7 +198,10 @@ class AgentService:
             "imageDigest": run.image_digest,
             "entryModule": run.entry_module,
             "entryFunction": run.entry_function,
-            "parameters": run.parameters_snapshot,
+            "parameters": runtime_parameters,
+            "configBindings": runtime_parameters.get("configBindings") or runtime_parameters.get("config_bindings") or {},
+            "credentialBindings": runtime_parameters.get("credentialBindings") or runtime_parameters.get("credential_bindings") or {},
+            "accounts": runtime_parameters.get("accounts") or {},
             "cpuLimit": run.cpu_limit,
             "memoryLimitMb": run.memory_limit_mb,
             "timeoutSeconds": run.timeout_seconds,

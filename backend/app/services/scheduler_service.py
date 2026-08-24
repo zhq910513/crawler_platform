@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.errors import AppError
 from app.models import CrawlerProject, CrawlerTask, CrawlerTaskRun, CrawlerTaskSchedule
 from app.services.cron_service import CronService
-from app.services.run_service import ACTIVE_RUN_STATUSES, RunService
+from app.services.run_service import ACTIVE_RUN_STATUSES, RunService, build_runtime_parameters
 from app.services.state_machine import safe_set_run_status, set_routing_status
 from app.utils import utcnow
 
@@ -92,7 +92,7 @@ class SchedulerService:
     def _create_skipped(self, task: CrawlerTask | None, schedule: CrawlerTaskSchedule, scheduled_at, reason: str) -> None:
         if not task:
             return
-        self.db.add(CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id, scheduled_at=scheduled_at, trigger_key=f"schedule:{schedule.schedule_id}:{scheduled_at.isoformat()}:skipped", run_status="SKIPPED", routing_status="ROUTE_CANCELLED", routing_reason=reason, trigger_type="SCHEDULE", entry_module=task.entry_module, entry_function=task.entry_function, execution_mode=task.execution_mode, idempotency_policy=task.idempotency_policy, parameters_snapshot=task.parameters or {}))
+        self.db.add(CrawlerTaskRun(company_id=task.company_id, project_id=task.project_id, task_id=task.task_id, schedule_id=schedule.schedule_id, scheduled_at=scheduled_at, trigger_key=f"schedule:{schedule.schedule_id}:{scheduled_at.isoformat()}:skipped", run_status="SKIPPED", routing_status="ROUTE_CANCELLED", routing_reason=reason, trigger_type="SCHEDULE", entry_module=task.entry_module, entry_function=task.entry_function, execution_mode=task.execution_mode, idempotency_policy=task.idempotency_policy, parameters_snapshot=build_runtime_parameters(task, {})))
 
     def _advance(self, schedule: CrawlerTaskSchedule, scheduled_at) -> None:
         schedule.last_triggered_at = scheduled_at

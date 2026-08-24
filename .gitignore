@@ -16,3 +16,7 @@ agent/.env.local
 crawler_agent.env
 
 .release/
+# 本地开发数据库与运行期 SQLite 文件不得进入发布包。
+*.db
+*.sqlite
+*.sqlite3

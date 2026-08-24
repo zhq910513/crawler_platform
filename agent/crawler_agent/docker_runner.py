@@ -26,6 +26,10 @@ def _safe(value: Any, default: str = "unknown") -> str:
     return _SAFE_NAME.sub("_", text)[:120]
 
 
+def _endpoint(base_url: str, path: str) -> str:
+    return f"{base_url.rstrip('/')}/api/v1/{path.lstrip('/')}"
+
+
 class RunExecutor:
     """Execute a platform run in an isolated task container.
 
@@ -528,6 +532,10 @@ class RunExecutor:
             if not entry_module:
                 raise RuntimeError("任务未提供入口模块")
             parameters = claim.get("parameters") or {}
+            if not isinstance(parameters, dict):
+                parameters = {}
+            config_bindings = claim.get("configBindings") or parameters.get("configBindings") or parameters.get("config_bindings") or {}
+            config_payload = {"configBindings": config_bindings, "config_bindings": config_bindings}
             dirs = self._prepare_project_dirs(claim)
             command = ["python", "-m", "crawler_runtime", "--entrypoint", f"{entry_module}:{entry_function}", "--kwargs-json", json.dumps(parameters, ensure_ascii=False)]
             environment = {
@@ -546,6 +554,12 @@ class RunExecutor:
                 "CRAWLER_IO_CLASS": str(claim.get("ioClass") or "NORMAL"),
                 "CRAWLER_RESOURCE_LOCKS_JSON": json.dumps(claim.get("resourceLocks") or [], ensure_ascii=False),
                 "CRAWLER_TASK_PARAMS_JSON": json.dumps(parameters, ensure_ascii=False),
+                "CRAWLER_CONFIG_JSON": json.dumps(config_payload, ensure_ascii=False),
+                "CRAWLER_AGENT_CODE": self.config.agent_code,
+                "CRAWLER_ACCOUNT_STATUS_ENDPOINT": _endpoint(self.config.control_plane_url, "/agent-account-status-events"),
+                "CRAWLER_ACCOUNT_STATUS_TOKEN": f"Agent {self.config.agent_token}",
+                "CRAWLER_CREDENTIAL_LEASE_ACQUIRE_ENDPOINT": _endpoint(self.config.control_plane_url, "/agent-credential-leases/acquire"),
+                "CRAWLER_CREDENTIAL_LEASE_RELEASE_ENDPOINT": _endpoint(self.config.control_plane_url, "/agent-credential-leases/release"),
                 "CRAWLER_ENTRY_MODULE": entry_module,
                 "CRAWLER_ENTRY_FUNCTION": entry_function,
                 "CRAWLER_WORK_DIR": "/work",
