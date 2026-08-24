@@ -67,7 +67,7 @@ if [ -f frontend/package.json ]; then
     if cp_compose build web; then
       frontend_build_ok=1
     else
-      fail "前端镜像构建未通过；主因通常在前端依赖安装 / npm registry / tarball 下载阶段，请查看上方 npm error。已跳过 /version.json 连带检查。"
+      fail "前端镜像构建未通过；可能原因包括依赖安装、npm registry、TypeScript 类型检查或 Vite 构建错误，请查看上方 Docker/npm/vue-tsc 输出。已跳过 /version.json 连带检查。"
     fi
     if [ "$frontend_build_ok" -eq 1 ]; then
       log "前端 /version.json 镜像产物检查"

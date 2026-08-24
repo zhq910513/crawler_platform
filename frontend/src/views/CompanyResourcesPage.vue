@@ -163,6 +163,14 @@ const roleOptions: Option[] = [
   { label: '日志存储', value: 'LOG_STORAGE' },
   { label: '其他', value: 'OTHER' },
 ]
+const testStatusOptions: Option[] = [
+  { label: '未测试', value: 'NOT_TESTED' },
+  { label: '配置不完整', value: 'CONFIG_INVALID' },
+  { label: '配置完整', value: 'CONFIG_VALID' },
+  { label: '连接失败', value: 'CONNECTION_FAILED' },
+  { label: '连接通过', value: 'CONNECTION_PASSED' },
+  { label: '人工确认', value: 'MANUAL_CONFIRMED' },
+]
 const modeOptions = computed<Option[]>(() => {
   if (form.resourceEngine === 'MONGODB') return [{ label: 'URI 连接串', value: 'URI' }, { label: '主机端口', value: 'HOST_PORT' }]
   if (['ALIYUN_OSS', 'S3'].includes(form.resourceEngine)) return [{ label: '云服务', value: 'CLOUD_SERVICE' }]
