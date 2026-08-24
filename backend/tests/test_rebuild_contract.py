@@ -588,7 +588,8 @@ def test_128_frontend_forced_password_change_contract() -> None:
     assert 'passwordError' in source
     assert 'passwordFormProblem' in source
     assert '<router-view v-else v-slot=' in source
-    assert '<KeepAlive :max="12">' in source
+    assert '<KeepAlive' not in source
+    assert ':key="`${route.fullPath}:${viewReloadKey}`"' in source
     assert ':close-on-press-escape="!passwordRequired"' in source
     assert '新密码至少 8 位' in source
 
@@ -608,7 +609,9 @@ def test_137_frontend_navigation_switch_performance_contract() -> None:
     router_source = (root / 'frontend' / 'src' / 'router.ts').read_text(encoding='utf-8')
     api_source = (root / 'frontend' / 'src' / 'api' / 'platform.ts').read_text(encoding='utf-8')
     runs_source = (root / 'frontend' / 'src' / 'views' / 'RunsPage.vue').read_text(encoding='utf-8')
-    assert 'KeepAlive' in layout_source
+    assert '<KeepAlive' not in layout_source
+    assert 'viewReloadKey' in layout_source
+    assert '@select="handleMenuSelect"' in layout_source
     assert 'preloadAuthenticatedRoutes' in layout_source
     assert 'keepAliveMeta' in router_source
     assert 'requestIdleCallback' in router_source
@@ -1339,7 +1342,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert release_version == '1.0.82'
+    assert release_version == '1.0.83'
     assert "AGENT_IMAGE='crawler_platform_agent:1.1.2'" in env_resp.text
     assert "AGENT_AGENT_VERSION='1.1.2'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']

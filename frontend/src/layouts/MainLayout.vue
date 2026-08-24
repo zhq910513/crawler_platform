@@ -8,7 +8,7 @@
           <div class="brand-subtitle">项目交付与运行管理</div>
         </div>
       </div>
-      <el-menu router :default-active="activePath" class="side-menu">
+      <el-menu router :default-active="activePath" class="side-menu" @select="handleMenuSelect">
         <el-menu-item v-for="item in visibleItems" :key="item.path" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
           <span>{{ item.title }}</span>
@@ -36,10 +36,7 @@
       <el-main class="content-wrap">
         <div v-if="passwordRequired" class="forced-password-panel">请先完成密码修改。完成后系统会要求重新登录，再进入业务页面。</div>
         <router-view v-else v-slot="{ Component, route }">
-          <KeepAlive :max="12">
-            <component :is="Component" v-if="route.meta.keepAlive" :key="route.name || route.path" />
-          </KeepAlive>
-          <component :is="Component" v-if="!route.meta.keepAlive" :key="route.fullPath" />
+          <component :is="Component" :key="`${route.fullPath}:${viewReloadKey}`" />
         </router-view>
       </el-main>
     </el-container>
@@ -90,12 +87,17 @@ const passwordPolicyText = '新密码至少 8 位，必须包含大小写字母�
 const frontendVersion = ref<SystemVersionInfo>(frontendBuildVersion)
 const backendVersion = ref<BackendHealthData | null>(null)
 const versionMismatch = computed(() => Boolean(backendVersion.value?.version && backendVersion.value.version !== frontendVersion.value.version))
+const viewReloadKey = ref(0)
 
 onMounted(() => {
   if (passwordRequired.value) passwordDialogVisible.value = true
   loadVersionInfo()
   preloadAuthenticatedRoutes(Boolean(sessionState.user?.isSuperAdmin))
 })
+
+function handleMenuSelect(path: string) {
+  if (path === activePath.value) viewReloadKey.value += 1
+}
 
 async function loadVersionInfo() {
   frontendVersion.value = await getFrontendVersion()

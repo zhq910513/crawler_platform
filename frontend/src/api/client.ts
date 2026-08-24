@@ -13,6 +13,12 @@ http.interceptors.request.use((config) => {
     config.headers['X-User-Active'] = '1'
     localStorage.removeItem('userActiveFlag')
   }
+  if ((config.method || 'get').toLowerCase() === 'get') {
+    config.headers['Cache-Control'] = 'no-cache'
+    config.headers.Pragma = 'no-cache'
+    const params = config.params && typeof config.params === 'object' && !(config.params instanceof URLSearchParams) ? config.params : {}
+    config.params = { ...params, _t: Date.now() }
+  }
   return config
 })
 

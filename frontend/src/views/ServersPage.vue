@@ -8,7 +8,7 @@
       <div>
         <el-button type="primary" @click="openOnboarding">接入节点</el-button>
         <el-button v-if="sessionState.user?.isSuperAdmin" @click="dialogVisible = true">手工新增</el-button>
-        <el-button @click="load">刷新</el-button>
+        <el-button :loading="loading" @click="refreshPage">刷新</el-button>
       </div>
     </div>
 
@@ -166,6 +166,7 @@ import { formatTime, zh } from '../utils/dictionaries'
 const route = useRoute()
 const router = useRouter()
 const rows = ref<ServerNode[]>([])
+const loading = ref(false)
 const joinInvitations = ref<Array<Record<string, any>>>([])
 const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
@@ -174,6 +175,7 @@ const joinResult = ref<AgentJoinTokenResult | null>(null)
 const installPanelRef = ref<HTMLElement | null>(null)
 const joinOnlineNotified = ref(false)
 let joinPollingTimer: number | undefined
+let serverPollingTimer: number | undefined
 const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: true, autoConfigureDockerRegistry: false })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
@@ -199,7 +201,7 @@ function nodeStatusText(row: ServerNode) {
   return '待接入'
 }
 function nodeStatusTag(row: ServerNode) { const text = nodeStatusText(row); if (text === '在线') return 'success'; if (['离线', '接入失败', '移除失败', '版本不兼容'].includes(text)) return 'danger'; return 'info' }
-function nodeStatusHint(row: ServerNode) { const text = nodeStatusText(row); if (text === '接入中') return '等待首次心跳'; if (text === '维护中') return '停止接新任务，等待当前任务结束'; if (text === '移除中') return '等待 Drain/退役收敛'; if (text === '升级中') return '等待 Agent 稳定上线'; return row.lifecycleError || '' }
+function nodeStatusHint(row: ServerNode) { const text = nodeStatusText(row); if (text === '接入中') return '容器启动后会立即心跳，默认每 10 秒一次；超过 30 秒请查看 Agent 日志'; if (text === '维护中') return '停止接新任务，等待当前任务结束'; if (text === '移除中') return '等待 Drain/退役收敛'; if (text === '升级中') return '等待 Agent 稳定上线'; return row.lifecycleError || '' }
 function invitationStatusText(row: Record<string, any>) { const status = String(row.invitation_status || row.invitationStatus || ''); return ({ PENDING: '待接入', CONFIG_ISSUED: '接入中', FAILED: '接入失败' } as Record<string, string>)[status] || zh(status) }
 function invitationResultText(row: Record<string, any>) { return String(row.failure_reason || row.failureReason || row.failure_stage || row.failureStage || '-') }
 function canCleanupInvitation(row: Record<string, any>) { const code = String(row.server_code || row.serverCode || ''); return !rows.value.some((item) => item.serverCode === code) }
@@ -304,13 +306,42 @@ async function cleanupInvitation(row: Record<string, any>) {
   ElMessage.success('接入记录已清理')
   await load()
 }
-async function load() {
-  await loadSystemSettings()
-  companies.value = await listCompanies()
-  if (!form.companyId) form.companyId = sessionState.user?.companyId || companies.value[0]?.companyId || 0
-  if (!joinForm.companyId) joinForm.companyId = form.companyId
-  rows.value = await listServers(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
-  joinInvitations.value = await listAgentJoinTokens(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
+function hasPendingOnboarding() {
+  const invitationPending = joinInvitations.value.some((item) => ['PENDING', 'CONFIG_ISSUED'].includes(String(item.invitation_status || item.invitationStatus || '')))
+  const nodePending = rows.value.some((item) => ['待接入', '接入中'].includes(nodeStatusText(item)))
+  return invitationPending || nodePending
+}
+function stopServerPolling() {
+  if (serverPollingTimer) {
+    window.clearInterval(serverPollingTimer)
+    serverPollingTimer = undefined
+  }
+}
+function ensureServerPolling() {
+  if (hasPendingOnboarding()) {
+    if (!serverPollingTimer) serverPollingTimer = window.setInterval(() => { void load(true) }, 10000)
+  } else {
+    stopServerPolling()
+  }
+}
+async function load(silent = false) {
+  if (loading.value) return
+  loading.value = !silent
+  try {
+    await loadSystemSettings()
+    companies.value = await listCompanies()
+    if (!form.companyId) form.companyId = sessionState.user?.companyId || companies.value[0]?.companyId || 0
+    if (!joinForm.companyId) joinForm.companyId = form.companyId
+    rows.value = await listServers(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
+    joinInvitations.value = await listAgentJoinTokens(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
+  } finally {
+    loading.value = false
+    ensureServerPolling()
+  }
+}
+async function refreshPage() {
+  await load()
+  ElMessage.success('已刷新')
 }
 async function scrollInstallPanel() {
   await nextTick()
@@ -326,7 +357,7 @@ function startJoinPolling() {
   stopJoinPolling()
   joinPollingTimer = window.setInterval(async () => {
     if (!onboardingVisible.value || !joinResult.value) { stopJoinPolling(); return }
-    await load()
+    await load(true)
     if (onboardingNodeOnline.value) {
       if (!joinOnlineNotified.value) {
         joinOnlineNotified.value = true
@@ -362,7 +393,7 @@ async function copyText(text: string) {
 async function save() { await createServer(form); dialogVisible.value = false; await load() }
 onMounted(async () => { await load(); if (route.query.companyId) { joinForm.companyId = Number(route.query.companyId) || joinForm.companyId; form.companyId = joinForm.companyId } if (route.query.openOnboarding === '1') openOnboarding() })
 watch(() => route.query.openOnboarding, (value) => { if (value === '1') openOnboarding() })
-onUnmounted(() => stopJoinPolling())
+onUnmounted(() => { stopJoinPolling(); stopServerPolling() })
 </script>
 <style scoped>
 .server-name { font-weight: 700; color: #111827; }
