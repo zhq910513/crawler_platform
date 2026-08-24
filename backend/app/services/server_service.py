@@ -605,7 +605,7 @@ class ServerService:
             "set -e",
             "rm -f \"$tmp_installer\"",
             "if [ \"$rc\" -eq 0 ]; then",
-            "  echo \"Agent 安装脚本执行完成，退出码：0。请回到控制台确认首次心跳。\"",
+            "  echo \"Agent 安装脚本执行完成，退出码：0。控制台会自动刷新首轮心跳状态。\"",
             "else",
             "  echo \"Agent 安装脚本已结束，退出码：$rc。当前 SSH 会话不会退出，请根据上方错误处理后重试。\" >&2",
             "fi",

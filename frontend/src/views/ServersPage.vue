@@ -74,7 +74,7 @@
     </div>
 
     <el-dialog v-model="onboardingVisible" title="接入执行节点" width="860px" class="onboarding-dialog">
-      <el-steps :active="joinResult ? 2 : 1" simple class="wizard-steps">
+      <el-steps :active="onboardingStepActive" simple class="wizard-steps">
         <el-step title="填写节点信息" />
         <el-step title="复制命令执行" />
         <el-step title="等待节点上线" />
@@ -118,7 +118,7 @@
 
       <div v-if="addressWarning" class="warning-card">{{ addressWarning }}</div>
 
-      <div v-if="joinResult" class="install-panel">
+      <div v-if="joinResult" ref="installPanelRef" class="install-panel">
         <div class="install-header">
           <div>
             <div class="install-title">接入命令已生成</div>
@@ -155,7 +155,7 @@
   </div>
 </template>
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createAgentJoinToken, createServer, deleteAgentJoinToken, deleteServer, getSystemSettings, listAgentJoinTokens, listCompanies, listServers } from '../api/platform'
 import { sessionState } from '../stores/session'
@@ -171,9 +171,15 @@ const companies = ref<Company[]>([])
 const dialogVisible = ref(false)
 const onboardingVisible = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
+const installPanelRef = ref<HTMLElement | null>(null)
+const joinOnlineNotified = ref(false)
+let joinPollingTimer: number | undefined
 const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '', agentCode: '', agentName: '', maxContainerSlots: 2, workDir: '/var/lib/crawler-agent', installTarget: 'REMOTE' as 'LOCAL' | 'REMOTE', controlPlaneUrl: '', replaceExistingAgent: true, autoConfigureDockerRegistry: false })
 const form = reactive({ companyId: 0, serverCode: '', serverName: '', serverIp: '', maxContainerSlots: 4 })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === (sessionState.user?.companyId || form.companyId))?.companyName || '归属公司')
+const onboardingJoinedNode = computed(() => rows.value.find((item) => item.serverCode === joinForm.serverCode))
+const onboardingNodeOnline = computed(() => Boolean(onboardingJoinedNode.value && onboardingJoinedNode.value.agentConnectionStatus === 'ONLINE'))
+const onboardingStepActive = computed(() => onboardingNodeOnline.value ? 3 : (joinResult.value ? 2 : 1))
 
 function hasRuntimeMetrics(row: ServerNode) { return Boolean(row.agentLastHeartbeatAt || row.metrics?.lastHeartbeatAt) }
 function metricText(value?: number | null) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value))}%` }
@@ -240,7 +246,9 @@ function applyInstallTarget() {
   joinForm.workDir = '/var/lib/crawler-agent'
 }
 function openOnboarding() {
+  stopJoinPolling()
   joinResult.value = null
+  joinOnlineNotified.value = false
   joinForm.replaceExistingAgent = true
   joinForm.autoConfigureDockerRegistry = false
   onboardingVisible.value = true
@@ -250,7 +258,9 @@ function openOnboarding() {
   applyInstallTarget()
 }
 function rejoinNode(row: ServerNode) {
+  stopJoinPolling()
   joinResult.value = null
+  joinOnlineNotified.value = false
   joinForm.companyId = row.companyId
   joinForm.serverCode = row.serverCode
   joinForm.serverName = row.serverName
@@ -302,14 +312,39 @@ async function load() {
   rows.value = await listServers(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
   joinInvitations.value = await listAgentJoinTokens(sessionState.user?.isSuperAdmin ? undefined : sessionState.user?.companyId || undefined)
 }
+async function scrollInstallPanel() {
+  await nextTick()
+  installPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+function stopJoinPolling() {
+  if (joinPollingTimer) {
+    window.clearInterval(joinPollingTimer)
+    joinPollingTimer = undefined
+  }
+}
+function startJoinPolling() {
+  stopJoinPolling()
+  joinPollingTimer = window.setInterval(async () => {
+    if (!onboardingVisible.value || !joinResult.value) { stopJoinPolling(); return }
+    await load()
+    if (onboardingNodeOnline.value) {
+      if (!joinOnlineNotified.value) {
+        joinOnlineNotified.value = true
+        ElMessage.success('节点已上线')
+      }
+      stopJoinPolling()
+    }
+  }, 5000)
+}
 async function createJoin() {
   if (addressWarning.value) { ElMessage.warning(addressWarning.value); return }
   applyAutoCodes()
+  joinOnlineNotified.value = false
   joinResult.value = await createAgentJoinToken({ ...joinForm, controlPlaneUrl: currentOrigin(), agentName: joinForm.agentName || joinForm.serverName, labels: {}, capabilities: {} })
   configuredControlPlaneUrl.value = joinResult.value.controlPlaneUrl || configuredControlPlaneUrl.value
-  const warning = joinResult.value.warnings?.[0]
-  if (warning) ElMessage.warning(warning)
-  else ElMessage.success('接入命令已生成')
+  ElMessage.success('接入命令已生成')
+  await scrollInstallPanel()
+  startJoinPolling()
 }
 async function copyText(text: string) {
   if (!text) return
@@ -327,6 +362,7 @@ async function copyText(text: string) {
 async function save() { await createServer(form); dialogVisible.value = false; await load() }
 onMounted(async () => { await load(); if (route.query.companyId) { joinForm.companyId = Number(route.query.companyId) || joinForm.companyId; form.companyId = joinForm.companyId } if (route.query.openOnboarding === '1') openOnboarding() })
 watch(() => route.query.openOnboarding, (value) => { if (value === '1') openOnboarding() })
+onUnmounted(() => stopJoinPolling())
 </script>
 <style scoped>
 .server-name { font-weight: 700; color: #111827; }

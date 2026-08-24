@@ -134,7 +134,7 @@
     </el-dialog>
 
     <el-drawer v-model="serverDrawerVisible" title="新增执行节点" size="540px">
-      <el-steps :active="joinResult ? 2 : 1" simple class="drawer-steps">
+      <el-steps :active="serverDrawerStepActive" simple class="drawer-steps">
         <el-step title="填写信息" />
         <el-step title="复制命令" />
         <el-step title="等待上线" />
@@ -158,7 +158,7 @@
         <el-form-item label="工作目录"><el-input v-model="joinForm.workDir" /></el-form-item>
       </el-form>
       <el-alert v-if="joinWarning" type="warning" show-icon :closable="false" :title="joinWarning" />
-      <div v-if="joinResult" class="install-panel">
+      <div v-if="joinResult" ref="installPanelRef" class="install-panel">
         <div class="install-title">接入命令已生成</div>
         <div class="muted">请在目标节点执行下面命令，节点上线后会自动出现在本页下拉列表。</div>
         <div class="command-block">
@@ -180,7 +180,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
@@ -197,6 +197,9 @@ const companyDialogVisible = ref(false)
 const serverDrawerVisible = ref(false)
 const publishing = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
+const installPanelRef = ref<HTMLElement | null>(null)
+const joinOnlineNotified = ref(false)
+let joinPollingTimer: number | undefined
 const controlBaseUrl = ref('')
 const controlPreflight = ref<ControlPlanePreflight | null>(null)
 const publishSummary = ref('')
@@ -230,6 +233,9 @@ const joinForm = reactive({ companyId: 0, serverCode: '', serverName: '新执行
 
 const selectedCompanyName = computed(() => companies.value.find((item) => item.companyId === form.companyId)?.companyName || '当前公司')
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
+const pendingJoinNode = computed(() => companyServers.value.find((server) => server.serverCode === pendingJoinServerCode.value))
+const pendingJoinOnline = computed(() => Boolean(pendingJoinNode.value && pendingJoinNode.value.agentConnectionStatus === 'ONLINE'))
+const serverDrawerStepActive = computed(() => pendingJoinOnline.value ? 3 : (joinResult.value ? 2 : 1))
 const repositoryOk = computed(() => isRepositoryUrl(form.repositoryUrl))
 const deployableServers = computed(() => companyServers.value.filter(serverDeployable))
 const assistantPanelVisible = computed(() => assistantMode.value === 'panel' || assistantMode.value === 'collapsing')
@@ -416,7 +422,9 @@ function applyJoinCodes() {
   joinForm.controlPlaneUrl = controlBaseUrl.value
 }
 function openServerOnboarding() {
+  stopJoinPolling()
   joinResult.value = null
+  joinOnlineNotified.value = false
   joinForm.companyId = form.companyId
   joinForm.serverName = joinForm.serverName || '新执行节点'
   applyJoinCodes()
@@ -426,16 +434,45 @@ async function createJoinCommand() {
   if (joinWarning.value) { ElMessage.warning(joinWarning.value); return }
   applyJoinCodes()
   try {
+    joinOnlineNotified.value = false
     joinResult.value = await createAgentJoinToken({ ...joinForm, controlPlaneUrl: resolveControlBaseUrl(controlBaseUrl.value), labels: {}, capabilities: {} })
     controlBaseUrl.value = joinResult.value.controlPlaneUrl || controlBaseUrl.value
     pendingJoinServerCode.value = joinForm.serverCode
-    const warning = joinResult.value.warnings?.[0]
-    if (warning) ElMessage.warning(warning)
-    else ElMessage.success('接入命令已生成')
+    ElMessage.success('接入命令已生成')
+    await scrollInstallPanel()
+    startJoinPolling()
   } catch (error) {
     const payload = apiErrorData<unknown>(error)
     ElMessage.error(payload?.message || '接入命令生成失败')
   }
+}
+async function scrollInstallPanel() {
+  await nextTick()
+  installPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+function stopJoinPolling() {
+  if (joinPollingTimer) {
+    window.clearInterval(joinPollingTimer)
+    joinPollingTimer = undefined
+  }
+}
+function startJoinPolling() {
+  stopJoinPolling()
+  joinPollingTimer = window.setInterval(async () => {
+    if (!serverDrawerVisible.value || !joinResult.value) { stopJoinPolling(); return }
+    await refreshCompanyServers()
+    if (pendingJoinOnline.value) {
+      if (!joinOnlineNotified.value) {
+        joinOnlineNotified.value = true
+        ElMessage.success('节点已上线并自动选中')
+      }
+      if (pendingJoinNode.value && !form.serverIds.includes(pendingJoinNode.value.serverId)) {
+        form.serverIds.push(pendingJoinNode.value.serverId)
+        syncSelectedServerCards()
+      }
+      stopJoinPolling()
+    }
+  }, 5000)
 }
 async function refreshServersAfterJoin() {
   await refreshCompanyServers()
@@ -444,6 +481,8 @@ async function refreshServersAfterJoin() {
     form.serverIds.push(joined.serverId)
     syncSelectedServerCards()
     serverDrawerVisible.value = false
+    joinOnlineNotified.value = true
+    stopJoinPolling()
     ElMessage.success('节点已上线并自动选中')
     return
   }
@@ -602,6 +641,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   if (collapseTimer) window.clearTimeout(collapseTimer)
+  stopJoinPolling()
   cleanupFloatDragListeners()
 })
 </script>
