@@ -194,8 +194,8 @@ resume_existing_agent_credential(){
   set -u
   existing_token="${AGENT_AGENT_TOKEN:-}"
   [ -n "$existing_token" ] || return 1
-  output="$(curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -H "Authorization: Agent $existing_token" "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/resume-env" 2>&1)" || {
-    warn "检测到本机长期 Agent 凭据但平台校验失败，将尝试使用 Join Token 重新接入：${output:-未知错误}"
+  output="$(curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -H "Authorization: Agent $existing_token" "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/resume-env?joinToken=$JOIN_TOKEN" 2>&1)" || {
+    warn "检测到本机长期 Agent 凭据但无法用于当前接入命令，将尝试使用本次 Join Token 重新接入：${output:-未知错误}"
     return 1
   }
   printf '%s
@@ -360,6 +360,7 @@ else
     exit 1
   fi
 fi
+pass "当前接入配置：server=${AGENT_SERVER_CODE:-unknown} agent=${AGENT_AGENT_CODE:-unknown} image=${AGENT_IMAGE:-unknown}"
 
 stage "执行组件镜像仓库确认"
 agent_image_first_component="$(image_registry_component "$AGENT_IMAGE")"

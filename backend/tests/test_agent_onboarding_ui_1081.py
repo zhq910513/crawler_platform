@@ -48,3 +48,12 @@ def test_installer_success_message_matches_auto_refresh_contract() -> None:
     service_text = _read(SERVER_SERVICE)
     assert '控制台会自动刷新首轮心跳状态' in install_text
     assert '控制台会自动刷新首轮心跳状态' in service_text
+
+
+def test_installer_validates_resumed_credential_against_current_join_token() -> None:
+    install_text = _read(INSTALL_TEMPLATE)
+    service_text = _read(SERVER_SERVICE)
+    assert '/api/v1/agent-bootstrap/resume-env?joinToken=$JOIN_TOKEN' in install_text
+    assert '不能跳过 Join Token' in service_text
+    assert 'FIRST_HEARTBEAT_TIMEOUT' in service_text
+    assert '当前接入配置：server=${AGENT_SERVER_CODE:-unknown}' in install_text

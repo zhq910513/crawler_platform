@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -48,9 +48,9 @@ def create_agent_bootstrap_env(payload: AgentBootstrapEnvRequest, request: Reque
 
 
 @router.get("/agent-bootstrap/resume-env", response_class=PlainTextResponse)
-def resume_agent_bootstrap_env(request: Request, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)) -> PlainTextResponse:
+def resume_agent_bootstrap_env(request: Request, join_token: str = Query("", alias="joinToken"), agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)) -> PlainTextResponse:
     detected = SystemConfigService.detected_base_url_from_request(request)
-    content = ServerService(db).resume_agent_bootstrap_env(agent, detected)
+    content = ServerService(db).resume_agent_bootstrap_env(agent, detected, join_token)
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
 

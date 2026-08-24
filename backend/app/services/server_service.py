@@ -353,6 +353,7 @@ class ServerService:
 
     def list_agent_join_tokens(self, user: SysUser, company_id: int | None = None) -> list[dict]:
         scoped = scoped_company_id(user, company_id)
+        self._mark_stale_config_issued_join_tokens(scoped)
         from sqlalchemy import select
         stmt = select(CrawlerAgentJoinToken).order_by(CrawlerAgentJoinToken.created_at.desc())
         if scoped is not None:
@@ -360,6 +361,27 @@ class ServerService:
         stmt = stmt.where(CrawlerAgentJoinToken.invitation_status.in_(["PENDING", "CONFIG_ISSUED", "FAILED"]))
         rows = list(self.db.scalars(stmt).all())
         return [{**{c.name: getattr(row, c.name) for c in row.__table__.columns}, "tokenHash": "***"} for row in rows]
+
+    def _mark_stale_config_issued_join_tokens(self, company_id: int | None = None) -> None:
+        now = utcnow()
+        cutoff = now - timedelta(minutes=5)
+        stmt = select(CrawlerAgentJoinToken).where(
+            CrawlerAgentJoinToken.status == "USED",
+            CrawlerAgentJoinToken.invitation_status == "CONFIG_ISSUED",
+            CrawlerAgentJoinToken.used_at.is_not(None),
+            CrawlerAgentJoinToken.used_at < cutoff,
+        )
+        if company_id is not None:
+            stmt = stmt.where(CrawlerAgentJoinToken.company_id == company_id)
+        changed = False
+        for token in self.db.scalars(stmt).all():
+            token.invitation_status = "FAILED"
+            token.failed_at = token.failed_at or now
+            token.failure_stage = "FIRST_HEARTBEAT_TIMEOUT"
+            token.failure_reason = token.failure_reason or "已下发 Agent 配置但超过 5 分钟未收到首轮心跳；请查看目标机 docker logs --tail 200 crawler-agent。"
+            changed = True
+        if changed:
+            self.db.commit()
 
     def delete_agent_join_token(self, user: SysUser, token_id: int) -> dict:
         token = self.db.get(CrawlerAgentJoinToken, token_id)
@@ -402,13 +424,19 @@ class ServerService:
         return {"accepted": True, "invitationStatus": token.invitation_status, "failureStage": token.failure_stage}
 
 
-    def resume_agent_bootstrap_env(self, agent: CrawlerAgent, detected_base_url: str = "") -> str:
+    def resume_agent_bootstrap_env(self, agent: CrawlerAgent, detected_base_url: str = "", join_token: str = "") -> str:
         self._assert_agent_runtime_target_consistent()
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
             raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         if server.desired_state == "DECOMMISSIONED" or server.lifecycle_action == "DECOMMISSION":
             raise AppError("该节点正在退役，不能复用旧 Agent 凭据续跑安装", code=40931, http_status=status.HTTP_409_CONFLICT)
+        if join_token:
+            token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(join_token)).order_by(CrawlerAgentJoinToken.created_at.desc()).limit(1))
+            if not token:
+                raise AppError("当前接入命令无法匹配本机长期 Agent 凭据，请使用 Join Token 重新接入。", code=40932, http_status=status.HTTP_409_CONFLICT)
+            if token.agent_code != agent.agent_code or token.server_code != server.server_code:
+                raise AppError("本机长期 Agent 凭据不属于当前接入命令，不能跳过 Join Token；将使用本次 Join Token 重新接入。", code=40933, http_status=status.HTTP_409_CONFLICT)
         control_plane_url = SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or detected_base_url.rstrip("/")
         server.desired_agent_version = settings.crawler_agent_version
         if server.lifecycle_status in {"BOOTSTRAPPING", "INSTALLING"}:
