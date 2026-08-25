@@ -5,16 +5,17 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 cp_trap_diagnostics
 bash deploy/scripts/doctor.sh
+bash deploy/scripts/configure-project-build-center.sh .env
 bash deploy/scripts/check-env.sh .env
 cp_require_docker
 cp_warn_cn_mirrors
-mkdir -p data/mysql data/redis data/task-logs data/backups
+mkdir -p data/mysql data/redis data/task-logs data/project-builds data/backups
 if cp_has_sudo; then
   cp_sudo mkdir -p /var/lib/crawler-agent/runs /data/crawler-platform/projects
 else
   mkdir -p /var/lib/crawler-agent/runs /data/crawler-platform/projects 2>/dev/null || cp_die "无法创建 Agent 数据目录，请使用 root/sudo。"
 fi
-APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.92}"
+APP_VERSION_VALUE="$(cp_env_value .env APP_VERSION)"; APP_VERSION_VALUE="${APP_VERSION_VALUE:-1.0.94}"
 AGENT_VERSION_VALUE="$(cp_env_value .env AGENT_AGENT_VERSION)"; AGENT_VERSION_VALUE="${AGENT_VERSION_VALUE:-1.1.2}"
 WEB_PORT_VALUE="$(cp_env_value .env WEB_PORT)"; WEB_PORT_VALUE="${WEB_PORT_VALUE:-80}"
 AGENT_IMAGE_VALUE="${AGENT_IMAGE:-crawler_platform_agent:${AGENT_VERSION_VALUE}}"

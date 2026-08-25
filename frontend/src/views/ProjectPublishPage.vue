@@ -88,8 +88,8 @@
       </div>
       <el-alert v-if="publishSummary" class="result-alert" :type="publishSucceeded ? 'success' : 'warning'" :title="publishSummary" show-icon :closable="false" />
       <div v-if="buildCenterBlocked" class="external-release-card">
-        <div class="external-release-title">当前未登记 Release，平台构建中心尚未就绪</div>
-        <div class="muted">平台构建执行器、代码仓库读取凭据、镜像仓库推送凭据未完成时，本页只能部署已经登记在平台里的不可变 Release；新增 Release 必须等待平台构建中心完成。</div>
+        <div class="external-release-title">当前未登记 Release，平台构建中心需要完成自检</div>
+        <div class="muted">平台会自动启用构建中心、准备构建目录、使用内置 registry 前缀并挂载 Docker Socket；若仍被阻断，请按下方自检项处理具体缺失能力。</div>
         <ol class="next-action-list">
           <li v-for="action in publishNextActions" :key="action">{{ action }}</li>
         </ol>

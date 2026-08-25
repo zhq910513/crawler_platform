@@ -42,6 +42,7 @@ set_env_key APP_BUILD_TIME "$build_time"
 agent_version="$(cp_env_value .env AGENT_AGENT_VERSION)"
 agent_version="${agent_version:-1.1.2}"
 set_env_key AGENT_AGENT_VERSION "$agent_version"
+bash deploy/scripts/configure-project-build-center.sh .env
 
 mkdir -p .release
 cp_runtime_metadata_json "crawler_platform" "$RELEASE_VERSION" "$RELEASE_GIT_COMMIT" "$build_time" > .release/version.json

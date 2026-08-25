@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import status
 from pydantic import ValidationError
@@ -55,7 +56,7 @@ class BuildCenterReadiness:
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.92 implements the smallest safe path: the platform creates the build,
+    v1.0.94 implements and auto-wires the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
     returns a validated manifest for ProjectService to register as a Release.
@@ -72,11 +73,13 @@ class BuildCenterService:
         missing: list[str] = []
         if not settings.crawler_project_build_enabled:
             missing.append("平台构建执行器未启用：CRAWLER_PROJECT_BUILD_ENABLED=1")
-        if not settings.crawler_project_image_repository_prefix.strip():
-            missing.append("镜像仓库命名前缀未配置：CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX")
+        if not self._image_repository_prefix():
+            missing.append("镜像仓库命名前缀无法自动确定：请配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX 或 CRAWLER_AGENT_REGISTRY_PUBLIC_HOST/CRAWLER_CONTROL_PUBLIC_BASE_URL")
         for name, binary in {"Git 命令": "git", "Docker 命令": "docker"}.items():
             if shutil.which(binary) is None:
                 missing.append(f"{name}不可用：{binary}")
+        if shutil.which("docker") is not None and not self._docker_daemon_available():
+            missing.append("Docker daemon 不可访问：请确认 API 容器已挂载 /var/run/docker.sock 且具备访问权限")
         if missing:
             return BuildCenterReadiness(
                 enabled=False,
@@ -86,9 +89,9 @@ class BuildCenterService:
                 missing_items=tuple(missing),
                 message="平台构建中心未就绪：" + "、".join(missing) + "。未登记 Release 不能发布；平台需先具备拉取源码、执行被动构建契约、构建镜像、登记 Release 的能力。",
                 next_actions=(
-                    "在控制端部署环境启用 CRAWLER_PROJECT_BUILD_ENABLED=1。",
-                    "配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX，例如 42.193.226.138:5000/crawler_projects。",
-                    "确保构建执行环境可执行 git、docker，并已按生产要求配置仓库读取和镜像仓库推送权限。",
+                    "执行发布脚本会自动启用 CRAWLER_PROJECT_BUILD_ENABLED=1，并补齐内置 registry 镜像仓库前缀。",
+                    "如自动推导出的 registry 地址不符合执行节点访问路径，可显式配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX。",
+                    "确保构建执行环境可执行 git、docker，且 API 容器已挂载 /var/run/docker.sock。",
                     "构建器调用爬虫项目 scripts/platform_build_contract.sh 生成 manifest，再由平台登记 Release。",
                     "爬虫项目必须提供 scripts/platform_build_contract.sh。",
                 ),
@@ -102,7 +105,8 @@ class BuildCenterService:
             message="平台构建中心已启用：发布时将由平台拉取源码、执行被动构建契约、构建镜像、登记不可变 Release。",
             next_actions=("点击发布项目后，平台将创建 Build Job 并同步完成最小构建发布闭环。",),
             limitations=(
-                "v1.0.92 尚未提供仓库凭据和镜像仓库凭据的数据库模型；私有仓库和 registry 登录需由宿主环境预配置。",
+                "v1.0.94 会在平台发布脚本中自动启用本地构建执行器、构建目录、Docker Socket 和内置 registry 前缀。",
+                "私有仓库凭据和外部 registry 凭据的数据库模型仍属于后续版本；当前优先打通平台内置 registry 的最小闭环。",
                 "当前实现为同步本地 Docker 构建执行器；分布式构建队列和异步日志流属于后续版本。",
             ),
         )
@@ -188,8 +192,9 @@ class BuildCenterService:
         pre_manifest = self._load_manifest(source / ".release" / "crawler_manifest.prebuild.json")
         project_code = pre_manifest.project_code
         image_repo = self._image_repository_for(project_code)
-        tag = f"{image_repo}:{release_version}"
-        self._append_log(job, "DOCKER_BUILD", f"构建镜像：{tag}")
+        push_image_repo = self._push_image_repository_for(project_code, image_repo)
+        tag = f"{push_image_repo}:{release_version}"
+        self._append_log(job, "DOCKER_BUILD", f"构建镜像：{tag}（Release 对外仓库：{image_repo}）")
         self._run(
             job,
             [
@@ -205,7 +210,7 @@ class BuildCenterService:
         )
         self._append_log(job, "DOCKER_PUSH", f"推送镜像：{tag}")
         self._run(job, ["docker", "push", tag], cwd=source)
-        digest = self._resolve_image_digest(job, tag, image_repo)
+        digest = self._resolve_image_digest(job, tag, push_image_repo)
         job.git_commit = git_commit
         job.release_version = release_version
         job.image_repository = image_repo
@@ -247,10 +252,50 @@ class BuildCenterService:
         except (OSError, json.JSONDecodeError, ValidationError) as exc:
             raise AppError("构建产物 manifest 不符合平台协议", code=40097, data={"manifestPath": str(path), "error": str(exc)}) from exc
 
+    def _image_repository_prefix(self) -> str:
+        configured = settings.crawler_project_image_repository_prefix.strip().rstrip("/")
+        if configured:
+            return configured
+        registry_host = settings.crawler_agent_registry_public_host.strip()
+        if not registry_host and settings.control_plane_public_base_url.strip():
+            parsed = urlparse(settings.control_plane_public_base_url.strip())
+            registry_host = parsed.hostname or ""
+        registry_host = registry_host.strip()
+        if registry_host:
+            return f"{registry_host}:{settings.crawler_agent_registry_port}/crawler_projects"
+        if settings.app_env.lower() not in {"production", "prod"}:
+            return f"localhost:{settings.crawler_agent_registry_port}/crawler_projects"
+        return ""
+
+    def _docker_daemon_available(self) -> bool:
+        try:
+            proc = subprocess.run(["docker", "info"], text=True, capture_output=True, timeout=8)
+            return proc.returncode == 0
+        except Exception:
+            return False
+
     def _image_repository_for(self, project_code: str) -> str:
-        prefix = settings.crawler_project_image_repository_prefix.strip().rstrip("/")
+        prefix = self._image_repository_prefix().rstrip("/")
+        if not prefix:
+            raise AppError("镜像仓库命名前缀无法自动确定", code=40099)
         code = re.sub(r"[^A-Za-z0-9_.-]+", "_", project_code or "crawler_project").strip("_") or "crawler_project"
         return f"{prefix}/{code}"
+
+    def _push_image_repository_for(self, project_code: str, public_image_repo: str) -> str:
+        configured = settings.crawler_project_image_repository_prefix.strip()
+        if configured and not self._is_builtin_registry_repository(public_image_repo):
+            return public_image_repo
+        if not self._is_builtin_registry_repository(public_image_repo):
+            return public_image_repo
+        code = re.sub(r"[^A-Za-z0-9_.-]+", "_", project_code or "crawler_project").strip("_") or "crawler_project"
+        return f"localhost:{settings.crawler_agent_registry_port}/crawler_projects/{code}"
+
+    def _is_builtin_registry_repository(self, image_repo: str) -> bool:
+        try:
+            parsed = urlparse("dummy://" + image_repo)
+        except Exception:
+            return False
+        return parsed.port == settings.crawler_agent_registry_port and (parsed.path or "").lstrip("/").startswith("crawler_projects/")
 
     def _resolve_image_digest(self, job: CrawlerProjectBuildJob, tag: str, image_repo: str) -> str:
         output = self._capture(job, ["docker", "image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", tag], cwd=Path(job.workspace_path or "."), allow_empty=True)

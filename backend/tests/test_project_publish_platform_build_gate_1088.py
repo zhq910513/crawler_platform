@@ -40,8 +40,8 @@ def test_project_publish_page_surfaces_platform_build_center_blocker() -> None:
     assert 'buildCenterBlocked' in page
     assert 'PLATFORM_BUILD_CENTER_NOT_READY' in page
     assert '查看外部 CI 接入指引' not in page
-    assert '当前未登记 Release，平台构建中心尚未就绪' in page
-    assert '平台构建执行器、代码仓库读取凭据、镜像仓库推送凭据未完成' in page
+    assert '当前未登记 Release，平台构建中心需要完成自检' in page
+    assert '平台会自动启用构建中心、准备构建目录、使用内置 registry 前缀并挂载 Docker Socket' in page
 
 
 def test_projects_page_no_longer_exposes_active_external_ci_setup() -> None:

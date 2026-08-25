@@ -83,7 +83,7 @@ class Settings(BaseSettings):
 
     # Platform-managed spider project build center. This is deliberately host/env driven
     # until repository and registry credential models are implemented in the control plane.
-    crawler_project_build_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_project_build_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
     crawler_project_build_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_BUILD_ROOT", "/data/project-builds")))
     crawler_project_build_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_BUILD_TIMEOUT_SECONDS", "1800"))
     crawler_project_image_repository_prefix: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX", ""))

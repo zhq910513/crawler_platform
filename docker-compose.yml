@@ -6,7 +6,7 @@ x-backend-common: &backend-common
     args:
       PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
       APT_MIRROR: ${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
-  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-1.0.92}
+  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-1.0.94}
   restart: unless-stopped
   env_file: .env
   environment:
@@ -68,11 +68,16 @@ services:
 
   api:
     <<: *backend-common
+    # 构建中心需要在 API 容器内调用宿主 Docker。Docker Socket 本身等价于宿主 root 权限，
+    # 因此启用平台构建中心时 API 需要具备访问该 Socket 的权限。
+    user: "0:0"
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
     volumes:
       - ./data/task-logs:/data/task-logs
+      - ./data/project-builds:/data/project-builds
+      - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 20s
@@ -101,10 +106,10 @@ services:
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
         APK_MIRROR: ${APK_MIRROR:-mirrors.aliyun.com}
-        APP_VERSION: ${APP_VERSION:-1.0.92}
+        APP_VERSION: ${APP_VERSION:-1.0.94}
         APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
         APP_BUILD_TIME: ${APP_BUILD_TIME:-unknown}
-    image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-1.0.92}
+    image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-1.0.94}
     restart: unless-stopped
     depends_on:
       api: { condition: service_healthy }

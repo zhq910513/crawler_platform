@@ -44,4 +44,4 @@ def test_project_publish_page_legacy_1087_no_external_ci_guide() -> None:
     assert 'getSpiderProjectCicdOneClickGuide' not in page
     assert '查看外部 CI 接入指引' not in page
     assert 'PLATFORM_BUILD_CENTER_NOT_READY' in page
-    assert '平台构建中心尚未就绪' in page
+    assert '平台构建中心需要完成自检' in page

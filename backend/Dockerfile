@@ -18,7 +18,7 @@ RUN if [ -n "$APT_MIRROR" ]; then \
       fi; \
     fi \
     && apt-get update \
-    && apt-get install -y --no-install-recommends curl tzdata \
+    && apt-get install -y --no-install-recommends curl tzdata git docker.io \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 1000 appuser
 
@@ -29,8 +29,8 @@ COPY alembic.ini /app/alembic.ini
 COPY migrations /app/migrations
 COPY app /app/app
 
-RUN mkdir -p /data/task-logs \
-    && chown -R appuser:appuser /app /data/task-logs
+RUN mkdir -p /data/task-logs /data/project-builds \
+    && chown -R appuser:appuser /app /data/task-logs /data/project-builds
 
 USER appuser
 EXPOSE 8000

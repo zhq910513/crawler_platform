@@ -350,8 +350,8 @@ class ProjectService:
         return ""
 
     def _platform_build_capability(self) -> dict:
-        # 平台发布由 crawler_platform 控制。当前仓库没有真实构建执行器、
-        # 代码仓库读取凭据模型和镜像仓库推送凭据模型，因此必须 fail-closed。
+        # 平台发布由 crawler_platform 控制。构建中心由平台部署脚本自动启用本地 Docker 执行器、
+        # 内置 registry 前缀和构建目录；如果 Docker/Git/registry 仍不可用，继续 fail-closed。
         # 爬虫项目只提供被动构建契约，不能要求业务仓库主动 CI/CD 或保存平台 Token。
         return BuildCenterService(self.db).spider_project_readiness().asdict()
 

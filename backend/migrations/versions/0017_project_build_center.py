@@ -45,7 +45,7 @@ def upgrade() -> None:
             sa.Column("image_digest", sa.String(100), nullable=False, server_default=""),
             sa.Column("build_status", sa.String(30), nullable=False, server_default="PENDING"),
             sa.Column("current_stage", sa.String(80), nullable=False, server_default="PENDING"),
-            sa.Column("error_message", sa.Text(), nullable=False, server_default=""),
+            sa.Column("error_message", sa.Text(), nullable=False),
             sa.Column("workspace_path", sa.String(1000), nullable=False, server_default=""),
             sa.Column("manifest_path", sa.String(1000), nullable=False, server_default=""),
             sa.Column("started_at", sa.DateTime(), nullable=True),

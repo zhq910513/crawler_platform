@@ -15,4 +15,5 @@ if [ ! -f .env ]; then
   exit 2
 fi
 chmod 0600 .env 2>/dev/null || true
+bash deploy/scripts/configure-project-build-center.sh .env
 bash deploy/scripts/check-env.sh .env
