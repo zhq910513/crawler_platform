@@ -152,12 +152,16 @@ class ProjectService:
         build_job_payload: dict | None = None
 
         if not project_id and not target.get("discoveredProjectId"):
-            manifest, build_job = BuildCenterService(self.db).build_project_release(
-                user=user,
-                company_id=payload.company_id,
-                repository_url=payload.repository_url,
-                ref_name=payload.ref_name,
-            )
+            try:
+                manifest, build_job = BuildCenterService(self.db).build_project_release(
+                    user=user,
+                    company_id=payload.company_id,
+                    repository_url=payload.repository_url,
+                    ref_name=payload.ref_name,
+                )
+            except AppError as exc:
+                failure = self._build_failure_pipeline(payload, exc)
+                raise AppError(exc.message, code=exc.code, http_status=exc.http_status, data=failure) from exc
             discovered = self.upsert_discovered(ProjectDiscoveryCreate(company_id=payload.company_id, manifest=manifest))
             build_job.discovered_project_id = discovered.discovered_project_id
             build_job.release_id = discovered.latest_release_id
@@ -281,6 +285,29 @@ class ProjectService:
         add_step("deploy", "部署节点", "wait", "版本生成后才能部署节点")
         add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
         return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+
+    def _build_failure_pipeline(self, payload: ProjectPublishPipelineRequest, exc: AppError) -> dict:
+        data = exc.data if isinstance(exc.data, dict) else {}
+        build_job = data.get("buildJob") or {}
+        steps = [
+            {"key": "company", "title": "选择公司", "status": "success", "message": "已完成发布前置校验", "blocking": False, "data": {"companyId": payload.company_id}},
+            {"key": "servers", "title": "选择节点", "status": "success", "message": f"已选择 {len(payload.server_ids)} 个可部署节点", "blocking": False, "data": {"serverIds": payload.server_ids}},
+            {"key": "source", "title": "确认代码仓库", "status": "success", "message": f"仓库地址格式已确认，目标引用：{payload.ref_name or 'main'}", "blocking": False, "data": {"repositoryUrl": payload.repository_url, "refName": payload.ref_name or "main"}},
+            {"key": "build", "title": "构建镜像", "status": "error", "message": exc.message, "blocking": True, "data": data},
+            {"key": "release", "title": "确认可发布版本", "status": "wait", "message": "构建失败，尚未生成不可变 Release", "blocking": False, "data": {}},
+            {"key": "deploy", "title": "部署节点", "status": "wait", "message": "版本生成后才能部署节点", "blocking": False, "data": {}},
+            {"key": "ready", "title": "运行前自检", "status": "wait", "message": "部署指令下发后才会进入自检", "blocking": False, "data": {}},
+        ]
+        return {
+            "pipelineStatus": "BLOCKED",
+            "canContinue": False,
+            "steps": steps,
+            "blockers": [{"step": "build", "title": "构建镜像", "message": exc.message, "data": data}],
+            "target": {"sourceType": "NONE", "repositoryUrl": payload.repository_url, "projectCode": self._repo_name(payload.repository_url)},
+            "form": payload.model_dump(by_alias=True),
+            "buildJob": build_job,
+            "message": exc.message,
+        }
 
     def _publish_pipeline_payload(self, payload: ProjectPublishPipelineRequest, steps: list[dict], blockers: list[dict], target: dict | None = None) -> dict:
         return {

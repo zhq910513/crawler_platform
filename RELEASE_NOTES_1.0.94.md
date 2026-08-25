@@ -1,10 +1,10 @@
-# crawler_platform v1.0.94
+# crawler_platform v1.0.95
 
 ## 目标
 
 修正 v1.0.92/v1.0.93 中“构建中心最小闭环仍要求服务器手动改 `.env`、手动确认 Docker CLI / Socket / registry 前缀”的问题。
 
-v1.0.94 的原则：
+v1.0.95 的原则：
 
 - 平台部署脚本自动启用爬虫项目构建中心。
 - 平台部署脚本自动补齐构建目录和内置 registry 镜像仓库前缀。

@@ -523,7 +523,7 @@ export interface ProjectReleaseDeployRequest { releaseId?: number | null; server
 
 export interface ProjectPublishPipelineRequest { companyId: number; serverIds: number[]; repositoryUrl: string; refName?: string }
 export interface ProjectPublishPipelineStep { key: string; title: string; status: 'wait' | 'process' | 'success' | 'error' | string; message: string; blocking?: boolean; data?: Record<string, unknown> }
-export interface ProjectPublishPipelineResult { pipelineStatus: string; canContinue: boolean; steps: ProjectPublishPipelineStep[]; blockers: Array<Record<string, unknown>>; target?: Record<string, unknown>; form?: Record<string, unknown>; deployment?: ProjectReleaseDeploymentResult; targets?: Array<Record<string, unknown>>; message: string }
+export interface ProjectPublishPipelineResult { pipelineStatus: string; canContinue: boolean; steps: ProjectPublishPipelineStep[]; blockers: Array<Record<string, unknown>>; target?: Record<string, unknown>; form?: Record<string, unknown>; deployment?: ProjectReleaseDeploymentResult; targets?: Array<Record<string, unknown>>; buildJob?: Record<string, unknown>; message: string }
 
 export interface SpiderProjectCicdGuide {
   provider: string

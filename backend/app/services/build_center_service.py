@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services.docker_engine_client import DockerEngineClient, DockerEngineError
 from app.errors import AppError
 from app.models import CrawlerProjectBuildJob, SysUser
 from app.schemas import ProjectManifest
@@ -33,6 +34,7 @@ class BuildCenterReadiness:
     message: str
     next_actions: tuple[str, ...]
     limitations: tuple[str, ...] = ()
+    diagnostics: dict[str, Any] | None = None
 
     def asdict(self) -> dict:
         return {
@@ -48,15 +50,16 @@ class BuildCenterReadiness:
             "buildContractScript": "scripts/platform_build_contract.sh",
             "manifestOutput": ".release/crawler_manifest.json",
             "releaseOwnership": "crawler_platform",
-            "buildExecutor": "LOCAL_DOCKER_SUBPROCESS",
+            "buildExecutor": "LOCAL_DOCKER_CLI_OR_ENGINE_API",
             "credentialMode": "HOST_PRECONFIGURED",
+            "diagnostics": self.diagnostics or {},
         }
 
 
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.94 implements and auto-wires the smallest safe path: the platform creates the build,
+    v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
     returns a validated manifest for ProjectService to register as a Release.
@@ -64,6 +67,10 @@ class BuildCenterService:
     Credential boundaries stay explicit. This code does not invent repository or
     registry credential DB schemas; private repository access and registry auth
     must already be configured on the host/container where this executor runs.
+
+    v1.0.95+ supports Docker Engine API fallback. If the API container has
+    /var/run/docker.sock mounted but does not contain the docker CLI binary, the
+    build center can still build/push/inspect images through the Docker daemon.
     """
 
     def __init__(self, db: Session):
@@ -71,15 +78,18 @@ class BuildCenterService:
 
     def spider_project_readiness(self) -> BuildCenterReadiness:
         missing: list[str] = []
+        diagnostics = self._executor_diagnostics()
         if not settings.crawler_project_build_enabled:
             missing.append("平台构建执行器未启用：CRAWLER_PROJECT_BUILD_ENABLED=1")
         if not self._image_repository_prefix():
             missing.append("镜像仓库命名前缀无法自动确定：请配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX 或 CRAWLER_AGENT_REGISTRY_PUBLIC_HOST/CRAWLER_CONTROL_PUBLIC_BASE_URL")
-        for name, binary in {"Git 命令": "git", "Docker 命令": "docker"}.items():
-            if shutil.which(binary) is None:
-                missing.append(f"{name}不可用：{binary}")
-        if shutil.which("docker") is not None and not self._docker_daemon_available():
-            missing.append("Docker daemon 不可访问：请确认 API 容器已挂载 /var/run/docker.sock 且具备访问权限")
+        if not diagnostics["gitAvailable"]:
+            missing.append("Git 命令不可用：git")
+        if not diagnostics["dockerExecutorAvailable"]:
+            if not diagnostics["dockerCliAvailable"]:
+                missing.append("Docker 执行器不可用：未找到 docker 命令，且 /var/run/docker.sock 不可访问")
+            else:
+                missing.append("Docker daemon 不可访问：请确认 API 容器已挂载 /var/run/docker.sock 且具备访问权限")
         if missing:
             return BuildCenterReadiness(
                 enabled=False,
@@ -91,10 +101,12 @@ class BuildCenterService:
                 next_actions=(
                     "执行发布脚本会自动启用 CRAWLER_PROJECT_BUILD_ENABLED=1，并补齐内置 registry 镜像仓库前缀。",
                     "如自动推导出的 registry 地址不符合执行节点访问路径，可显式配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX。",
-                    "确保构建执行环境可执行 git、docker，且 API 容器已挂载 /var/run/docker.sock。",
+                    "确保构建执行环境可执行 git，并挂载 /var/run/docker.sock；v1.0.95 起 docker CLI 缺失时会自动走 Docker Engine API。",
                     "构建器调用爬虫项目 scripts/platform_build_contract.sh 生成 manifest，再由平台登记 Release。",
+                    "项目发布失败时请先查看返回的 buildJob.buildLogs；v1.0.96 起构建失败会直接带回最近构建日志。",
                     "爬虫项目必须提供 scripts/platform_build_contract.sh。",
                 ),
+                diagnostics=diagnostics,
             )
         return BuildCenterReadiness(
             enabled=True,
@@ -105,10 +117,12 @@ class BuildCenterService:
             message="平台构建中心已启用：发布时将由平台拉取源码、执行被动构建契约、构建镜像、登记不可变 Release。",
             next_actions=("点击发布项目后，平台将创建 Build Job 并同步完成最小构建发布闭环。",),
             limitations=(
-                "v1.0.94 会在平台发布脚本中自动启用本地构建执行器、构建目录、Docker Socket 和内置 registry 前缀。",
+                "v1.0.96 会在平台发布脚本中自动启用本地构建执行器、构建目录、Docker Socket 和内置 registry 前缀。",
+                "当 API 容器没有 docker 命令但已挂载 Docker Socket 时，构建中心会自动使用 Docker Engine API 完成 build/push/inspect。",
                 "私有仓库凭据和外部 registry 凭据的数据库模型仍属于后续版本；当前优先打通平台内置 registry 的最小闭环。",
                 "当前实现为同步本地 Docker 构建执行器；分布式构建队列和异步日志流属于后续版本。",
             ),
+            diagnostics=diagnostics,
         )
 
     def list_jobs(self, company_id: int | None = None, limit: int = 50) -> list[dict]:
@@ -159,7 +173,7 @@ class BuildCenterService:
             job.error_message = exc.message
             self._append_log(job, "FAILED", exc.message)
             self.db.commit()
-            raise
+            raise self._with_job_context(job, exc) from exc
         except Exception as exc:  # pragma: no cover - defensive guard
             job.build_status = "FAILED"
             job.finished_at = utcnow()
@@ -195,21 +209,9 @@ class BuildCenterService:
         push_image_repo = self._push_image_repository_for(project_code, image_repo)
         tag = f"{push_image_repo}:{release_version}"
         self._append_log(job, "DOCKER_BUILD", f"构建镜像：{tag}（Release 对外仓库：{image_repo}）")
-        self._run(
-            job,
-            [
-                "docker", "build",
-                "--build-arg", f"CRAWLER_RELEASE_VERSION={release_version}",
-                "--build-arg", f"CRAWLER_BUILD_SHA={git_commit}",
-                "--build-arg", f"PIP_INDEX_URL={settings.crawler_project_build_pip_index_url}",
-                "-t", tag,
-                ".",
-            ],
-            cwd=source,
-            env={"DOCKER_BUILDKIT": "1"},
-        )
+        self._docker_build(job, source, tag, release_version, git_commit)
         self._append_log(job, "DOCKER_PUSH", f"推送镜像：{tag}")
-        self._run(job, ["docker", "push", tag], cwd=source)
+        self._docker_push(job, tag, push_image_repo, release_version)
         digest = self._resolve_image_digest(job, tag, push_image_repo)
         job.git_commit = git_commit
         job.release_version = release_version
@@ -267,12 +269,41 @@ class BuildCenterService:
             return f"localhost:{settings.crawler_agent_registry_port}/crawler_projects"
         return ""
 
+    def _executor_diagnostics(self) -> dict[str, Any]:
+        docker_client = DockerEngineClient(timeout=8)
+        docker_socket_path = docker_client.socket_path
+        docker_cli_available = shutil.which("docker") is not None
+        docker_daemon_via_cli = self._docker_daemon_available() if docker_cli_available else False
+        docker_engine_api_available = docker_client.is_available()
+        build_root = Path(settings.crawler_project_build_root).expanduser()
+        return {
+            "buildEnabled": bool(settings.crawler_project_build_enabled),
+            "gitAvailable": shutil.which("git") is not None,
+            "dockerCliAvailable": docker_cli_available,
+            "dockerDaemonViaCli": docker_daemon_via_cli,
+            "dockerSocketPath": docker_socket_path,
+            "dockerSocketExists": Path(docker_socket_path).exists(),
+            "dockerEngineApiAvailable": docker_engine_api_available,
+            "dockerExecutorAvailable": bool((docker_cli_available and docker_daemon_via_cli) or docker_engine_api_available),
+            "selectedExecutor": "DOCKER_CLI" if docker_cli_available and docker_daemon_via_cli else ("DOCKER_ENGINE_API" if docker_engine_api_available else "NONE"),
+            "imageRepositoryPrefix": self._image_repository_prefix(),
+            "buildRoot": str(build_root),
+            "buildRootParentExists": build_root.parent.exists(),
+        }
+
+    def _docker_executor_available(self) -> bool:
+        diagnostics = self._executor_diagnostics()
+        return bool(diagnostics["dockerExecutorAvailable"])
+
     def _docker_daemon_available(self) -> bool:
         try:
             proc = subprocess.run(["docker", "info"], text=True, capture_output=True, timeout=8)
             return proc.returncode == 0
         except Exception:
             return False
+
+    def _use_docker_cli(self) -> bool:
+        return shutil.which("docker") is not None and self._docker_daemon_available()
 
     def _image_repository_for(self, project_code: str) -> str:
         prefix = self._image_repository_prefix().rstrip("/")
@@ -297,8 +328,59 @@ class BuildCenterService:
             return False
         return parsed.port == settings.crawler_agent_registry_port and (parsed.path or "").lstrip("/").startswith("crawler_projects/")
 
+    def _docker_build(self, job: CrawlerProjectBuildJob, source: Path, tag: str, release_version: str, git_commit: str) -> None:
+        build_args = {
+            "CRAWLER_RELEASE_VERSION": release_version,
+            "CRAWLER_BUILD_SHA": git_commit,
+            "PIP_INDEX_URL": settings.crawler_project_build_pip_index_url,
+        }
+        if self._use_docker_cli():
+            self._run(
+                job,
+                [
+                    "docker", "build",
+                    "--build-arg", f"CRAWLER_RELEASE_VERSION={release_version}",
+                    "--build-arg", f"CRAWLER_BUILD_SHA={git_commit}",
+                    "--build-arg", f"PIP_INDEX_URL={settings.crawler_project_build_pip_index_url}",
+                    "-t", tag,
+                    ".",
+                ],
+                cwd=source,
+                env={"DOCKER_BUILDKIT": "1"},
+            )
+            return
+        started = time.monotonic()
+        try:
+            output = DockerEngineClient(timeout=settings.crawler_project_build_timeout_seconds).build(source, tag, build_args=build_args, platform=settings.crawler_project_build_platform)
+        except DockerEngineError as exc:
+            raise AppError("Docker Engine API 构建失败", code=40102, data={"image": tag, "error": str(exc)[-4000:]}) from exc
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._append_log(job, "DOCKER_BUILD_API", output[-4000:] or "Docker Engine API build completed", exit_code=0, duration_ms=duration_ms)
+        self.db.commit()
+
+    def _docker_push(self, job: CrawlerProjectBuildJob, tag: str, image_repository: str, release_version: str) -> None:
+        if self._use_docker_cli():
+            self._run(job, ["docker", "push", tag], cwd=Path(job.workspace_path or "."))
+            return
+        started = time.monotonic()
+        try:
+            output = DockerEngineClient(timeout=settings.crawler_project_build_timeout_seconds).push(image_repository, release_version)
+        except DockerEngineError as exc:
+            raise AppError("Docker Engine API 推送失败", code=40103, data={"image": tag, "error": str(exc)[-4000:]}) from exc
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._append_log(job, "DOCKER_PUSH_API", output[-4000:] or "Docker Engine API push completed", exit_code=0, duration_ms=duration_ms)
+        self.db.commit()
+
     def _resolve_image_digest(self, job: CrawlerProjectBuildJob, tag: str, image_repo: str) -> str:
-        output = self._capture(job, ["docker", "image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", tag], cwd=Path(job.workspace_path or "."), allow_empty=True)
+        if self._use_docker_cli():
+            output = self._capture(job, ["docker", "image", "inspect", "--format", "{{range .RepoDigests}}{{println .}}{{end}}", tag], cwd=Path(job.workspace_path or "."), allow_empty=True)
+        else:
+            try:
+                payload = DockerEngineClient(timeout=60).inspect_image(tag)
+            except DockerEngineError as exc:
+                raise AppError("Docker Engine API 读取镜像 digest 失败", code=40104, data={"image": tag, "error": str(exc)[-2000:]}) from exc
+            output = "\n".join(str(item) for item in payload.get("RepoDigests") or [])
+            self._append_log(job, "DOCKER_INSPECT_API", output or "Docker Engine API inspect returned no RepoDigests", exit_code=0)
         for line in output.splitlines():
             line = line.strip()
             if line.startswith(image_repo + "@sha256:"):
@@ -342,6 +424,11 @@ class BuildCenterService:
             "durationMs": duration_ms,
         })
         job.build_logs = logs[-200:]
+
+    def _with_job_context(self, job: CrawlerProjectBuildJob, exc: AppError) -> AppError:
+        original_data = exc.data if isinstance(exc.data, dict) else ({"errorData": exc.data} if exc.data is not None else {})
+        payload = {**original_data, "buildJob": self._job_payload(job)}
+        return AppError(exc.message, code=exc.code, http_status=exc.http_status, data=payload)
 
     @staticmethod
     def _job_payload(job: CrawlerProjectBuildJob) -> dict[str, Any]:

@@ -87,6 +87,21 @@
         </div>
       </div>
       <el-alert v-if="publishSummary" class="result-alert" :type="publishSucceeded ? 'success' : 'warning'" :title="publishSummary" show-icon :closable="false" />
+      <div v-if="publishBuildJob" class="build-job-card">
+        <div class="external-release-title">构建任务诊断</div>
+        <div class="build-job-meta">
+          <span>状态：{{ String(publishBuildJob.buildStatus || publishBuildJob.build_status || '-') }}</span>
+          <span>阶段：{{ String(publishBuildJob.currentStage || publishBuildJob.current_stage || '-') }}</span>
+          <span v-if="publishBuildJob.buildJobId || publishBuildJob.build_job_id">任务ID：{{ publishBuildJob.buildJobId || publishBuildJob.build_job_id }}</span>
+        </div>
+        <div v-if="String(publishBuildJob.errorMessage || publishBuildJob.error_message || '')" class="danger-text">{{ String(publishBuildJob.errorMessage || publishBuildJob.error_message) }}</div>
+        <div v-if="buildLogItems.length" class="build-log-list">
+          <div v-for="(log, index) in buildLogItems" :key="index" class="build-log-item">
+            <div class="build-log-stage">{{ String(log.stage || '-') }}<span v-if="log.durationMs || log.duration_ms"> · {{ log.durationMs || log.duration_ms }}ms</span></div>
+            <pre>{{ String(log.message || '') }}</pre>
+          </div>
+        </div>
+      </div>
       <div v-if="buildCenterBlocked" class="external-release-card">
         <div class="external-release-title">当前未登记 Release，平台构建中心需要完成自检</div>
         <div class="muted">平台会自动启用构建中心、准备构建目录、使用内置 registry 前缀并挂载 Docker Socket；若仍被阻断，请按下方自检项处理具体缺失能力。</div>
@@ -217,6 +232,7 @@ const publishSummary = ref('')
 const publishSucceeded = ref(false)
 const publishTargets = ref<Array<Record<string, unknown>>>([])
 const publishBlockers = ref<Array<Record<string, unknown>>>([])
+const publishBuildJob = ref<Record<string, unknown> | null>(null)
 const pipelineChecked = ref(false)
 const pendingJoinServerCode = ref('')
 const assistantMode = ref<'panel' | 'collapsing' | 'dock' | 'closed'>('panel')
@@ -287,6 +303,10 @@ const buildBlockerData = computed<Record<string, unknown>>(() => {
   return data
 })
 const buildCenterBlocked = computed(() => String(buildBlockerData.value.blockedReasonCode || '') === 'PLATFORM_BUILD_CENTER_NOT_READY')
+const buildLogItems = computed(() => {
+  const logs = (publishBuildJob.value?.buildLogs || publishBuildJob.value?.build_logs || []) as Array<Record<string, unknown>>
+  return logs.slice(-8).reverse()
+})
 const publishNextActions = computed(() => {
   const actions = buildBlockerData.value.nextActions
   if (Array.isArray(actions)) return actions.map((item) => String(item)).filter(Boolean)
@@ -409,6 +429,7 @@ function resetSteps() {
   publishSucceeded.value = false
   publishTargets.value = []
   publishBlockers.value = []
+  publishBuildJob.value = null
   pipelineChecked.value = false
   assistantMode.value = 'panel'
 }
@@ -547,10 +568,11 @@ function validatePublishForm() {
 function pipelinePayload() {
   return { companyId: form.companyId, serverIds: form.serverIds, repositoryUrl: form.repositoryUrl, refName: form.refName || 'main' }
 }
-function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; targets?: Array<Record<string, unknown>>; deployment?: { targets?: Array<Record<string, unknown>> }; message?: string; canContinue?: boolean }) {
+function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; targets?: Array<Record<string, unknown>>; deployment?: { targets?: Array<Record<string, unknown>> }; buildJob?: Record<string, unknown>; message?: string; canContinue?: boolean }) {
   if (result.steps?.length) publishSteps.value = result.steps.map((item) => ({ ...item }))
   publishBlockers.value = result.blockers || []
   publishTargets.value = result.targets || result.deployment?.targets || []
+  publishBuildJob.value = result.buildJob || null
   publishSummary.value = result.message || ''
   publishSucceeded.value = Boolean(result.canContinue && (result.deployment || publishTargets.value.length))
   pipelineChecked.value = true
@@ -596,7 +618,7 @@ async function publishProject() {
     ElMessage.success('发布流水线已进入节点自检阶段')
   } catch (error) {
     const payload = apiErrorData<unknown>(error)
-    const data = payload?.data as { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; message?: string } | undefined
+    const data = payload?.data as { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; buildJob?: Record<string, unknown>; message?: string } | undefined
     if (data?.steps) applyPipelineResult({ ...data, message: payload?.message || data.message })
     const message = payload?.message || (error instanceof Error ? error.message : '发布失败')
     const running = publishSteps.value.find((item) => item.status === 'process')
@@ -772,4 +794,12 @@ onUnmounted(() => {
 .port-list { display: grid; gap: 6px; margin-top: 8px; }
 .port-item { font-size: 12px; color: #334155; }
 .port-item span { display: block; color: #64748b; margin-top: 2px; }
+
+.build-job-card { border: 1px solid #e2e8f0; background: #fff; border-radius: 14px; padding: 12px; margin-top: 12px; }
+.build-job-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 12px; color: #475569; margin-top: 6px; }
+.danger-text { color: #b91c1c; font-size: 12px; margin-top: 8px; }
+.build-log-list { margin-top: 10px; display: grid; gap: 8px; }
+.build-log-item { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 8px; }
+.build-log-stage { font-size: 12px; color: #93c5fd; margin-bottom: 4px; }
+.build-log-item pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font-size: 11px; line-height: 1.5; }
 </style>

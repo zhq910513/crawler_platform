@@ -39,7 +39,7 @@ def test_project_publish_pipeline_can_build_register_import_and_deploy(monkeypat
             repository_url=repository_url,
             ref_name=ref_name,
             project_code='spider_build_1092',
-            release_version='1.0.94',
+            release_version='1.0.96',
             image_repository='registry.local/crawler_projects/spider_build_1092',
             image_digest='sha256:' + '9' * 64,
             git_commit='abcdef123456',
