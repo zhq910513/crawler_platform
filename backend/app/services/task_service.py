@@ -15,6 +15,7 @@ from app.services.audit import write_operation_log
 from app.services.cron_service import CronService
 from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
+from app.services.runtime_resource_service import RuntimeResourceResolver
 
 
 class TaskService:
@@ -99,7 +100,7 @@ class TaskService:
             errors.append(f"账号绑定项 {slot} fixed 模式账号不能为空")
         return errors
 
-    def _validate_task_contract_bindings(self, *, required_configs: list[Any] | None, required_credentials: list[Any] | None, config_bindings: dict[str, Any] | None, credential_bindings: dict[str, Any] | None, target_status: str = "DRAFT") -> None:
+    def _validate_task_contract_bindings(self, *, company_id: int, project_id: int, required_configs: list[Any] | None, required_credentials: list[Any] | None, config_bindings: dict[str, Any] | None, credential_bindings: dict[str, Any] | None, target_status: str = "DRAFT") -> None:
         errors: list[str] = []
         configs = config_bindings or {}
         credentials = credential_bindings or {}
@@ -112,6 +113,21 @@ class TaskService:
                 continue
             if bool(item.get("required", False)) and not self._binding_value_exists(configs.get(slot)):
                 errors.append(f"数据库/配置绑定项 {slot} 必须绑定")
+        if not errors:
+            object_bound_slots = {
+                str(item.get("slot") or "").strip()
+                for item in required_configs or []
+                if isinstance(item, dict) and isinstance(configs.get(str(item.get("slot") or "").strip()), dict)
+            }
+            if object_bound_slots:
+                errors.extend(
+                    RuntimeResourceResolver(self.db).validate_bindings(
+                        company_id=company_id,
+                        project_id=project_id,
+                        required_configs=[item for item in required_configs or [] if isinstance(item, dict) and str(item.get("slot") or "").strip() in object_bound_slots],
+                        config_bindings=configs,
+                    )
+                )
         for item in required_credentials or []:
             if not isinstance(item, dict):
                 continue
@@ -174,6 +190,8 @@ class TaskService:
         if definition.contract_status not in {"OK", "WARNING"}:
             raise AppError("任务定义契约不可用，不能创建正式任务", code=40091, http_status=status.HTTP_400_BAD_REQUEST, data={"contractStatus": definition.contract_status, "contractWarnings": definition.contract_warnings or []})
         self._validate_task_contract_bindings(
+            company_id=project.company_id,
+            project_id=project.project_id,
             required_configs=definition.required_configs or [],
             required_credentials=definition.required_credentials or [],
             config_bindings=payload.config_bindings or {},
@@ -274,6 +292,8 @@ class TaskService:
         if {"config_bindings", "credential_bindings", "status"} & set(updates):
             snapshot = task.contract_snapshot or {}
             self._validate_task_contract_bindings(
+                company_id=task.company_id,
+                project_id=task.project_id,
                 required_configs=snapshot.get("requiredConfigs") or snapshot.get("required_configs") or [],
                 required_credentials=snapshot.get("requiredCredentials") or snapshot.get("required_credentials") or [],
                 config_bindings=updates.get("config_bindings", task.config_bindings or {}),

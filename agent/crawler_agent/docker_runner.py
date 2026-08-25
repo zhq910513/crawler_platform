@@ -535,7 +535,10 @@ class RunExecutor:
             if not isinstance(parameters, dict):
                 parameters = {}
             config_bindings = claim.get("configBindings") or parameters.get("configBindings") or parameters.get("config_bindings") or {}
-            config_payload = {"configBindings": config_bindings, "config_bindings": config_bindings}
+            resolved_configs = claim.get("configs") or claim.get("runtimeConfigs") or parameters.get("configs") or parameters.get("config") or {}
+            if not isinstance(resolved_configs, dict):
+                resolved_configs = {}
+            config_payload = {"configs": resolved_configs, "config": resolved_configs, "configBindings": config_bindings, "config_bindings": config_bindings}
             dirs = self._prepare_project_dirs(claim)
             command = ["python", "-m", "crawler_runtime", "--entrypoint", f"{entry_module}:{entry_function}", "--kwargs-json", json.dumps(parameters, ensure_ascii=False)]
             environment = {

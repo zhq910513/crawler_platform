@@ -16,6 +16,7 @@ from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.agent_command_service import AgentCommandService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status
 from app.services.run_service import build_runtime_parameters
+from app.services.runtime_resource_service import RuntimeResourceResolver
 from app.services.audit import write_operation_log
 from app.utils import utcnow
 
@@ -141,6 +142,25 @@ class AgentService:
         if ps and ps.image_readiness_status in {"OUTDATED", "UNKNOWN", "FAILED"}:
             ps.image_readiness_status = "WARMING"
             ps.disabled_reason = "执行节点已接收任务，正在按 digest 拉取并校验镜像；不会中断该节点已有运行实例"
+        runtime_parameters = run.parameters_snapshot or {}
+        if not isinstance(runtime_parameters, dict):
+            runtime_parameters = {}
+        if "accounts" not in runtime_parameters or not ("configBindings" in runtime_parameters or "config_bindings" in runtime_parameters):
+            runtime_parameters = build_runtime_parameters(task, runtime_parameters)
+            run.parameters_snapshot = runtime_parameters
+        try:
+            runtime_configs = RuntimeResourceResolver(self.db).resolve_for_task(task, runtime_parameters)
+        except AppError as exc:
+            message = str(exc.message if hasattr(exc, "message") else exc)
+            details = getattr(exc, "data", None) or {}
+            safe_set_run_status(run, "FAILED", message=message)
+            set_routing_status(run, "ROUTE_CANCELLED", reason=message)
+            run.failed_stage = "CONFIG"
+            run.error_type = "CONFIGURATION_ERROR"
+            run.error_summary = message[:1000]
+            self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="CONFIG_RESOLVE_FAILED", event_level="ERROR", stage="CONFIG", message=message, payload_json=details if isinstance(details, dict) else {}))
+            self.db.commit()
+            return None
         lease_token = secrets.token_hex(24)
         now = utcnow()
         claimed = self.db.execute(
@@ -177,13 +197,7 @@ class AgentService:
             self.db.rollback()
             return None
         self.db.refresh(run)
-        runtime_parameters = run.parameters_snapshot or {}
-        if not isinstance(runtime_parameters, dict):
-            runtime_parameters = {}
-        if "accounts" not in runtime_parameters or not ("configBindings" in runtime_parameters or "config_bindings" in runtime_parameters):
-            runtime_parameters = build_runtime_parameters(task, runtime_parameters)
-            run.parameters_snapshot = runtime_parameters
-        self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="执行节点已接收运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id}))
+        self.db.add(CrawlerRunEvent(company_id=run.company_id, run_id=run.run_id, event_type="AGENT_CLAIMED", event_level="INFO", stage="ROUTE", message="执行节点已接收运行实例", payload_json={"agentId": agent.agent_id, "serverId": server.server_id, "resolvedConfigSlots": sorted(runtime_configs.keys())}))
         self.db.commit()
         return {
             "runId": run.run_id,
@@ -200,6 +214,8 @@ class AgentService:
             "entryModule": run.entry_module,
             "entryFunction": run.entry_function,
             "parameters": runtime_parameters,
+            "configs": runtime_configs,
+            "runtimeConfigs": runtime_configs,
             "configBindings": runtime_parameters.get("configBindings") or runtime_parameters.get("config_bindings") or {},
             "credentialBindings": runtime_parameters.get("credentialBindings") or runtime_parameters.get("credential_bindings") or {},
             "accounts": runtime_parameters.get("accounts") or {},
