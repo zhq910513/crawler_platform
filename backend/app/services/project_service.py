@@ -316,6 +316,8 @@ class ProjectService:
         if server.capacity_status in {"FULL", "DRAINED", "EXHAUSTED"}:
             return f"负载状态不可用：{server.capacity_status}"
         metrics = server.metrics or {}
+        if not self._server_reported_address(server, metrics):
+            return "节点地址采集中"
         docker_status = str(metrics.get("dockerStatus") or metrics.get("docker_status") or "").upper()
         if docker_status and docker_status not in {"OK", "READY", "UNKNOWN"}:
             return f"容器服务异常：{docker_status}"
@@ -713,6 +715,8 @@ class ProjectService:
         if server.agent.connection_status != "ONLINE" or not server.agent.last_heartbeat_at:
             return "Agent 尚未心跳上线"
         metrics = server.metrics or {}
+        if not self._server_reported_address(server, metrics):
+            return "节点地址采集中"
         docker_status = str(metrics.get("dockerStatus") or metrics.get("docker_status") or "").upper()
         if docker_status and docker_status not in {"OK", "READY", "UNKNOWN"}:
             return f"Docker 状态异常：{docker_status}"
@@ -720,6 +724,23 @@ class ProjectService:
             return "Agent 无 Docker socket 权限"
         if metrics.get("projectDirWritable") is False or metrics.get("project_dir_writable") is False:
             return "项目运行目录不可写"
+        return ""
+
+    @staticmethod
+    def _server_reported_address(server: CrawlerServer, metrics: dict) -> str:
+        for value in (
+            server.server_ip,
+            metrics.get("reportedAddress"),
+            metrics.get("reported_address"),
+            metrics.get("hostIp"),
+            metrics.get("host_ip"),
+            metrics.get("publicIp"),
+            metrics.get("public_ip"),
+            metrics.get("hostname"),
+        ):
+            text = str(value or "").strip()
+            if text:
+                return text
         return ""
 
     def _auto_select_deploy_servers(self, project: CrawlerProject) -> list[CrawlerServer]:

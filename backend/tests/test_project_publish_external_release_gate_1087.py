@@ -22,7 +22,7 @@ def test_project_publish_build_blocker_legacy_1087_asserts_platform_build_center
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'legacy_build_center_1087', 'companyName': '旧测试兼容公司1087'}).json()['data']
     server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'legacy-build-center-srv', 'serverName': '旧测试兼容节点'}).json()['data']
     agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'legacy-build-center-srv', 'serverName': '旧测试兼容节点', 'agentCode': 'legacy-build-center-agent', 'agentName': '旧测试兼容 Agent'}).json()['data']
-    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'legacy-build-center-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0})
+    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'legacy-build-center-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'hostIp': '10.87.0.10'})
 
     payload = {'companyId': company['companyId'], 'serverIds': [server['serverId']], 'repositoryUrl': 'https://github.com/zhq910513/unregistered_spider_1087.git', 'refName': 'main'}
     analysis = client.post('/api/v1/project-publish/pipeline-analyses', headers=headers, json=payload).json()['data']

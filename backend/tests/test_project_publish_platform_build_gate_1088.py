@@ -16,7 +16,7 @@ def test_project_publish_build_blocker_exposes_platform_build_center_path() -> N
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'build_center_1088', 'companyName': '构建中心公司1088'}).json()['data']
     server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'build-center-srv', 'serverName': '构建中心节点'}).json()['data']
     agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'build-center-srv', 'serverName': '构建中心节点', 'agentCode': 'build-center-agent', 'agentName': '构建中心 Agent'}).json()['data']
-    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'build-center-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0})
+    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'build-center-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'hostIp': '10.88.0.10'})
 
     payload = {'companyId': company['companyId'], 'serverIds': [server['serverId']], 'repositoryUrl': 'https://github.com/zhq910513/unregistered_spider_1088.git', 'refName': 'main'}
     analysis = client.post('/api/v1/project-publish/pipeline-analyses', headers=headers, json=payload).json()['data']

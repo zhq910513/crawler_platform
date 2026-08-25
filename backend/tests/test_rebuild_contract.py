@@ -97,7 +97,7 @@ def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: li
     agent_tokens = []
     server_items = []
     for code in server_codes:
-        server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器'}).json()['data']
+        server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器', 'serverIp': f'10.10.{len(server_items) + 1}.10'}).json()['data']
         server_items.append(server)
         agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器', 'agentCode': f'agent-{code}', 'agentName': f'{code} Agent'}).json()['data']
         agent_tokens.append({'serverCode': code, 'headers': {'Authorization': 'Agent ' + agent['agentToken']}})
@@ -1342,7 +1342,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert release_version == '1.0.89'
+    assert release_version == '1.0.90'
     assert "AGENT_IMAGE='crawler_platform_agent:1.1.2'" in env_resp.text
     assert "AGENT_AGENT_VERSION='1.1.2'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
@@ -1744,7 +1744,7 @@ def test_139_project_publish_pipeline_blocks_without_build_center_or_registered_
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'pipe_block', 'companyName': '流水线阻断公司'}).json()['data']
     server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'pipe-block-srv', 'serverName': '流水线服务器'}).json()['data']
     agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'pipe-block-srv', 'serverName': '流水线服务器', 'agentCode': 'pipe-block-agent', 'agentName': '流水线Agent'}).json()['data']
-    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'pipe-block-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0})
+    client.post('/api/v1/agent-heartbeats', headers={'Authorization': 'Agent ' + agent['agentToken']}, json={'agentInstanceId': 'pipe-block-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'hostIp': '10.139.0.10'})
 
     payload = {'companyId': company['companyId'], 'serverIds': [server['serverId']], 'repositoryUrl': 'https://github.com/zhq910513/not_registered_spider.git', 'refName': 'main'}
     analysis = client.post('/api/v1/project-publish/pipeline-analyses', headers=headers, json=payload).json()['data']
@@ -1780,7 +1780,7 @@ def test_139_project_publish_pipeline_deploys_registered_release() -> None:
         discovered_row = db.get(CrawlerDiscoveredProject, project_row.discovered_project_id)
         discovered_row.repository_url = repo_url
         db.commit()
-    client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={'agentInstanceId': 'pipe-ready-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0})
+    client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={'agentInstanceId': 'pipe-ready-inst', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'hostIp': '10.139.0.11'})
 
     payload = {'companyId': company['companyId'], 'serverIds': [server_id], 'repositoryUrl': repo_url, 'refName': 'main'}
     analysis = client.post('/api/v1/project-publish/pipeline-analyses', headers=headers, json=payload).json()['data']

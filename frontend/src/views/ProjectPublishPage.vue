@@ -324,15 +324,18 @@ function resolveControlBaseUrl(value?: string) {
 }
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
-function serverAddressText(server: ServerNode) {
-  return server.serverIp || server.metrics?.reportedAddress || server.metrics?.hostIp || server.metrics?.publicIp || server.metrics?.hostname || '节点地址采集中'
+function resolvedServerAddress(server: ServerNode) {
+  return String(server.serverIp || server.metrics?.reportedAddress || server.metrics?.hostIp || server.metrics?.publicIp || server.metrics?.hostname || '').trim()
 }
+function serverAddressReady(server: ServerNode) { return Boolean(resolvedServerAddress(server)) }
+function serverAddressText(server: ServerNode) { return resolvedServerAddress(server) || '节点地址采集中' }
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; if (status === 'PENDING') return 'info'; return 'warning' }
 function preflightLabel(status: string) { if (status === 'PASS') return '正常'; if (status === 'FAIL') return '已确认异常'; if (status === 'PENDING') return '待场景验证'; return '运行提醒' }
 function serverBlockReason(server: ServerNode) {
   if (server.manageStatus !== 'ENABLED') return '已停用'
   if (!server.agentCode || server.agentConnectionStatus === 'UNREGISTERED') return '待接入'
   if (server.agentConnectionStatus !== 'ONLINE' || !server.agentLastHeartbeatAt) return server.agentConnectionStatus === 'OFFLINE' ? '离线' : '等待首次心跳'
+  if (!serverAddressReady(server)) return '节点地址采集中'
   if (!['HEALTHY', 'DEGRADED'].includes(server.healthStatus)) return server.healthStatus === 'OFFLINE' ? '离线' : '健康异常'
   if (!['NORMAL', 'PRESSURE', 'BUSY'].includes(server.capacityStatus)) return '容量不足'
   const dockerStatus = String(server.metrics?.dockerStatus || '').toUpperCase()
