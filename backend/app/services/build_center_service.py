@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -19,8 +20,9 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.services.docker_engine_client import DockerEngineClient, DockerEngineError
 from app.errors import AppError
+from app.db import SessionLocal
 from app.models import CrawlerProjectBuildJob, SysUser
-from app.schemas import ProjectManifest
+from app.schemas import ProjectDiscoveryCreate, ProjectManifest
 from app.utils import utcnow
 
 
@@ -56,10 +58,32 @@ class BuildCenterReadiness:
         }
 
 
+_ASYNC_BUILD_LOCK = threading.Lock()
+_ASYNC_BUILD_THREADS: set[int] = set()
+
+
+def start_project_release_build_thread(build_job_id: int, user_id: int | None) -> None:
+    with _ASYNC_BUILD_LOCK:
+        if build_job_id in _ASYNC_BUILD_THREADS:
+            return
+        _ASYNC_BUILD_THREADS.add(build_job_id)
+
+    def _target() -> None:
+        try:
+            with SessionLocal() as db:
+                BuildCenterService(db).complete_project_release_build(build_job_id, user_id)
+        finally:
+            with _ASYNC_BUILD_LOCK:
+                _ASYNC_BUILD_THREADS.discard(build_job_id)
+
+    thread = threading.Thread(target=_target, name=f"project-build-{build_job_id}", daemon=True)
+    thread.start()
+
+
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.96 implements and observes the smallest safe path: the platform creates the build,
+    v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
     returns a validated manifest for ProjectService to register as a Release.
@@ -136,6 +160,94 @@ class BuildCenterService:
         if not job:
             raise AppError("构建任务不存在", code=40421, http_status=status.HTTP_404_NOT_FOUND)
         return self._job_payload(job)
+
+    def start_project_release_build(self, user: SysUser, company_id: int, repository_url: str, ref_name: str = "main") -> CrawlerProjectBuildJob:
+        readiness = self.spider_project_readiness()
+        if not readiness.enabled:
+            raise AppError("平台构建中心未就绪", code=40092, data=readiness.asdict())
+        repo = (repository_url or "").strip()
+        ref = (ref_name or "main").strip()
+        existing = self.db.scalar(
+            select(CrawlerProjectBuildJob)
+            .where(
+                CrawlerProjectBuildJob.company_id == company_id,
+                CrawlerProjectBuildJob.repository_url == repo,
+                CrawlerProjectBuildJob.ref_name == ref,
+                CrawlerProjectBuildJob.build_status.in_(("PENDING", "RUNNING")),
+            )
+            .order_by(CrawlerProjectBuildJob.created_at.desc(), CrawlerProjectBuildJob.build_job_id.desc())
+        )
+        if existing:
+            start_project_release_build_thread(existing.build_job_id, getattr(user, "user_id", None))
+            return existing
+        job = CrawlerProjectBuildJob(
+            company_id=company_id,
+            repository_url=repo,
+            ref_name=ref,
+            build_status="PENDING",
+            current_stage="QUEUED",
+            build_metadata={"createdBy": getattr(user, "user_id", None), "readiness": readiness.asdict(), "executionMode": "ASYNC_BACKGROUND_THREAD"},
+        )
+        self._append_log(job, "QUEUED", "构建任务已入队，HTTP 请求将立即返回，后台继续拉取源码和构建镜像。")
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+        start_project_release_build_thread(job.build_job_id, getattr(user, "user_id", None))
+        return job
+
+    def complete_project_release_build(self, build_job_id: int, user_id: int | None = None) -> CrawlerProjectBuildJob:
+        job = self.db.get(CrawlerProjectBuildJob, build_job_id)
+        if not job:
+            raise AppError("构建任务不存在", code=40421, http_status=status.HTTP_404_NOT_FOUND)
+        if job.build_status in {"SUCCEEDED", "FAILED", "CANCELED"}:
+            return job
+        user = self.db.get(SysUser, int(user_id)) if user_id else None
+        try:
+            readiness = self.spider_project_readiness()
+            if not readiness.enabled:
+                raise AppError("平台构建中心未就绪", code=40092, data=readiness.asdict())
+            job.build_status = "RUNNING"
+            job.current_stage = "CREATED"
+            if not job.started_at:
+                job.started_at = utcnow()
+            metadata = dict(job.build_metadata or {})
+            metadata["readinessAtStart"] = readiness.asdict()
+            metadata["workerUserId"] = getattr(user, "user_id", user_id)
+            job.build_metadata = metadata
+            self._append_log(job, "CREATED", "后台构建已启动。")
+            self.db.commit()
+            manifest = self._run_build(job)
+            job.build_status = "SUCCEEDED"
+            job.current_stage = "REGISTER_READY"
+            job.finished_at = utcnow()
+            job.project_code = manifest.project_code
+            job.release_version = manifest.release_version
+            job.image_repository = manifest.image_repository
+            job.image_digest = manifest.image_digest
+            self._append_log(job, "REGISTER_READY", f"构建完成，准备登记 Release：{manifest.project_code} {manifest.release_version} {manifest.image_digest}")
+            self.db.commit()
+            from app.services.project_service import ProjectService
+            discovered = ProjectService(self.db).upsert_discovered(ProjectDiscoveryCreate(company_id=job.company_id, manifest=manifest))
+            job.discovered_project_id = discovered.discovered_project_id
+            job.release_id = discovered.latest_release_id
+            job.current_stage = "REGISTERED"
+            self._append_log(job, "REGISTERED", f"Release 已登记：discoveredProjectId={discovered.discovered_project_id} releaseId={discovered.latest_release_id}")
+            self.db.commit()
+            return job
+        except AppError as exc:
+            job.build_status = "FAILED"
+            job.finished_at = utcnow()
+            job.error_message = exc.message
+            self._append_log(job, "FAILED", exc.message)
+            self.db.commit()
+            return job
+        except Exception as exc:  # pragma: no cover - defensive async guard
+            job.build_status = "FAILED"
+            job.finished_at = utcnow()
+            job.error_message = str(exc)
+            self._append_log(job, "FAILED", str(exc))
+            self.db.commit()
+            return job
 
     def build_project_release(self, user: SysUser, company_id: int, repository_url: str, ref_name: str = "main") -> tuple[ProjectManifest, CrawlerProjectBuildJob]:
         readiness = self.spider_project_readiness()

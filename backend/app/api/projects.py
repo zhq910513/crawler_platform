@@ -48,12 +48,8 @@ def get_project_build_job(build_job_id: int, user: SysUser = Depends(get_current
 def create_project_build_job(payload: ProjectBuildCreate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     from app.services.permissions import require_company_scope
     require_company_scope(user, payload.company_id)
-    manifest, job = BuildCenterService(db).build_project_release(user, payload.company_id, payload.repository_url, payload.ref_name)
-    discovered = ProjectService(db).upsert_discovered(ProjectDiscoveryCreate(company_id=payload.company_id, manifest=manifest))
-    job.discovered_project_id = discovered.discovered_project_id
-    job.release_id = discovered.latest_release_id
-    db.commit()
-    return ok({"buildJob": BuildCenterService(db).get_job(job.build_job_id), "discoveredProject": ProjectService(db)._discovered_payload(discovered)})
+    job = BuildCenterService(db).start_project_release_build(user, payload.company_id, payload.repository_url, payload.ref_name)
+    return ok({"buildJob": BuildCenterService(db).get_job(job.build_job_id), "message": "构建任务已在后台启动；请轮询 /project-builds/{buildJobId} 获取阶段和日志。"})
 
 
 @router.get("/projects")

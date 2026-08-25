@@ -210,7 +210,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
-import { analyzeProjectPublishPipeline, createAgentJoinToken, createCompany, listCompanies, listServers, getSystemSettings, runProjectPublishPipeline } from '../api/platform'
+import { analyzeProjectPublishPipeline, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listServers, getSystemSettings, runProjectPublishPipeline } from '../api/platform'
 import { sessionState } from '../stores/session'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode } from '../types/api'
 import { zh } from '../utils/dictionaries'
@@ -226,6 +226,7 @@ const joinResult = ref<AgentJoinTokenResult | null>(null)
 const installPanelRef = ref<HTMLElement | null>(null)
 const joinOnlineNotified = ref(false)
 let joinPollingTimer: number | undefined
+let publishBuildPollingTimer: number | undefined
 const controlBaseUrl = ref('')
 const controlPreflight = ref<ControlPlanePreflight | null>(null)
 const publishSummary = ref('')
@@ -511,6 +512,22 @@ function stopJoinPolling() {
     joinPollingTimer = undefined
   }
 }
+function stopPublishBuildPolling() {
+  if (publishBuildPollingTimer) {
+    window.clearTimeout(publishBuildPollingTimer)
+    publishBuildPollingTimer = undefined
+  }
+}
+
+function buildJobIdOf(job: Record<string, unknown> | null | undefined): number {
+  const raw = job?.buildJobId || job?.build_job_id
+  const value = Number(raw || 0)
+  return Number.isFinite(value) && value > 0 ? value : 0
+}
+
+function buildJobStatusOf(job: Record<string, unknown> | null | undefined): string {
+  return String(job?.buildStatus || job?.build_status || '').toUpperCase()
+}
 function startJoinPolling() {
   stopJoinPolling()
   joinPollingTimer = window.setInterval(async () => {
@@ -600,21 +617,69 @@ async function inspectPipeline() {
     publishing.value = false
   }
 }
+async function continuePublishAfterBuild() {
+  const result = await runProjectPublishPipeline(pipelinePayload())
+  applyPipelineResult(result)
+  if (result.pipelineStatus === 'BUILDING' && buildJobIdOf(result.buildJob)) {
+    pollPublishBuildJob(buildJobIdOf(result.buildJob))
+    return
+  }
+  publishSucceeded.value = true
+  publishing.value = false
+  ElMessage.success('发布流水线已进入节点自检阶段')
+}
+
+async function pollPublishBuildJob(buildJobId: number) {
+  stopPublishBuildPolling()
+  try {
+    const job = await getProjectBuildJob(buildJobId)
+    publishBuildJob.value = job
+    const status = buildJobStatusOf(job)
+    const buildStep = publishSteps.value.find((item) => item.key === 'build')
+    if (buildStep) {
+      buildStep.status = status === 'FAILED' ? 'error' : (status === 'SUCCEEDED' ? 'success' : 'process')
+      buildStep.message = status === 'SUCCEEDED' ? '构建完成，正在继续发布' : (status === 'FAILED' ? String(job.errorMessage || job.error_message || '构建失败') : `后台构建中：${String(job.currentStage || job.current_stage || 'RUNNING')}`)
+    }
+    if (status === 'SUCCEEDED') {
+      await continuePublishAfterBuild()
+      return
+    }
+    if (status === 'FAILED' || status === 'CANCELED') {
+      publishSummary.value = String(job.errorMessage || job.error_message || '构建失败，请查看构建任务诊断日志')
+      publishing.value = false
+      ElMessage.error(publishSummary.value)
+      return
+    }
+    publishBuildPollingTimer = window.setTimeout(() => { void pollPublishBuildJob(buildJobId) }, 5000)
+  } catch (error) {
+    publishSummary.value = error instanceof Error ? error.message : '构建任务状态读取失败'
+    publishBuildPollingTimer = window.setTimeout(() => { void pollPublishBuildJob(buildJobId) }, 5000)
+  }
+}
+
 async function publishProject() {
   const problem = validatePublishForm()
   if (problem) { ElMessage.warning(problem); return }
+  stopPublishBuildPolling()
   resetSteps()
   publishing.value = true
   try {
     const analysis = await analyzeProjectPublishPipeline(pipelinePayload())
     applyPipelineResult(analysis)
     if (!analysis.canContinue) {
+      publishing.value = false
       ElMessage.warning(analysis.message || '发布流水线存在必须处理项')
       return
     }
     const result = await runProjectPublishPipeline(pipelinePayload())
     applyPipelineResult(result)
+    if (result.pipelineStatus === 'BUILDING' && buildJobIdOf(result.buildJob)) {
+      ElMessage.success('构建任务已启动，页面将自动轮询状态')
+      pollPublishBuildJob(buildJobIdOf(result.buildJob))
+      return
+    }
     publishSucceeded.value = true
+    publishing.value = false
     ElMessage.success('发布流水线已进入节点自检阶段')
   } catch (error) {
     const payload = apiErrorData<unknown>(error)
@@ -626,9 +691,8 @@ async function publishProject() {
     publishSummary.value = message
     pipelineChecked.value = true
     assistantMode.value = 'panel'
-    ElMessage.error(message)
-  } finally {
     publishing.value = false
+    ElMessage.error(message)
   }
 }
 function resetForm() {
@@ -699,6 +763,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (collapseTimer) window.clearTimeout(collapseTimer)
   stopJoinPolling()
+  stopPublishBuildPolling()
   cleanupFloatDragListeners()
 })
 </script>

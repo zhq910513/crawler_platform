@@ -153,7 +153,7 @@ class ProjectService:
 
         if not project_id and not target.get("discoveredProjectId"):
             try:
-                manifest, build_job = BuildCenterService(self.db).build_project_release(
+                build_job = BuildCenterService(self.db).start_project_release_build(
                     user=user,
                     company_id=payload.company_id,
                     repository_url=payload.repository_url,
@@ -162,12 +162,7 @@ class ProjectService:
             except AppError as exc:
                 failure = self._build_failure_pipeline(payload, exc)
                 raise AppError(exc.message, code=exc.code, http_status=exc.http_status, data=failure) from exc
-            discovered = self.upsert_discovered(ProjectDiscoveryCreate(company_id=payload.company_id, manifest=manifest))
-            build_job.discovered_project_id = discovered.discovered_project_id
-            build_job.release_id = discovered.latest_release_id
-            build_job_payload = {column.name: getattr(build_job, column.name) for column in build_job.__table__.columns}
-            self.db.commit()
-            target = self._find_publish_target(payload.company_id, payload.repository_url)
+            return self._build_queued_pipeline(payload, {column.name: getattr(build_job, column.name) for column in build_job.__table__.columns})
 
         if not project_id and target.get("discoveredProjectId"):
             project = self.import_project(user, ProjectImport(discovered_project_id=int(target["discoveredProjectId"]), remark="通过项目发布助手接入", dispatch_mode="LOAD_BALANCE"))
@@ -285,6 +280,27 @@ class ProjectService:
         add_step("deploy", "部署节点", "wait", "版本生成后才能部署节点")
         add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
         return self._publish_pipeline_payload(payload, steps, blockers, target=target)
+
+    def _build_queued_pipeline(self, payload: ProjectPublishPipelineRequest, build_job: dict) -> dict:
+        steps = [
+            {"key": "company", "title": "选择公司", "status": "success", "message": "已完成发布前置校验", "blocking": False, "data": {"companyId": payload.company_id}},
+            {"key": "servers", "title": "选择节点", "status": "success", "message": f"已选择 {len(payload.server_ids)} 个可部署节点", "blocking": False, "data": {"serverIds": payload.server_ids}},
+            {"key": "source", "title": "确认代码仓库", "status": "success", "message": f"仓库地址格式已确认，目标引用：{payload.ref_name or 'main'}", "blocking": False, "data": {"repositoryUrl": payload.repository_url, "refName": payload.ref_name or "main"}},
+            {"key": "build", "title": "构建镜像", "status": "process", "message": f"构建任务已启动：#{build_job.get('build_job_id')}，后台正在拉取源码、构建镜像并登记 Release。", "blocking": False, "data": {"buildJob": build_job, "buildJobId": build_job.get("build_job_id"), "async": True}},
+            {"key": "release", "title": "确认可发布版本", "status": "wait", "message": "等待后台构建完成并登记不可变 Release", "blocking": False, "data": {}},
+            {"key": "deploy", "title": "部署节点", "status": "wait", "message": "Release 登记后将继续向节点下发部署指令", "blocking": False, "data": {}},
+            {"key": "ready", "title": "运行前自检", "status": "wait", "message": "部署指令下发后才会进入自检", "blocking": False, "data": {}},
+        ]
+        return {
+            "pipelineStatus": "BUILDING",
+            "canContinue": False,
+            "steps": steps,
+            "blockers": [],
+            "target": {"sourceType": "BUILD_JOB", "repositoryUrl": payload.repository_url, "projectCode": self._repo_name(payload.repository_url), "buildJobId": build_job.get("build_job_id")},
+            "form": payload.model_dump(by_alias=True),
+            "buildJob": build_job,
+            "message": "构建任务已在后台启动；页面将轮询构建状态，完成后自动继续发布。",
+        }
 
     def _build_failure_pipeline(self, payload: ProjectPublishPipelineRequest, exc: AppError) -> dict:
         data = exc.data if isinstance(exc.data, dict) else {}

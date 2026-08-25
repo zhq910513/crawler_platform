@@ -65,6 +65,7 @@ export function updateProjectServers(projectId: number, payload: ProjectServerPo
 export function deployProjectRelease(projectId: number, payload: ProjectReleaseDeployRequest) { return request<ProjectReleaseDeploymentResult>(http.post(`/projects/${projectId}/release-deployments`, payload)) }
 export function analyzeProjectPublishPipeline(payload: ProjectPublishPipelineRequest) { return request<ProjectPublishPipelineResult>(http.post('/project-publish/pipeline-analyses', payload)) }
 export function runProjectPublishPipeline(payload: ProjectPublishPipelineRequest) { return request<ProjectPublishPipelineResult>(http.post('/project-publish/pipelines', payload)) }
+export function getProjectBuildJob(buildJobId: number) { return request<Record<string, unknown>>(http.get(`/project-builds/${buildJobId}`)) }
 export function listProjectReleaseDeployments(projectId: number) { return request<Record<string, unknown>[]>(http.get(`/projects/${projectId}/release-deployments`)) }
 export function listTaskDefinitions(projectId: number) { return request<TaskDefinition[]>(http.get(`/projects/${projectId}/task-definitions`)) }
 
