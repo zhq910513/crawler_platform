@@ -35,7 +35,7 @@
     </el-dialog>
 
     <el-dialog v-model="secretDialogVisible" title="公司接入密钥" width="620px" :close-on-click-modal="false">
-      <el-alert type="warning" show-icon :closable="false" title="密钥只显示这一次，关闭后无法查看原文；请立即复制到 GitHub 仓库的 CRAWLER_DISCOVERY_TOKEN。" />
+      <el-alert type="warning" show-icon :closable="false" title="密钥只显示这一次，关闭后无法查看原文；当前仅作为平台内部构建中心或受控导入流程使用，不建议写入爬虫项目仓库。" />
       <div class="secret-meta">
         <div><span class="muted">公司：</span>{{ secretCompanyName }}</div>
         <div><span class="muted">编号：</span>{{ secretId || '-' }}</div>

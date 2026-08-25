@@ -1342,7 +1342,7 @@ def test_agent_join_token_bootstrap_and_install_script() -> None:
     assert env_resp.status_code == 200
     assert 'AGENT_AGENT_TOKEN=' in env_resp.text
     assert "AGENT_AGENT_CODE='join-agent-01'" in env_resp.text
-    assert release_version == '1.0.87'
+    assert release_version == '1.0.88'
     assert "AGENT_IMAGE='crawler_platform_agent:1.1.2'" in env_resp.text
     assert "AGENT_AGENT_VERSION='1.1.2'" in env_resp.text
     servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
@@ -1732,7 +1732,8 @@ def test_company_page_can_generate_one_time_discovery_secret() -> None:
     assert 'createDiscoveryToken' in page
     assert '生成接入密钥' in page
     assert '只显示这一次' in page
-    assert 'CRAWLER_DISCOVERY_TOKEN' in page
+    assert 'CRAWLER_DISCOVERY_TOKEN' not in page
+    assert '不建议写入爬虫项目仓库' in page
     assert 'CRAWLER_PLATFORM_DISCOVERY_TOKEN' not in page
 
 
@@ -1754,8 +1755,8 @@ def test_139_project_publish_pipeline_blocks_without_build_center_or_registered_
     assert '平台构建中心未就绪' in analysis['message']
     build_step = next(item for item in analysis['steps'] if item['key'] == 'build')
     assert build_step['data']['blockedReasonCode'] == 'PLATFORM_BUILD_CENTER_NOT_READY'
-    assert build_step['data']['supportedReleasePath'] == 'EXTERNAL_CI_RELEASE_REGISTRATION'
-    assert '/api/v1/discovered-projects' == build_step['data']['registerEndpoint']
+    assert build_step['data']['supportedReleasePath'] == 'PLATFORM_MANAGED_BUILD_RELEASE_REGISTRATION'
+    assert build_step['data']['releaseOwnership'] == 'crawler_platform'
     assert len(build_step['data']['nextActions']) >= 3
 
     run = client.post('/api/v1/project-publish/pipelines', headers=headers, json=payload)

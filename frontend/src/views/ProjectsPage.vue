@@ -6,7 +6,7 @@
       </el-select>
       <span v-else class="muted">当前公司：{{ currentCompanyName }}</span>
       <el-button type="primary" @click="openImport">接入已有版本</el-button>
-      <el-button @click="openCicdGuide">外部构建设置</el-button>
+      <el-button disabled title="平台构建中心尚未就绪">构建中心未就绪</el-button>
       <el-button @click="loadAll">刷新</el-button>
     </div>
 
@@ -86,58 +86,15 @@
       <template #footer><el-button @click="serverPoolVisible = false">取消</el-button><el-button @click="analyzePool">影响分析</el-button><el-button @click="deploySelectedRelease">部署当前版本</el-button><el-button type="primary" @click="savePool">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="cicdGuideVisible" title="爬虫项目 CI 一键初始化" width="980px">
-      <div class="toolbar">
-        <el-select v-model="cicdProvider" style="width: 160px" @change="loadCicdGuide">
-          <el-option label="GitHub Actions" value="github" />
-          <el-option label="GitLab CI" value="gitlab" />
-        </el-select>
-        <el-button @click="loadCicdGuide">刷新配置</el-button>
-      </div>
-      <el-alert v-if="cicdGuide && !cicdGuide.controlPlanePublicBaseUrlConfigured" type="warning" show-icon :closable="false" title="未配置控制端公网回调地址，已临时使用当前浏览器访问地址生成命令；请确认 GitHub Actions 能访问该地址。" />
-      <el-alert v-if="cicdGuide?.controlPlanePublicBaseUrlWarnings?.length" type="warning" show-icon :closable="false" :title="cicdGuide.controlPlanePublicBaseUrlWarnings.join('；')" />
-      <div v-if="cicdGuide" class="cicd-guide">
-        <h4>控制端公网回调地址</h4>
-        <div class="soft-panel">{{ cicdGuide.controlPlanePublicBaseUrl || '未识别' }} <span class="muted">来源：{{ cicdGuide.controlPlanePublicBaseUrlSource || '-' }}</span></div>
-        <h4>Git 仓库 Variables（可选）</h4>
-        <el-table :data="cicdGuide.globalVariables" border size="small">
-          <el-table-column label="名称" prop="name" min-width="220" />
-          <el-table-column label="建议值" prop="value" min-width="260" />
-          <el-table-column label="作用域" prop="scope" width="160" />
-          <el-table-column label="必填" width="80"><template #default="s">{{ s.row.required ? '是' : '否' }}</template></el-table-column>
-        </el-table>
-        <h4>Git 仓库 Secrets</h4>
-        <el-table :data="cicdGuide.globalSecrets" border size="small">
-          <el-table-column label="名称" prop="name" min-width="240" />
-          <el-table-column label="说明" prop="description" min-width="360" />
-          <el-table-column label="必填" width="80"><template #default="s">{{ s.row.required ? '是' : '否' }}</template></el-table-column>
-        </el-table>
-        <h4>项目归属文件：crawler_project.json</h4>
-        <el-table :data="cicdGuide.projectDefaults" border size="small">
-          <el-table-column label="名称" prop="name" min-width="240" />
-          <el-table-column label="建议值" prop="value" min-width="180" />
-          <el-table-column label="说明" prop="description" min-width="360" />
-          <el-table-column label="必填" width="80"><template #default="s">{{ s.row.required ? '是' : '否' }}</template></el-table-column>
-        </el-table>
-        <h4>每个新项目仓库执行一次</h4>
-        <el-input :model-value="cicdGuide.oneLineInitCommand" type="textarea" :rows="2" readonly />
-        <div style="margin-top: 8px"><el-button size="small" @click="copyText(cicdGuide.oneLineInitCommand)">复制初始化命令</el-button></div>
-        <h4>生成文件：{{ cicdGuide.workflowPath }}</h4>
-        <el-input :model-value="cicdGuide.workflowContent" type="textarea" :rows="12" readonly />
-        <h4>提交命令</h4>
-        <el-input :model-value="cicdGuide.commitCommand" readonly />
-        <ul class="muted"><li v-for="note in cicdGuide.notes" :key="note">{{ note }}</li></ul>
-      </div>
-    </el-dialog>
   </div>
 </template>
 <script setup lang="ts">
 import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
-import { analyzeProjectServers, deleteProject, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectReleaseDeployments, listProjectServers, listProjects, listServers, updateProjectServers, getSpiderProjectCicdOneClickGuide } from '../api/platform'
+import { analyzeProjectServers, deleteProject, deployProjectRelease, importProject, listCompanies, listDiscoveredProjects, listProjectReleaseDeployments, listProjectServers, listProjects, listServers, updateProjectServers } from '../api/platform'
 import { sessionState } from '../stores/session'
-import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode, SpiderProjectCicdGuide } from '../types/api'
+import type { Company, DiscoveredProject, Project, ProjectServer, ProjectServerPoolUpdateRequest, ServerNode } from '../types/api'
 import { formatTime, zh } from '../utils/dictionaries'
 
 const route = useRoute()
@@ -156,9 +113,6 @@ const serverPoolVisible = ref(false)
 const serverPoolDraft = ref<Array<ProjectServer & { enabled: boolean }>>([])
 const serverPoolReason = ref('')
 const poolAnalysis = ref<Record<string, unknown> | null>(null)
-const cicdGuideVisible = ref(false)
-const cicdProvider = ref<'github' | 'gitlab'>('github')
-const cicdGuide = ref<SpiderProjectCicdGuide | null>(null)
 const importForm = reactive({ remark: '', dispatchMode: 'LOAD_BALANCE' })
 const currentCompanyName = computed(() => companies.value.find((item) => item.companyId === sessionState.user?.companyId)?.companyName || '归属公司')
 const lastRouteIntent = ref('')
@@ -258,18 +212,7 @@ function poolPayload(): ProjectServerPoolUpdateRequest {
 }
 async function analyzePool() { if (!selectedProject.value) return; poolAnalysis.value = await analyzeProjectServers(selectedProject.value.projectId, poolPayload()) }
 
-async function openCicdGuide() {
-  cicdGuideVisible.value = true
-  await loadCicdGuide()
-}
-async function loadCicdGuide() {
-  const companyId = sessionState.user?.isSuperAdmin ? selectedCompanyId.value : sessionState.user?.companyId || undefined
-  cicdGuide.value = await getSpiderProjectCicdOneClickGuide({ provider: cicdProvider.value, companyId, detectedBaseUrl: window.location.origin })
-}
-async function copyText(value: string) {
-  await navigator.clipboard.writeText(value)
-  ElMessage.success('已复制')
-}
+
 
 async function deploySelectedRelease() {
   if (!selectedProject.value) return

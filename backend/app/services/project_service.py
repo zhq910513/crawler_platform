@@ -36,6 +36,7 @@ from app.services.permissions import is_super_admin, require_company_scope, requ
 from app.services.audit import write_operation_log
 from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.agent_command_service import AgentCommandService
+from app.services.build_center_service import BuildCenterService
 from app.utils import sha256_text, utcnow
 
 
@@ -325,28 +326,10 @@ class ProjectService:
         return ""
 
     def _platform_build_capability(self) -> dict:
-        # 当前仍保持发布助手强流水线与阻断判断。平台构建执行器还未落地，
-        # 因此不能因为某些系统配置存在就放行到“构建成功/可部署”。
-        # 可继续的安全路径是：爬虫项目由外部 CI 构建镜像并向 /discovered-projects 注册 manifest，
-        # 注册成功后本发布助手只负责把已登记 Release 部署到执行节点。
-        missing = ["平台构建执行器", "代码仓库读取凭据", "镜像仓库推送凭据"]
-        return {
-            "enabled": False,
-            "implemented": False,
-            "mode": "EXTERNAL_RELEASE_REQUIRED",
-            "supportedReleasePath": "EXTERNAL_CI_RELEASE_REGISTRATION",
-            "blockedReasonCode": "PLATFORM_BUILD_CENTER_NOT_READY",
-            "missingItems": missing,
-            "message": "平台构建中心未就绪：" + "、".join(missing) + " 尚未完成，未登记 Release 不能在平台内构建。请先走外部 CI 构建镜像并注册项目版本，注册成功后再回到本页发布。",
-            "cicdGuideEndpoint": "/api/v1/cicd/spider-projects/one-click-guide",
-            "registerEndpoint": "/api/v1/discovered-projects",
-            "nextActions": [
-                "在公司管理生成一次性的 CRAWLER_DISCOVERY_TOKEN。",
-                "在 crawler_platform_spiders 仓库执行 CI 初始化脚本或配置 GitHub/GitLab workflow。",
-                "由外部 CI 构建镜像、生成 crawler_manifest.json，并调用 /api/v1/discovered-projects 注册 Release。",
-                "注册成功后回到本页填写同一仓库地址，平台会匹配已登记版本并只执行节点部署。",
-            ],
-        }
+        # 平台发布由 crawler_platform 控制。当前仓库没有真实构建执行器、
+        # 代码仓库读取凭据模型和镜像仓库推送凭据模型，因此必须 fail-closed。
+        # 爬虫项目只提供被动构建契约，不能要求业务仓库主动 CI/CD 或保存平台 Token。
+        return BuildCenterService(self.db).spider_project_readiness().asdict()
 
 
     @staticmethod
