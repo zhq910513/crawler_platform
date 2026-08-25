@@ -87,6 +87,18 @@
         </div>
       </div>
       <el-alert v-if="publishSummary" class="result-alert" :type="publishSucceeded ? 'success' : 'warning'" :title="publishSummary" show-icon :closable="false" />
+      <div v-if="buildCenterBlocked" class="external-release-card">
+        <div class="external-release-title">当前未登记 Release，不能走平台内构建</div>
+        <div class="muted">平台构建执行器、代码仓库读取凭据、镜像仓库推送凭据未完成时，本页只部署已由外部 CI 注册的镜像版本。</div>
+        <ol class="next-action-list">
+          <li v-for="action in publishNextActions" :key="action">{{ action }}</li>
+        </ol>
+        <div class="external-release-actions">
+          <el-button size="small" type="primary" :loading="cicdGuideLoading" @click="openCicdGuide">查看外部 CI 接入指引</el-button>
+          <el-button size="small" @click="router.push('/companies')">去公司管理生成密钥</el-button>
+          <el-button size="small" @click="router.push('/projects')">查看已登记版本</el-button>
+        </div>
+      </div>
       <div v-if="publishTargets.length" class="target-list">
         <div v-for="target in publishTargets" :key="String(target.targetId || target.serverId)" class="target-card">
           <div>
@@ -120,6 +132,36 @@
       </span>
       <span class="dock-pulse" />
     </button>
+
+    <el-drawer v-model="cicdGuideVisible" title="外部 CI 构建并注册 Release" size="640px">
+      <div v-if="cicdGuide" class="cicd-guide">
+        <el-alert type="info" show-icon :closable="false" title="当前安全路径：爬虫项目仓库外部 CI 构建镜像并注册 Release；平台发布页只部署已登记版本。" />
+        <div class="guide-section">
+          <div class="guide-title">一键初始化命令</div>
+          <div class="muted">在 crawler_platform_spiders 仓库根目录执行，脚本会生成 CI 配置和 crawler_project.json。</div>
+          <div class="command-block compact-command">
+            <div class="command-title"><span>{{ cicdGuide.workflowPath }}</span><el-button size="small" @click="copyText(cicdGuide.oneLineInitCommand)">复制</el-button></div>
+            <pre>{{ cicdGuide.oneLineInitCommand }}</pre>
+          </div>
+        </div>
+        <div class="guide-section">
+          <div class="guide-title">必须配置的密钥</div>
+          <div v-for="secret in cicdGuide.globalSecrets" :key="String(secret.name)" class="guide-row">
+            <strong>{{ secret.name }}</strong>
+            <span>{{ secret.description || secret.scope }}</span>
+          </div>
+        </div>
+        <div class="guide-section">
+          <div class="guide-title">注册完成后</div>
+          <ol class="next-action-list">
+            <li>CI 推送镜像并调用 {{ cicdGuide.helperScriptUrl }} 注册 manifest。</li>
+            <li>回到本页填写同一个 Git 仓库地址。</li>
+            <li>平台匹配已登记版本后，构建步骤会显示“已存在外部构建登记版本”。</li>
+          </ol>
+        </div>
+      </div>
+      <el-empty v-else description="暂无 CI 指引" />
+    </el-drawer>
 
     <el-dialog v-model="companyDialogVisible" title="新增公司" width="460px">
       <el-form label-position="top">
@@ -184,9 +226,9 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
-import { analyzeProjectPublishPipeline, createAgentJoinToken, createCompany, listCompanies, listServers, getSystemSettings, runProjectPublishPipeline } from '../api/platform'
+import { analyzeProjectPublishPipeline, createAgentJoinToken, createCompany, getSpiderProjectCicdOneClickGuide, listCompanies, listServers, getSystemSettings, runProjectPublishPipeline } from '../api/platform'
 import { sessionState } from '../stores/session'
-import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode } from '../types/api'
+import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode, SpiderProjectCicdGuide } from '../types/api'
 import { zh } from '../utils/dictionaries'
 
 const router = useRouter()
@@ -207,6 +249,9 @@ const publishSucceeded = ref(false)
 const publishTargets = ref<Array<Record<string, unknown>>>([])
 const publishBlockers = ref<Array<Record<string, unknown>>>([])
 const pipelineChecked = ref(false)
+const cicdGuideVisible = ref(false)
+const cicdGuideLoading = ref(false)
+const cicdGuide = ref<SpiderProjectCicdGuide | null>(null)
 const pendingJoinServerCode = ref('')
 const assistantMode = ref<'panel' | 'collapsing' | 'dock' | 'closed'>('panel')
 const floatPosition = reactive({ x: 0, y: 220 })
@@ -270,6 +315,21 @@ const assistantStatusText = computed(() => {
 })
 const floatStyle = computed(() => ({ left: `${floatPosition.x}px`, top: `${floatPosition.y}px` }))
 const dockProgressStyle = computed(() => ({ '--dock-progress': `${assistantProgressPercent.value * 3.6}deg` }))
+const buildBlockerData = computed<Record<string, unknown>>(() => {
+  const blocker = publishBlockers.value.find((item) => String(item.step || item.key || '') === 'build')
+  const data = (blocker?.data || {}) as Record<string, unknown>
+  return data
+})
+const buildCenterBlocked = computed(() => String(buildBlockerData.value.blockedReasonCode || '') === 'PLATFORM_BUILD_CENTER_NOT_READY')
+const publishNextActions = computed(() => {
+  const actions = buildBlockerData.value.nextActions
+  if (Array.isArray(actions)) return actions.map((item) => String(item)).filter(Boolean)
+  return [
+    '先通过外部 CI 构建镜像并注册 Release。',
+    '注册成功后回到本页填写同一仓库地址。',
+    '平台匹配已登记版本后再部署到执行节点。',
+  ]
+})
 const joinWarning = computed(() => {
   if (!form.companyId) return '请先选择公司。'
   if (!joinForm.serverName.trim()) return '请填写节点名称。'
@@ -527,6 +587,19 @@ function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blo
   pipelineChecked.value = true
   assistantMode.value = 'panel'
 }
+async function openCicdGuide() {
+  if (!form.companyId) { ElMessage.warning('请先选择公司'); return }
+  cicdGuideLoading.value = true
+  try {
+    cicdGuide.value = await getSpiderProjectCicdOneClickGuide({ companyId: form.companyId, provider: 'github', detectedBaseUrl: controlBaseUrl.value })
+    cicdGuideVisible.value = true
+  } catch (error) {
+    const payload = apiErrorData<unknown>(error)
+    ElMessage.error(payload?.message || 'CI 接入指引加载失败')
+  } finally {
+    cicdGuideLoading.value = false
+  }
+}
 async function inspectPipeline() {
   const problem = validatePublishForm()
   if (problem) { ElMessage.warning(problem); return }
@@ -721,6 +794,17 @@ onUnmounted(() => {
 .command-block { margin-top: 12px; }
 .command-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-weight: 700; color: #1f2937; }
 .command-block pre { white-space: pre-wrap; word-break: break-all; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 10px; margin: 0; }
+.external-release-card { margin: 12px 0; padding: 12px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 12px; }
+.external-release-title { font-weight: 800; color: #9a3412; margin-bottom: 4px; }
+.next-action-list { margin: 8px 0 0; padding-left: 18px; color: #475569; font-size: 13px; line-height: 1.7; }
+.external-release-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.cicd-guide { display: grid; gap: 14px; }
+.guide-section { padding: 12px; border: 1px solid #e5e7eb; border-radius: 12px; background: #f8fafc; }
+.guide-title { font-weight: 800; color: #0f172a; margin-bottom: 6px; }
+.guide-row { display: grid; gap: 3px; padding: 8px 0; border-top: 1px solid #e5e7eb; font-size: 13px; }
+.guide-row:first-of-type { border-top: 0; }
+.guide-row span { color: #64748b; }
+.compact-command { margin-top: 8px; }
 @media (max-width: 1280px) { .publish-page.assistant-open { padding-right: 0; } .publish-assistant-panel { position: static; width: auto; max-height: none; margin-top: 14px; } .publish-main { width: 100%; } }
 @media (max-width: 900px) { .assistant-dock { width: 174px; } .publish-form :deep(.el-form-item) { display: block; } .publish-form :deep(.el-form-item__label) { width: auto !important; height: auto; line-height: 1.4; margin-bottom: 6px; } .inline-control { flex-direction: column; align-items: stretch; } .append-action { width: 100%; flex-basis: auto; } .selected-server-pill { align-items: flex-start; flex-direction: column; } }
 
