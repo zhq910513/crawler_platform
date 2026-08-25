@@ -374,6 +374,30 @@ class CrawlerProjectDeploymentTarget(Base, TimestampMixin):
     last_deployed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class CrawlerProjectBuildJob(Base, TimestampMixin):
+    __tablename__ = "crawler_project_build_job"
+    build_job_id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    company_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("crawler_company.company_id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_project.project_id", ondelete="SET NULL"), index=True)
+    discovered_project_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_discovered_project.discovered_project_id", ondelete="SET NULL"), index=True)
+    release_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_project_release.release_id", ondelete="SET NULL"), index=True)
+    repository_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    ref_name: Mapped[str] = mapped_column(String(120), default="main", nullable=False)
+    git_commit: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    project_code: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    release_version: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    image_repository: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    image_digest: Mapped[str] = mapped_column(String(100), default="", index=True, nullable=False)
+    build_status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True, nullable=False)
+    current_stage: Mapped[str] = mapped_column(String(80), default="PENDING", index=True, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    workspace_path: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    manifest_path: Mapped[str] = mapped_column(String(1000), default="", nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    build_logs: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    build_metadata: Mapped[dict[str, Any]] = mapped_column("build_metadata", JSON, default=dict, nullable=False)
+
 class CrawlerImageArtifact(Base, TimestampMixin):
     __tablename__ = "crawler_image_artifact"
     __table_args__ = (UniqueConstraint("image_repository", "image_digest", name="uk_image_repository_digest"),)
@@ -843,6 +867,7 @@ Index("idx_cred_lease_run", CrawlerCredentialLease.run_id, CrawlerCredentialLeas
 Index("idx_server_company_manage", CrawlerServer.company_id, CrawlerServer.manage_status)
 Index("idx_project_company_status", CrawlerProject.company_id, CrawlerProject.status, CrawlerProject.online_status)
 Index("idx_project_server_route", CrawlerProjectServer.project_id, CrawlerProjectServer.scheduling_status, CrawlerProjectServer.image_readiness_status)
+Index("idx_project_build_company_status", CrawlerProjectBuildJob.company_id, CrawlerProjectBuildJob.build_status, CrawlerProjectBuildJob.created_at)
 Index("idx_task_company_status", CrawlerTask.company_id, CrawlerTask.status)
 Index("idx_task_group_limits", CrawlerTask.company_id, CrawlerTask.project_id, CrawlerTask.task_group)
 Index("idx_run_route", CrawlerTaskRun.run_status, CrawlerTaskRun.routing_status, CrawlerTaskRun.server_id)

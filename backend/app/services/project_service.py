@@ -149,6 +149,22 @@ class ProjectService:
             raise AppError("发布流水线前置检查未通过", code=40080, data=analysis)
         target = analysis.get("target") or {}
         project_id = target.get("projectId")
+        build_job_payload: dict | None = None
+
+        if not project_id and not target.get("discoveredProjectId"):
+            manifest, build_job = BuildCenterService(self.db).build_project_release(
+                user=user,
+                company_id=payload.company_id,
+                repository_url=payload.repository_url,
+                ref_name=payload.ref_name,
+            )
+            discovered = self.upsert_discovered(ProjectDiscoveryCreate(company_id=payload.company_id, manifest=manifest))
+            build_job.discovered_project_id = discovered.discovered_project_id
+            build_job.release_id = discovered.latest_release_id
+            build_job_payload = {column.name: getattr(build_job, column.name) for column in build_job.__table__.columns}
+            self.db.commit()
+            target = self._find_publish_target(payload.company_id, payload.repository_url)
+
         if not project_id and target.get("discoveredProjectId"):
             project = self.import_project(user, ProjectImport(discovered_project_id=int(target["discoveredProjectId"]), remark="通过项目发布助手接入", dispatch_mode="LOAD_BALANCE"))
             project_id = project.project_id
@@ -161,8 +177,14 @@ class ProjectService:
         )
         result = self._build_publish_pipeline(user, payload, execute=True)
         result["deployment"] = deploy
+        if build_job_payload:
+            result["buildJob"] = build_job_payload
         result["pipelineStatus"] = "DEPLOYING"
         for step in result["steps"]:
+            if step["key"] == "build" and build_job_payload:
+                step["status"] = "success"
+                step["message"] = f"平台构建完成：{build_job_payload.get('release_version')} / {build_job_payload.get('image_digest')}"
+                step["data"] = {**(step.get("data") or {}), "buildJobId": build_job_payload.get("build_job_id")}
             if step["key"] == "deploy":
                 step["status"] = "success"
                 step["message"] = f"已向 {len(deploy.get('targets') or [])} 个执行节点下发部署指令"
@@ -254,8 +276,8 @@ class ProjectService:
             add_step("deploy", "部署节点", "wait", "版本生成后才能部署节点")
             add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
             return self._publish_pipeline_payload(payload, steps, blockers, target=target)
-        add_step("build", "构建镜像", "process" if execute else "wait", "平台构建中心已配置，下一步将拉取代码并构建镜像", data=build_capability)
-        add_step("release", "确认可发布版本", "wait", "等待构建产物生成不可变版本")
+        add_step("build", "构建镜像", "process" if execute else "wait", "平台构建中心已启用；点击发布项目后将拉取源码、执行被动构建契约、构建镜像并登记 Release", data=build_capability)
+        add_step("release", "确认可发布版本", "wait", "等待平台构建中心生成不可变版本")
         add_step("deploy", "部署节点", "wait", "版本生成后才能部署节点")
         add_step("ready", "运行前自检", "wait", "部署指令下发后才会进入自检")
         return self._publish_pipeline_payload(payload, steps, blockers, target=target)

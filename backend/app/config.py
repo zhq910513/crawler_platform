@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     platform_action_root: str = Field(default_factory=lambda: os.getenv("CRAWLER_PLATFORM_ACTION_ROOT", "/data/projects/crawler_platform"))
     platform_action_timeout_seconds: int = int(os.getenv("CRAWLER_PLATFORM_ACTION_TIMEOUT_SECONDS", "1800"))
 
+    # Platform-managed spider project build center. This is deliberately host/env driven
+    # until repository and registry credential models are implemented in the control plane.
+    crawler_project_build_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_project_build_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_BUILD_ROOT", "/data/project-builds")))
+    crawler_project_build_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_BUILD_TIMEOUT_SECONDS", "1800"))
+    crawler_project_image_repository_prefix: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX", ""))
+    crawler_project_build_platform: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_PLATFORM", "linux/amd64"))
+    crawler_project_build_pip_index_url: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_PIP_INDEX_URL", os.getenv("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")))
+
     @property
     def cors_origin_list(self) -> list[str]:
         value = self.cors_origins.strip()

@@ -7,8 +7,9 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import SysUser
 from app.responses import ok
-from app.schemas import ProjectDiscoveryCreate, ProjectImport, ProjectPublishPipelineRequest, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
+from app.schemas import ProjectBuildCreate, ProjectDiscoveryCreate, ProjectImport, ProjectPublishPipelineRequest, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
 from app.services.project_service import ProjectService
+from app.services.build_center_service import BuildCenterService
 
 router = APIRouter(tags=["项目"])
 
@@ -23,6 +24,36 @@ def create_discovered_project(payload: ProjectDiscoveryCreate, authorization: st
     service = ProjectService(db)
     service.validate_discovery_token(payload, authorization)
     return ok(service.upsert_discovered(payload))
+
+
+@router.get("/project-builds")
+def list_project_build_jobs(company_id: int | None = Query(default=None), limit: int = Query(default=50, ge=1, le=200), user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Build jobs are company scoped. The list endpoint intentionally exposes only
+    # platform-created build records; it does not trigger repository access.
+    if company_id is not None:
+        from app.services.permissions import require_company_scope
+        require_company_scope(user, company_id)
+    return ok(BuildCenterService(db).list_jobs(company_id, limit))
+
+
+@router.get("/project-builds/{build_job_id}")
+def get_project_build_job(build_job_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    payload = BuildCenterService(db).get_job(build_job_id)
+    from app.services.permissions import require_company_scope
+    require_company_scope(user, int(payload["company_id"]))
+    return ok(payload)
+
+
+@router.post("/project-builds")
+def create_project_build_job(payload: ProjectBuildCreate, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    from app.services.permissions import require_company_scope
+    require_company_scope(user, payload.company_id)
+    manifest, job = BuildCenterService(db).build_project_release(user, payload.company_id, payload.repository_url, payload.ref_name)
+    discovered = ProjectService(db).upsert_discovered(ProjectDiscoveryCreate(company_id=payload.company_id, manifest=manifest))
+    job.discovered_project_id = discovered.discovered_project_id
+    job.release_id = discovered.latest_release_id
+    db.commit()
+    return ok({"buildJob": BuildCenterService(db).get_job(job.build_job_id), "discoveredProject": ProjectService(db)._discovered_payload(discovered)})
 
 
 @router.get("/projects")

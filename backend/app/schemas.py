@@ -389,6 +389,11 @@ class AgentBootstrapFailureReport(ApiModel):
     install_report: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProjectBuildCreate(ApiModel):
+    company_id: int
+    repository_url: str = Field(min_length=1, max_length=500)
+    ref_name: str = Field(default="main", min_length=1, max_length=120)
+
 class ProjectReleaseDeploy(ApiModel):
     release_id: int | None = None
     server_ids: list[int] = Field(default_factory=list)
