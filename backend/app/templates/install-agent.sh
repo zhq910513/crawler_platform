@@ -42,6 +42,27 @@ json_escape(){
 env_quote(){
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\''/g")"
 }
+
+
+detect_hostname(){
+  hostname -f 2>/dev/null || hostname 2>/dev/null || echo unknown
+}
+detect_host_ip(){
+  if has_cmd ip; then
+    ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++){if($i=="src"){print $(i+1); exit}}}'
+  elif has_cmd hostname; then
+    hostname -I 2>/dev/null | tr ' ' '\n' | grep -Ev '^(127\.|::1$|$)' | head -n 1
+  fi
+}
+append_host_identity_env(){
+  target_env="$1"
+  tmp_env="$target_env.host-identity.tmp"
+  grep -vE '^(AGENT_HOSTNAME|AGENT_HOST_IP|AGENT_PUBLIC_IP)=' "$target_env" > "$tmp_env" 2>/dev/null || true
+  printf 'AGENT_HOSTNAME=%s\n' "$(env_quote "${HOSTNAME_DETECTED:-}")" >> "$tmp_env"
+  printf 'AGENT_HOST_IP=%s\n' "$(env_quote "${HOST_IP_DETECTED:-}")" >> "$tmp_env"
+  printf 'AGENT_PUBLIC_IP=%s\n' "$(env_quote "${PUBLIC_IP_DETECTED:-}")" >> "$tmp_env"
+  mv "$tmp_env" "$target_env"
+}
 report_join_failure(){
   rc="$?"
   # Preflight / STOP before bootstrap credential is issued should not consume or dirty an invitation.
@@ -194,7 +215,8 @@ resume_existing_agent_credential(){
   set -u
   existing_token="${AGENT_AGENT_TOKEN:-}"
   [ -n "$existing_token" ] || return 1
-  output="$(curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -H "Authorization: Agent $existing_token" "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/resume-env?joinToken=$JOIN_TOKEN" 2>&1)" || {
+  resume_url="$CONTROL_PLANE_URL/api/v1/agent-bootstrap/resume-env?joinToken=$JOIN_TOKEN&hostname=${HOSTNAME_DETECTED:-}&hostIp=${HOST_IP_DETECTED:-}&publicIp=${PUBLIC_IP_DETECTED:-}"
+  output="$(curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -H "Authorization: Agent $existing_token" "$resume_url" 2>&1)" || {
     warn "检测到本机长期 Agent 凭据但无法用于当前接入命令，将尝试使用本次 Join Token 重新接入：${output:-未知错误}"
     return 1
   }
@@ -203,6 +225,7 @@ resume_existing_agent_credential(){
   printf 'AGENT_AGENT_TOKEN=%s
 ' "$(env_quote "$existing_token")" >> "$ENV_FILE.tmp"
   mv "$ENV_FILE.tmp" "$ENV_FILE"
+  append_host_identity_env "$ENV_FILE"
   chmod 600 "$ENV_FILE" 2>/dev/null || true
   requested_agent_image="$AGENT_IMAGE"
   set +u
@@ -262,10 +285,14 @@ else
   warn "当前非 root，采用用户级目录；必须确保当前用户有 Docker 权限。"
 fi
 ENV_FILE="${ENV_FILE:-$AGENT_HOME/.env}"
+HOSTNAME_DETECTED="${AGENT_HOSTNAME:-$(detect_hostname)}"
+HOST_IP_DETECTED="${AGENT_HOST_IP:-$(detect_host_ip || true)}"
+PUBLIC_IP_DETECTED="${AGENT_PUBLIC_IP:-}"
 
 stage "宿主机环境检查"
 if has_cmd uname; then pass "系统：$(uname -srm 2>/dev/null || true)"; else warn "未找到 uname"; fi
 if has_cmd date; then pass "当前时间：$(date '+%F %T %Z' 2>/dev/null || true)"; fi
+if [ -n "$HOST_IP_DETECTED" ]; then pass "宿主机地址已采集：${HOSTNAME_DETECTED:-unknown} / $HOST_IP_DETECTED"; else warn "未自动采集到宿主机默认网卡地址，后续会继续通过 Agent 心跳上报主机名。"; fi
 if has_cmd curl; then pass "curl 已安装"; else fail "curl 未安装，无法连接平台和下载配置"; fi
 
 stage "控制端连通检查"
@@ -337,11 +364,15 @@ stage "换取执行节点配置"
 if [ "${CREDENTIAL_RESUMED:-0}" = "1" ]; then
   pass "已复用长期 Agent 凭据，跳过一次性 Join Token 换取配置"
 else
-  INSTALL_REPORT="{\"installMode\":\"$INSTALL_MODE\",\"pass\":$PASS_COUNT,\"warn\":$WARN_COUNT,\"fail\":$FAIL_COUNT,\"agentHome\":\"$AGENT_HOME\",\"stateDir\":\"$AGENT_STATE_DIR\",\"projectRoot\":\"$AGENT_PROJECT_ROOT\"}"
-  BODY="{\"joinToken\":\"$JOIN_TOKEN\",\"hostname\":\"$(hostname 2>/dev/null || echo unknown)\",\"installReport\":$INSTALL_REPORT}"
+  hostname_json="$(json_escape "${HOSTNAME_DETECTED:-unknown}")"
+  host_ip_json="$(json_escape "${HOST_IP_DETECTED:-}")"
+  public_ip_json="$(json_escape "${PUBLIC_IP_DETECTED:-}")"
+  INSTALL_REPORT="{\"installMode\":\"$INSTALL_MODE\",\"pass\":$PASS_COUNT,\"warn\":$WARN_COUNT,\"fail\":$FAIL_COUNT,\"agentHome\":\"$AGENT_HOME\",\"stateDir\":\"$AGENT_STATE_DIR\",\"projectRoot\":\"$AGENT_PROJECT_ROOT\",\"hostname\":\"$hostname_json\",\"hostIp\":\"$host_ip_json\",\"publicIp\":\"$public_ip_json\"}"
+  BODY="{\"joinToken\":\"$JOIN_TOKEN\",\"hostname\":\"$hostname_json\",\"hostIp\":\"$host_ip_json\",\"publicIp\":\"$public_ip_json\",\"installReport\":$INSTALL_REPORT}"
   if curl -fsS --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" -X POST "$CONTROL_PLANE_URL/api/v1/agent-bootstrap/env" -H 'Content-Type: application/json' --data "$BODY" > "$ENV_FILE.tmp"; then
     TOKEN_CONSUMED="1"
     mv "$ENV_FILE.tmp" "$ENV_FILE"
+    append_host_identity_env "$ENV_FILE"
     tmp_env="$ENV_FILE.platform.tmp"
     grep -v '^AGENT_CONTROL_PLANE_URL=' "$ENV_FILE" > "$tmp_env" 2>/dev/null || true
     printf "AGENT_CONTROL_PLANE_URL='%s'\n" "$CONTROL_PLANE_URL" >> "$tmp_env"

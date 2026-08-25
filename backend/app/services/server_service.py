@@ -424,7 +424,7 @@ class ServerService:
         return {"accepted": True, "invitationStatus": token.invitation_status, "failureStage": token.failure_stage}
 
 
-    def resume_agent_bootstrap_env(self, agent: CrawlerAgent, detected_base_url: str = "", join_token: str = "") -> str:
+    def resume_agent_bootstrap_env(self, agent: CrawlerAgent, detected_base_url: str = "", join_token: str = "", hostname: str = "", host_ip: str = "", public_ip: str = "") -> str:
         self._assert_agent_runtime_target_consistent()
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
@@ -437,6 +437,20 @@ class ServerService:
                 raise AppError("当前接入命令无法匹配本机长期 Agent 凭据，请使用 Join Token 重新接入。", code=40932, http_status=status.HTTP_409_CONFLICT)
             if token.agent_code != agent.agent_code or token.server_code != server.server_code:
                 raise AppError("本机长期 Agent 凭据不属于当前接入命令，不能跳过 Join Token；将使用本次 Join Token 重新接入。", code=40933, http_status=status.HTTP_409_CONFLICT)
+        detected_hostname = (hostname or "").strip()
+        detected_host_ip = (host_ip or "").strip()
+        detected_public_ip = (public_ip or "").strip()
+        if not server.server_ip and (detected_host_ip or detected_public_ip or detected_hostname):
+            server.server_ip = detected_host_ip or detected_public_ip or detected_hostname
+        if detected_hostname or detected_host_ip or detected_public_ip:
+            metrics = dict(server.metrics or {})
+            metrics.update({
+                "hostname": detected_hostname or metrics.get("hostname") or "",
+                "hostIp": detected_host_ip or metrics.get("hostIp") or "",
+                "publicIp": detected_public_ip or metrics.get("publicIp") or "",
+                "reportedAddress": detected_host_ip or detected_public_ip or detected_hostname or server.server_ip or "",
+            })
+            server.metrics = metrics
         control_plane_url = SystemConfigService(self.db).resolve_control_plane_public_base_url(detected_base_url) or detected_base_url.rstrip("/")
         server.desired_agent_version = settings.crawler_agent_version
         if server.lifecycle_status in {"BOOTSTRAPPING", "INSTALLING"}:
@@ -455,6 +469,9 @@ class ServerService:
             "AGENT_IMAGE": settings.crawler_agent_image,
             "AGENT_EXPECTED_IMAGE_DIGEST": settings.crawler_agent_image_digest,
             "AGENT_AGENT_VERSION": settings.crawler_agent_version,
+            "AGENT_HOSTNAME": dict(server.metrics or {}).get("hostname") or server.server_name,
+            "AGENT_HOST_IP": dict(server.metrics or {}).get("hostIp") or server.server_ip,
+            "AGENT_PUBLIC_IP": dict(server.metrics or {}).get("publicIp") or "",
             "AGENT_CAPABILITIES_JSON": __import__('json').dumps(capabilities, ensure_ascii=False),
         }
         return "\n".join(f"{k}={self._quote_env(v)}" for k, v in lines.items()) + "\n"
@@ -462,6 +479,10 @@ class ServerService:
     def consume_agent_join_token(self, payload: AgentBootstrapEnvRequest, detected_base_url: str = "") -> str:
         from sqlalchemy import select
         self._assert_agent_runtime_target_consistent()
+        install_report = payload.install_report if isinstance(payload.install_report, dict) else {}
+        detected_hostname = (payload.hostname or str(install_report.get("hostname") or "")).strip()
+        detected_host_ip = (payload.host_ip or str(install_report.get("hostIp") or install_report.get("host_ip") or "")).strip()
+        detected_public_ip = (payload.public_ip or str(install_report.get("publicIp") or install_report.get("public_ip") or "")).strip()
         token = self.db.scalar(select(CrawlerAgentJoinToken).where(CrawlerAgentJoinToken.token_hash == sha256_text(payload.join_token), CrawlerAgentJoinToken.status == "ACTIVE"))
         if not token:
             raise AppError("Agent 接入令牌无效或已使用", code=40160, http_status=status.HTTP_401_UNAUTHORIZED)
@@ -495,6 +516,16 @@ class ServerService:
             server.capabilities = token.capabilities or server.capabilities or {}
             server.registry_credential_ref = token.registry_credential_ref or server.registry_credential_ref
             server.work_dir = token.work_dir or server.work_dir
+        if not server.server_ip and (detected_host_ip or detected_public_ip or detected_hostname):
+            server.server_ip = detected_host_ip or detected_public_ip or detected_hostname
+        metrics = dict(server.metrics or {})
+        metrics.update({
+            "hostname": detected_hostname or metrics.get("hostname") or "",
+            "hostIp": detected_host_ip or metrics.get("hostIp") or "",
+            "publicIp": detected_public_ip or metrics.get("publicIp") or "",
+            "reportedAddress": detected_host_ip or detected_public_ip or detected_hostname or server.server_ip or "",
+        })
+        server.metrics = metrics
         server.desired_state = "ONLINE"
         server.desired_agent_version = settings.crawler_agent_version
         server.lifecycle_status = "BOOTSTRAPPING"
@@ -538,6 +569,9 @@ class ServerService:
             "AGENT_IMAGE": settings.crawler_agent_image,
             "AGENT_EXPECTED_IMAGE_DIGEST": settings.crawler_agent_image_digest,
             "AGENT_AGENT_VERSION": settings.crawler_agent_version,
+            "AGENT_HOSTNAME": detected_hostname,
+            "AGENT_HOST_IP": detected_host_ip or server.server_ip,
+            "AGENT_PUBLIC_IP": detected_public_ip,
             "AGENT_CAPABILITIES_JSON": __import__('json').dumps(token.capabilities or {}, ensure_ascii=False),
         }
         return "\n".join(f"{k}={self._quote_env(v)}" for k, v in lines.items()) + "\n"

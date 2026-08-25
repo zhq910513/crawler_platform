@@ -16,7 +16,7 @@
       <el-table-column label="执行节点" min-width="220">
         <template #default="s">
           <div class="server-name">{{ s.row.serverName }}</div>
-          <div class="muted">{{ s.row.serverIp || '-' }}</div>
+          <div class="muted">{{ serverAddressText(s.row) }}</div>
         </template>
       </el-table-column>
       <el-table-column label="状态" min-width="130">
@@ -184,6 +184,7 @@ const onboardingNodeOnline = computed(() => Boolean(onboardingJoinedNode.value &
 const onboardingStepActive = computed(() => onboardingNodeOnline.value ? 3 : (joinResult.value ? 2 : 1))
 
 function hasRuntimeMetrics(row: ServerNode) { return Boolean(row.agentLastHeartbeatAt || row.metrics?.lastHeartbeatAt) }
+function serverAddressText(row: ServerNode) { return row.serverIp || row.metrics?.reportedAddress || row.metrics?.hostIp || row.metrics?.publicIp || row.metrics?.hostname || '-' }
 function metricText(value?: number | null) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value))}%` }
 function invitationFor(row: ServerNode) { return joinInvitations.value.find((item) => String(item.server_code || item.serverCode || '') === row.serverCode) }
 function nodeStatusText(row: ServerNode) {

@@ -48,9 +48,17 @@ def create_agent_bootstrap_env(payload: AgentBootstrapEnvRequest, request: Reque
 
 
 @router.get("/agent-bootstrap/resume-env", response_class=PlainTextResponse)
-def resume_agent_bootstrap_env(request: Request, join_token: str = Query("", alias="joinToken"), agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)) -> PlainTextResponse:
+def resume_agent_bootstrap_env(
+    request: Request,
+    join_token: str = Query("", alias="joinToken"),
+    hostname: str = Query(""),
+    host_ip: str = Query("", alias="hostIp"),
+    public_ip: str = Query("", alias="publicIp"),
+    agent: CrawlerAgent = Depends(get_agent),
+    db: Session = Depends(get_db),
+) -> PlainTextResponse:
     detected = SystemConfigService.detected_base_url_from_request(request)
-    content = ServerService(db).resume_agent_bootstrap_env(agent, detected, join_token)
+    content = ServerService(db).resume_agent_bootstrap_env(agent, detected, join_token, hostname=hostname, host_ip=host_ip, public_ip=public_ip)
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
 
 

@@ -377,6 +377,8 @@ class AgentBootstrapPrecheckRequest(ApiModel):
 class AgentBootstrapEnvRequest(ApiModel):
     join_token: str = Field(min_length=10, max_length=500)
     hostname: str = Field(default="", max_length=200)
+    host_ip: str = Field(default="", max_length=128)
+    public_ip: str = Field(default="", max_length=128)
     install_report: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -410,6 +412,9 @@ class AgentHeartbeat(ApiModel):
     agent_image_digest: str = Field(default="", max_length=120)
     agent_image_actual_digest: str = Field(default="", max_length=120)
     protocol_version: str = Field(default="1.0", max_length=30)
+    hostname: str = Field(default="", max_length=200)
+    host_ip: str = Field(default="", max_length=128)
+    public_ip: str = Field(default="", max_length=128)
     health_status: Literal["HEALTHY", "UNHEALTHY", "OFFLINE", "UNKNOWN"] | None = None
     capacity_status: Literal["NORMAL", "BUSY", "FULL", "DRAINED", "EXHAUSTED", "UNKNOWN"] | None = None
     docker_status: str = Field(default="UNKNOWN", max_length=500)

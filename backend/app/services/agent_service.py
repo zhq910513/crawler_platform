@@ -455,7 +455,16 @@ class AgentService:
 
     def _update_server_health_capacity(self, server: CrawlerServer, payload: AgentHeartbeat) -> None:
         metrics = dict(server.metrics or {})
+        hostname = (payload.hostname or "").strip()
+        host_ip = (payload.host_ip or "").strip()
+        public_ip = (payload.public_ip or "").strip()
+        if not server.server_ip and (host_ip or public_ip or hostname):
+            server.server_ip = host_ip or public_ip or hostname
         metrics.update({
+            "hostname": hostname or metrics.get("hostname") or "",
+            "hostIp": host_ip or metrics.get("hostIp") or "",
+            "publicIp": public_ip or metrics.get("publicIp") or "",
+            "reportedAddress": host_ip or public_ip or hostname or server.server_ip or "",
             "dockerStatus": payload.docker_status,
             "cpuUsage": payload.cpu_usage,
             "memoryUsage": payload.memory_usage,

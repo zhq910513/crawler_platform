@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import threading
 import time
 from datetime import datetime
@@ -107,6 +108,9 @@ class AgentApp:
             "agentImageDigest": config.expected_image_digest,
             "agentImageActualDigest": self.current_agent_image_actual_digest(),
             "protocolVersion": config.protocol_version,
+            "hostname": config.hostname or socket.gethostname(),
+            "hostIp": config.host_ip,
+            "publicIp": config.public_ip,
             "healthStatus": health_status,
             "capacityStatus": capacity_status,
             "dockerStatus": docker_status,

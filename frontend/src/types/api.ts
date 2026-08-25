@@ -87,6 +87,10 @@ export interface AgentMetrics {
   projectDataRootWritable?: boolean | null
   dockerSockAccessible?: boolean | null
   timezone?: string
+  hostname?: string
+  hostIp?: string
+  publicIp?: string
+  reportedAddress?: string
   lastError?: string
   lastHeartbeatAt?: string
   decommissionStatus?: string

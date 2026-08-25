@@ -38,8 +38,8 @@
               <div v-if="selectedServerCards.length" class="selected-servers-inline">
                 <div v-for="server in selectedServerCards" :key="server.serverId" class="selected-server-pill">
                   <span class="server-name">{{ server.serverName }}</span>
-                  <span class="muted">{{ server.serverIp || '未上报地址' }}</span>
-                  <el-tag size="small" :type="serverDeployable(server) ? 'success' : 'danger'" effect="light">{{ serverDeployable(server) ? '可部署' : '不可用' }}</el-tag>
+                  <span class="muted">{{ serverAddressText(server) }}</span>
+                  <el-tag size="small" :type="serverDeployable(server) ? 'success' : 'danger'" effect="light">{{ serverDeployable(server) ? '可部署' : serverBlockReason(server) }}</el-tag>
                 </div>
               </div>
             </div>
@@ -298,10 +298,15 @@ function resolveControlBaseUrl(value?: string) {
 }
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
+function serverAddressText(server: ServerNode) {
+  return server.serverIp || server.metrics?.reportedAddress || server.metrics?.hostIp || server.metrics?.publicIp || server.metrics?.hostname || '节点地址采集中'
+}
 function preflightTag(status: string) { if (status === 'PASS') return 'success'; if (status === 'FAIL') return 'danger'; if (status === 'PENDING') return 'info'; return 'warning' }
 function preflightLabel(status: string) { if (status === 'PASS') return '正常'; if (status === 'FAIL') return '已确认异常'; if (status === 'PENDING') return '待场景验证'; return '运行提醒' }
 function serverBlockReason(server: ServerNode) {
   if (server.manageStatus !== 'ENABLED') return '已停用'
+  if (!server.agentCode || server.agentConnectionStatus === 'UNREGISTERED') return '待接入'
+  if (server.agentConnectionStatus !== 'ONLINE' || !server.agentLastHeartbeatAt) return server.agentConnectionStatus === 'OFFLINE' ? '离线' : '等待首次心跳'
   if (!['HEALTHY', 'DEGRADED'].includes(server.healthStatus)) return server.healthStatus === 'OFFLINE' ? '离线' : '健康异常'
   if (!['NORMAL', 'PRESSURE', 'BUSY'].includes(server.capacityStatus)) return '容量不足'
   const dockerStatus = String(server.metrics?.dockerStatus || '').toUpperCase()
