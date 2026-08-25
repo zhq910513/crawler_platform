@@ -101,7 +101,7 @@ def main() -> int:
 
     filenames = sorted(path.name for path in VERSIONS.glob("*.py") if path.name != "__init__.py")
     if filenames != EXPECTED_FILES:
-        print("迁移文件清单不符合当前 1.0.88 发布基线：", file=sys.stderr)
+        print("迁移文件清单不符合当前 1.0.89 发布基线：", file=sys.stderr)
         print(f"  当前：{filenames}", file=sys.stderr)
         print(f"  期望：{EXPECTED_FILES}", file=sys.stderr)
         return 1

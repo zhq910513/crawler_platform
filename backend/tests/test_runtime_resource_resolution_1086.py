@@ -57,7 +57,7 @@ def _base_graph(db, suffix: str):
     release = CrawlerProjectRelease(
         company_id=company.company_id,
         project_id=project.project_id,
-        version='1.0.88',
+        version='1.0.89',
         release_channel='stable',
         image_repository='registry/runtime-resource-project',
         image_digest='sha256:' + ('b' * 64),
@@ -87,7 +87,7 @@ def _base_graph(db, suffix: str):
         agent_code=f'runtime-resource-agent-{suffix}',
         agent_name='运行资源 Agent',
         token_hash=f'runtime-resource-token-hash-{suffix}',
-        agent_version='1.0.88',
+        agent_version='1.0.89',
         protocol_version='1.0',
         agent_instance_id='instance-runtime-86',
         connection_status='ONLINE',
