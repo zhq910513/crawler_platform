@@ -184,7 +184,7 @@ const onboardingNodeOnline = computed(() => Boolean(onboardingJoinedNode.value &
 const onboardingStepActive = computed(() => onboardingNodeOnline.value ? 3 : (joinResult.value ? 2 : 1))
 
 function hasRuntimeMetrics(row: ServerNode) { return Boolean(row.agentLastHeartbeatAt || row.metrics?.lastHeartbeatAt) }
-function serverAddressText(row: ServerNode) { return row.serverIp || row.metrics?.reportedAddress || row.metrics?.hostIp || row.metrics?.publicIp || row.metrics?.hostname || '-' }
+function serverAddressText(row: ServerNode) { return row.serverIp || row.metrics?.reportedAddress || row.metrics?.hostIp || row.metrics?.publicIp || row.metrics?.observedRemoteAddress || row.metrics?.hostname || '-' }
 function metricText(value?: number | null) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value))}%` }
 function isTransientControlPlaneError(value?: string | null) {
   const text = String(value || '').toLowerCase()

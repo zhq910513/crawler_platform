@@ -25,7 +25,7 @@ class AgentService:
     def __init__(self, db: Session):
         self.db = db
 
-    def heartbeat(self, agent: CrawlerAgent, payload: AgentHeartbeat) -> dict:
+    def heartbeat(self, agent: CrawlerAgent, payload: AgentHeartbeat, observed_remote_address: str = "") -> dict:
         server = self.db.get(CrawlerServer, agent.server_id)
         if not server:
             raise AppError("执行节点绑定关系不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
@@ -45,7 +45,7 @@ class AgentService:
         agent.current_runs = payload.current_runs
         normalized_last_error = self._normalize_agent_last_error(payload.last_error)
         agent.last_error = normalized_last_error
-        self._update_server_health_capacity(server, payload, normalized_last_error)
+        self._update_server_health_capacity(server, payload, normalized_last_error, observed_remote_address)
         lifecycle_removed = self._converge_agent_lifecycle(server, agent, payload)
         if lifecycle_removed:
             self.db.commit()
@@ -504,18 +504,21 @@ class AgentService:
             return ""
         return text[:4000]
 
-    def _update_server_health_capacity(self, server: CrawlerServer, payload: AgentHeartbeat, normalized_last_error: str | None = None) -> None:
+    def _update_server_health_capacity(self, server: CrawlerServer, payload: AgentHeartbeat, normalized_last_error: str | None = None, observed_remote_address: str = "") -> None:
         metrics = dict(server.metrics or {})
         hostname = (payload.hostname or "").strip()
         host_ip = (payload.host_ip or "").strip()
         public_ip = (payload.public_ip or "").strip()
-        if not server.server_ip and (host_ip or public_ip or hostname):
-            server.server_ip = host_ip or public_ip or hostname
+        observed_remote_address = (observed_remote_address or "").strip()
+        reported_address = host_ip or public_ip or observed_remote_address or hostname or server.server_ip or ""
+        if not server.server_ip and reported_address:
+            server.server_ip = reported_address
         metrics.update({
             "hostname": hostname or metrics.get("hostname") or "",
             "hostIp": host_ip or metrics.get("hostIp") or "",
             "publicIp": public_ip or metrics.get("publicIp") or "",
-            "reportedAddress": host_ip or public_ip or hostname or server.server_ip or "",
+            "observedRemoteAddress": observed_remote_address or metrics.get("observedRemoteAddress") or "",
+            "reportedAddress": host_ip or public_ip or observed_remote_address or hostname or server.server_ip or "",
             "dockerStatus": payload.docker_status,
             "cpuUsage": payload.cpu_usage,
             "memoryUsage": payload.memory_usage,

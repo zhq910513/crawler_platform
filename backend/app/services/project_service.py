@@ -736,6 +736,8 @@ class ProjectService:
             metrics.get("host_ip"),
             metrics.get("publicIp"),
             metrics.get("public_ip"),
+            metrics.get("observedRemoteAddress"),
+            metrics.get("observed_remote_address"),
             metrics.get("hostname"),
         ):
             text = str(value or "").strip()

@@ -325,7 +325,7 @@ function resolveControlBaseUrl(value?: string) {
 function isRepositoryUrl(value: string) { return /^(https?:\/\/[^\s]+|git@[^\s:]+:[^\s]+)(\.git)?$/i.test(value.trim()) }
 function serverDeployable(server: ServerNode) { return !serverBlockReason(server) }
 function resolvedServerAddress(server: ServerNode) {
-  return String(server.serverIp || server.metrics?.reportedAddress || server.metrics?.hostIp || server.metrics?.publicIp || server.metrics?.hostname || '').trim()
+  return String(server.serverIp || server.metrics?.reportedAddress || server.metrics?.hostIp || server.metrics?.publicIp || server.metrics?.observedRemoteAddress || server.metrics?.hostname || '').trim()
 }
 function serverAddressReady(server: ServerNode) { return Boolean(resolvedServerAddress(server)) }
 function serverAddressText(server: ServerNode) { return resolvedServerAddress(server) || '节点地址采集中' }

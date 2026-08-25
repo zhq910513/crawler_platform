@@ -6,7 +6,7 @@ x-backend-common: &backend-common
     args:
       PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
       APT_MIRROR: ${APT_MIRROR:-mirrors.tuna.tsinghua.edu.cn}
-  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-1.0.90}
+  image: crawler_platform_api:${PLATFORM_IMAGE_TAG:-1.0.91}
   restart: unless-stopped
   env_file: .env
   environment:
@@ -101,10 +101,10 @@ services:
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
         APK_MIRROR: ${APK_MIRROR:-mirrors.aliyun.com}
-        APP_VERSION: ${APP_VERSION:-1.0.90}
+        APP_VERSION: ${APP_VERSION:-1.0.91}
         APP_GIT_COMMIT: ${APP_GIT_COMMIT:-unknown}
         APP_BUILD_TIME: ${APP_BUILD_TIME:-unknown}
-    image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-1.0.90}
+    image: crawler_platform_web:${PLATFORM_IMAGE_TAG:-1.0.91}
     restart: unless-stopped
     depends_on:
       api: { condition: service_healthy }

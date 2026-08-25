@@ -91,6 +91,7 @@ export interface AgentMetrics {
   hostIp?: string
   publicIp?: string
   reportedAddress?: string
+  observedRemoteAddress?: string
   lastError?: string
   lastHeartbeatAt?: string
   decommissionStatus?: string

@@ -44,9 +44,11 @@ def test_control_plane_saves_reported_host_identity_without_new_database_columns
     model_text = _read(ROOT / 'backend' / 'app' / 'models.py')
     assert 'hostname = (payload.hostname or "").strip()' in service_text
     assert 'host_ip = (payload.host_ip or "").strip()' in service_text
-    assert 'if not server.server_ip and (host_ip or public_ip or hostname):' in service_text
-    assert 'server.server_ip = host_ip or public_ip or hostname' in service_text
-    assert '"reportedAddress": host_ip or public_ip or hostname or server.server_ip or ""' in service_text
+    assert 'observed_remote_address = (observed_remote_address or "").strip()' in service_text
+    assert 'reported_address = host_ip or public_ip or observed_remote_address or hostname or server.server_ip or ""' in service_text
+    assert 'server.server_ip = reported_address' in service_text
+    assert '"observedRemoteAddress": observed_remote_address or metrics.get("observedRemoteAddress") or ""' in service_text
+    assert '"reportedAddress": host_ip or public_ip or observed_remote_address or hostname or server.server_ip or ""' in service_text
     assert 'server_ip: Mapped[str] = mapped_column(String(128)' in model_text
     assert 'hostname: Mapped[' not in model_text
     assert 'host_ip: Mapped[' not in model_text
@@ -79,6 +81,8 @@ def test_servers_page_uses_reported_address_fallback_and_types_expose_identity_m
     types_text = _read(TYPES)
     assert 'function serverAddressText(row: ServerNode)' in servers_text
     assert 'row.metrics?.reportedAddress' in servers_text
+    assert 'row.metrics?.observedRemoteAddress' in servers_text
+    assert 'observedRemoteAddress?: string' in types_text
     assert 'hostIp?: string' in types_text
     assert 'publicIp?: string' in types_text
     assert 'reportedAddress?: string' in types_text

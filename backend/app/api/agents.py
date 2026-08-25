@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import ipaddress
+
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -16,14 +18,42 @@ from app.services.container_snapshot_service import ContainerSnapshotService
 router = APIRouter(tags=["Agent"])
 
 
+def _valid_ip_address(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.startswith("[") and "]" in text:
+        text = text[1:text.index("]")]
+    elif text.count(":") == 1 and "." in text:
+        text = text.rsplit(":", 1)[0]
+    try:
+        ipaddress.ip_address(text)
+    except ValueError:
+        return ""
+    return text
+
+
+def _observed_remote_address(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    for item in forwarded_for.split(","):
+        address = _valid_ip_address(item)
+        if address:
+            return address
+    real_ip = _valid_ip_address(request.headers.get("x-real-ip", ""))
+    if real_ip:
+        return real_ip
+    client_host = request.client.host if request.client else ""
+    return _valid_ip_address(client_host)
+
+
 @router.post("/agents")
 def create_agent(payload: AgentRegistration, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
     return ok(ServerService(db).register_agent(user, payload))
 
 
 @router.post("/agent-heartbeats")
-def create_agent_heartbeat(payload: AgentHeartbeat, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)):
-    return ok(AgentService(db).heartbeat(agent, payload))
+def create_agent_heartbeat(payload: AgentHeartbeat, request: Request, agent: CrawlerAgent = Depends(get_agent), db: Session = Depends(get_db)):
+    return ok(AgentService(db).heartbeat(agent, payload, observed_remote_address=_observed_remote_address(request)))
 
 
 @router.post("/agent-run-claims")
