@@ -42,8 +42,9 @@ class AgentService:
         agent.last_heartbeat_at = utcnow()
         agent.capabilities = payload.capabilities
         agent.current_runs = payload.current_runs
-        agent.last_error = payload.last_error
-        self._update_server_health_capacity(server, payload)
+        normalized_last_error = self._normalize_agent_last_error(payload.last_error)
+        agent.last_error = normalized_last_error
+        self._update_server_health_capacity(server, payload, normalized_last_error)
         lifecycle_removed = self._converge_agent_lifecycle(server, agent, payload)
         if lifecycle_removed:
             self.db.commit()
@@ -453,7 +454,41 @@ class AgentService:
             return bool(project.allow_company_pool_fallback)
         return ps.deployment_status == "DEPLOYED" and ps.scheduling_status in {"ENABLED", "RECOVERING"} and ps.image_readiness_status in {"READY", "OUTDATED", "WARMING"}
 
-    def _update_server_health_capacity(self, server: CrawlerServer, payload: AgentHeartbeat) -> None:
+
+    @staticmethod
+    def _is_transient_control_plane_error(message: str) -> bool:
+        text = (message or "").strip()
+        if not text:
+            return False
+        lower = text.lower()
+        if "agent 主循环异常" not in lower and "agent main loop" not in lower:
+            return False
+        network_markers = (
+            "httpconnectionpool",
+            "httpsconnectionpool",
+            "max retries exceeded",
+            "failed to establish a new connection",
+            "connection refused",
+            "connecttimeout",
+            "read timed out",
+            "platformunavailable",
+        )
+        agent_api_markers = (
+            "/api/v1/agent-heartbeats",
+            "/api/v1/agent-run-claims",
+        )
+        return any(marker in lower for marker in network_markers) and any(marker in lower for marker in agent_api_markers)
+
+    @classmethod
+    def _normalize_agent_last_error(cls, message: str) -> str:
+        text = (message or "").strip()
+        if not text:
+            return ""
+        if cls._is_transient_control_plane_error(text):
+            return ""
+        return text[:4000]
+
+    def _update_server_health_capacity(self, server: CrawlerServer, payload: AgentHeartbeat, normalized_last_error: str | None = None) -> None:
         metrics = dict(server.metrics or {})
         hostname = (payload.hostname or "").strip()
         host_ip = (payload.host_ip or "").strip()
@@ -478,7 +513,7 @@ class AgentService:
             "projectDataRootWritable": payload.project_data_root_writable,
             "dockerSockAccessible": payload.docker_sock_accessible,
             "timezone": payload.timezone,
-            "lastError": payload.last_error,
+            "lastError": self._normalize_agent_last_error(payload.last_error) if normalized_last_error is None else normalized_last_error,
             "lastHeartbeatAt": utcnow().isoformat(),
         })
         raw_unhealthy = payload.health_status == "UNHEALTHY" or payload.docker_status.upper() != "OK" or payload.docker_sock_accessible is False

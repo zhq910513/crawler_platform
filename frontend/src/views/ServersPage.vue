@@ -40,8 +40,8 @@
       <el-table-column label="最后心跳" min-width="170">
         <template #default="s">{{ formatTime(s.row.agentLastHeartbeatAt || s.row.metrics?.lastHeartbeatAt) }}</template>
       </el-table-column>
-      <el-table-column label="最近异常" min-width="220">
-        <template #default="s">{{ s.row.metrics?.decommissionError || s.row.metrics?.lastError || s.row.agentLastError || '-' }}</template>
+      <el-table-column label="最近异常" min-width="220" show-overflow-tooltip>
+        <template #default="s">{{ recentErrorText(s.row) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="190" fixed="right">
         <template #default="s">
@@ -186,6 +186,18 @@ const onboardingStepActive = computed(() => onboardingNodeOnline.value ? 3 : (jo
 function hasRuntimeMetrics(row: ServerNode) { return Boolean(row.agentLastHeartbeatAt || row.metrics?.lastHeartbeatAt) }
 function serverAddressText(row: ServerNode) { return row.serverIp || row.metrics?.reportedAddress || row.metrics?.hostIp || row.metrics?.publicIp || row.metrics?.hostname || '-' }
 function metricText(value?: number | null) { return value === null || value === undefined || Number.isNaN(Number(value)) ? '-' : `${Math.round(Number(value))}%` }
+function isTransientControlPlaneError(value?: string | null) {
+  const text = String(value || '').toLowerCase()
+  if (!text) return false
+  return text.includes('agent 主循环异常')
+    && (text.includes('httpconnectionpool') || text.includes('httpsconnectionpool') || text.includes('max retries exceeded') || text.includes('connection refused') || text.includes('failed to establish a new connection') || text.includes('read timed out'))
+    && (text.includes('/api/v1/agent-heartbeats') || text.includes('/api/v1/agent-run-claims'))
+}
+function recentErrorText(row: ServerNode) {
+  const text = row.metrics?.decommissionError || row.metrics?.lastError || row.agentLastError || ''
+  if (row.agentConnectionStatus === 'ONLINE' && isTransientControlPlaneError(text)) return '-'
+  return text || '-'
+}
 function invitationFor(row: ServerNode) { return joinInvitations.value.find((item) => String(item.server_code || item.serverCode || '') === row.serverCode) }
 function nodeStatusText(row: ServerNode) {
   if (row.lifecycleStatus === 'DRAINING') return '维护中'

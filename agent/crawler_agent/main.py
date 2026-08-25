@@ -12,7 +12,7 @@ from typing import Any
 import docker
 import psutil
 
-from crawler_agent.api import PlatformAPI
+from crawler_agent.api import PlatformAPI, PlatformUnavailable, UnauthorizedError
 from crawler_agent.config import config
 from crawler_agent.docker_runner import RunExecutor
 
@@ -236,6 +236,16 @@ class AgentApp:
                             if run_id not in self.futures:
                                 logger.info("claim received run_id=%s project=%s task=%s", run_id, claim.get("projectCode"), claim.get("taskCode"))
                                 self.futures[run_id] = self.pool.submit(self.executor.execute, claim)
+            except PlatformUnavailable as exc:
+                # 控制端临时不可达时，本次失败不会被控制端接收；下一次成功心跳应代表链路已恢复。
+                # 不把 HTTPConnectionPool/Connection refused 这类瞬时网络错误写入 lastError，
+                # 避免节点已在线后控制台仍展示过期的“Agent 主循环异常”。
+                logger.warning("control plane temporarily unavailable: %s", exc)
+                time.sleep(max(5, config.poll_interval_seconds))
+            except UnauthorizedError as exc:
+                self.last_error = f"Agent 鉴权失败：{exc}"[:4000]
+                logger.exception("agent authorization failed")
+                time.sleep(max(5, config.poll_interval_seconds))
             except Exception as exc:
                 self.last_error = f"Agent 主循环异常：{exc}"[:4000]
                 logger.exception("agent loop failed")
