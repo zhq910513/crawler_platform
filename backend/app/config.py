@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     crawler_project_build_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
     crawler_project_build_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_BUILD_ROOT", "/data/project-builds")))
     crawler_project_build_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_BUILD_TIMEOUT_SECONDS", "1800"))
+    crawler_project_build_stale_seconds: int = int(os.getenv("CRAWLER_PROJECT_BUILD_STALE_SECONDS", str(max(1860, int(os.getenv("CRAWLER_PROJECT_BUILD_TIMEOUT_SECONDS", "1800")) + 60))))
     crawler_project_image_repository_prefix: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX", ""))
     crawler_project_build_platform: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_PLATFORM", "linux/amd64"))
     crawler_project_build_pip_index_url: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_PIP_INDEX_URL", os.getenv("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")))

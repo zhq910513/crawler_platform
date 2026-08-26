@@ -94,6 +94,10 @@
           <span>阶段：{{ String(publishBuildJob.currentStage || publishBuildJob.current_stage || '-') }}</span>
           <span v-if="publishBuildJob.buildJobId || publishBuildJob.build_job_id">任务ID：{{ publishBuildJob.buildJobId || publishBuildJob.build_job_id }}</span>
         </div>
+        <div class="build-job-actions">
+          <el-button v-if="canCancelCurrentBuild" size="small" :loading="buildActionLoading" @click="cancelCurrentBuild">取消构建</el-button>
+          <el-button v-if="canRetryCurrentBuild" size="small" type="primary" :loading="buildActionLoading" @click="retryCurrentBuild">重新构建</el-button>
+        </div>
         <div v-if="String(publishBuildJob.errorMessage || publishBuildJob.error_message || '')" class="danger-text">{{ String(publishBuildJob.errorMessage || publishBuildJob.error_message) }}</div>
         <div v-if="buildLogItems.length" class="build-log-list">
           <div v-for="(log, index) in buildLogItems" :key="index" class="build-log-item">
@@ -210,7 +214,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
-import { analyzeProjectPublishPipeline, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listServers, getSystemSettings, runProjectPublishPipeline } from '../api/platform'
+import { analyzeProjectPublishPipeline, cancelProjectBuildJob, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listServers, getSystemSettings, retryProjectBuildJob, runProjectPublishPipeline } from '../api/platform'
 import { sessionState } from '../stores/session'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode } from '../types/api'
 import { zh } from '../utils/dictionaries'
@@ -222,6 +226,7 @@ const selectedServerCards = ref<ServerNode[]>([])
 const companyDialogVisible = ref(false)
 const serverDrawerVisible = ref(false)
 const publishing = ref(false)
+const buildActionLoading = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
 const installPanelRef = ref<HTMLElement | null>(null)
 const joinOnlineNotified = ref(false)
@@ -528,6 +533,15 @@ function buildJobIdOf(job: Record<string, unknown> | null | undefined): number {
 function buildJobStatusOf(job: Record<string, unknown> | null | undefined): string {
   return String(job?.buildStatus || job?.build_status || '').toUpperCase()
 }
+
+const canCancelCurrentBuild = computed(() => {
+  const status = buildJobStatusOf(publishBuildJob.value)
+  return Boolean(buildJobIdOf(publishBuildJob.value) && (status === 'PENDING' || status === 'RUNNING'))
+})
+const canRetryCurrentBuild = computed(() => {
+  const status = buildJobStatusOf(publishBuildJob.value)
+  return Boolean(buildJobIdOf(publishBuildJob.value) && (status === 'FAILED' || status === 'CANCELED'))
+})
 function startJoinPolling() {
   stopJoinPolling()
   joinPollingTimer = window.setInterval(async () => {
@@ -654,6 +668,48 @@ async function pollPublishBuildJob(buildJobId: number) {
   } catch (error) {
     publishSummary.value = error instanceof Error ? error.message : '构建任务状态读取失败'
     publishBuildPollingTimer = window.setTimeout(() => { void pollPublishBuildJob(buildJobId) }, 5000)
+  }
+}
+
+
+async function cancelCurrentBuild() {
+  const buildJobId = buildJobIdOf(publishBuildJob.value)
+  if (!buildJobId) return
+  buildActionLoading.value = true
+  try {
+    const result = await cancelProjectBuildJob(buildJobId, '用户在发布助手中取消构建')
+    publishBuildJob.value = result.buildJob
+    stopPublishBuildPolling()
+    publishing.value = false
+    publishSummary.value = result.message || '构建任务已取消'
+    const buildStep = publishSteps.value.find((item) => item.key === 'build')
+    if (buildStep) { buildStep.status = 'error'; buildStep.message = publishSummary.value }
+    ElMessage.warning(publishSummary.value)
+  } catch (error) {
+    const payload = apiErrorData<unknown>(error)
+    ElMessage.error(payload?.message || '取消构建失败')
+  } finally {
+    buildActionLoading.value = false
+  }
+}
+
+async function retryCurrentBuild() {
+  const buildJobId = buildJobIdOf(publishBuildJob.value)
+  if (!buildJobId) return
+  buildActionLoading.value = true
+  try {
+    const result = await retryProjectBuildJob(buildJobId)
+    publishBuildJob.value = result.buildJob
+    publishing.value = true
+    publishSummary.value = result.message || '构建任务已重新入队'
+    const nextId = buildJobIdOf(result.buildJob)
+    if (nextId) pollPublishBuildJob(nextId)
+    ElMessage.success(publishSummary.value)
+  } catch (error) {
+    const payload = apiErrorData<unknown>(error)
+    ElMessage.error(payload?.message || '重新构建失败')
+  } finally {
+    buildActionLoading.value = false
   }
 }
 
@@ -867,4 +923,5 @@ onUnmounted(() => {
 .build-log-item { background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 8px; }
 .build-log-stage { font-size: 12px; color: #93c5fd; margin-bottom: 4px; }
 .build-log-item pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font-size: 11px; line-height: 1.5; }
+.build-job-actions { display: flex; gap: 8px; margin: 8px 0; }
 </style>

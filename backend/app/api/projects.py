@@ -7,7 +7,7 @@ from app.db import get_db
 from app.deps import get_current_user
 from app.models import SysUser
 from app.responses import ok
-from app.schemas import ProjectBuildCreate, ProjectDiscoveryCreate, ProjectImport, ProjectPublishPipelineRequest, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
+from app.schemas import ProjectBuildCancel, ProjectBuildCreate, ProjectDiscoveryCreate, ProjectImport, ProjectPublishPipelineRequest, ProjectReleaseDeploy, ProjectServerPoolUpdate, ProjectUpdate
 from app.services.project_service import ProjectService
 from app.services.build_center_service import BuildCenterService
 
@@ -50,6 +50,26 @@ def create_project_build_job(payload: ProjectBuildCreate, user: SysUser = Depend
     require_company_scope(user, payload.company_id)
     job = BuildCenterService(db).start_project_release_build(user, payload.company_id, payload.repository_url, payload.ref_name)
     return ok({"buildJob": BuildCenterService(db).get_job(job.build_job_id), "message": "构建任务已在后台启动；请轮询 /project-builds/{buildJobId} 获取阶段和日志。"})
+
+
+@router.post("/project-builds/{build_job_id}/cancellations")
+def cancel_project_build_job(build_job_id: int, payload: ProjectBuildCancel | None = None, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    service = BuildCenterService(db)
+    current = service.get_job(build_job_id, auto_resume=False)
+    from app.services.permissions import require_company_scope
+    require_company_scope(user, int(current["company_id"]))
+    job = service.cancel_project_release_build(build_job_id, payload.reason if payload else "用户取消构建")
+    return ok({"buildJob": service.get_job(job.build_job_id), "message": "构建任务已取消；如需再次发布可点击重新构建。"})
+
+
+@router.post("/project-builds/{build_job_id}/retries")
+def retry_project_build_job(build_job_id: int, user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
+    service = BuildCenterService(db)
+    current = service.get_job(build_job_id, auto_resume=False)
+    from app.services.permissions import require_company_scope
+    require_company_scope(user, int(current["company_id"]))
+    job = service.retry_project_release_build(user, build_job_id)
+    return ok({"buildJob": service.get_job(job.build_job_id), "message": "构建任务已重新入队；页面将继续轮询新任务状态。"})
 
 
 @router.get("/projects")

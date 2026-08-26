@@ -83,7 +83,7 @@ def start_project_release_build_thread(build_job_id: int, user_id: int | None) -
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
+    v1.0.98 adds recovery/cancel/retry lifecycle controls for async build jobs. v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
     returns a validated manifest for ProjectService to register as a Release.
@@ -155,11 +155,101 @@ class BuildCenterService:
             stmt = stmt.where(CrawlerProjectBuildJob.company_id == company_id)
         return [self._job_payload(row) for row in self.db.scalars(stmt).all()]
 
-    def get_job(self, build_job_id: int) -> dict:
+    def get_job(self, build_job_id: int, auto_resume: bool = True) -> dict:
         job = self.db.get(CrawlerProjectBuildJob, build_job_id)
         if not job:
             raise AppError("构建任务不存在", code=40421, http_status=status.HTTP_404_NOT_FOUND)
+        if auto_resume:
+            self._refresh_job_execution(job, trigger="GET")
         return self._job_payload(job)
+
+    def cancel_project_release_build(self, build_job_id: int, reason: str = "用户取消构建") -> CrawlerProjectBuildJob:
+        job = self.db.get(CrawlerProjectBuildJob, build_job_id)
+        if not job:
+            raise AppError("构建任务不存在", code=40421, http_status=status.HTTP_404_NOT_FOUND)
+        if job.build_status in {"SUCCEEDED", "FAILED", "CANCELED"}:
+            return job
+        job.build_status = "CANCELED"
+        job.current_stage = "CANCELED"
+        job.finished_at = utcnow()
+        job.error_message = reason or "用户取消构建"
+        metadata = dict(job.build_metadata or {})
+        metadata["cancelReason"] = job.error_message
+        metadata["canceledAt"] = utcnow().isoformat()
+        job.build_metadata = metadata
+        self._append_log(job, "CANCELED", job.error_message)
+        self.db.commit()
+        return job
+
+    def retry_project_release_build(self, user: SysUser, build_job_id: int) -> CrawlerProjectBuildJob:
+        original = self.db.get(CrawlerProjectBuildJob, build_job_id)
+        if not original:
+            raise AppError("构建任务不存在", code=40421, http_status=status.HTTP_404_NOT_FOUND)
+        if original.build_status in {"PENDING", "RUNNING"}:
+            start_project_release_build_thread(original.build_job_id, getattr(user, "user_id", None))
+            return original
+        readiness = self.spider_project_readiness()
+        if not readiness.enabled:
+            raise AppError("平台构建中心未就绪", code=40092, data=readiness.asdict())
+        job = CrawlerProjectBuildJob(
+            company_id=original.company_id,
+            repository_url=original.repository_url,
+            ref_name=original.ref_name,
+            build_status="PENDING",
+            current_stage="QUEUED",
+            build_metadata={
+                "createdBy": getattr(user, "user_id", None),
+                "retryOfBuildJobId": original.build_job_id,
+                "readiness": readiness.asdict(),
+                "executionMode": "ASYNC_BACKGROUND_THREAD",
+            },
+        )
+        self._append_log(job, "QUEUED", f"构建任务已重新入队，来源任务 #{original.build_job_id}。")
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+        start_project_release_build_thread(job.build_job_id, getattr(user, "user_id", None))
+        return job
+
+    def resume_recoverable_builds(self, limit: int = 20) -> list[int]:
+        stmt = (
+            select(CrawlerProjectBuildJob)
+            .where(CrawlerProjectBuildJob.build_status.in_(("PENDING", "RUNNING")))
+            .order_by(CrawlerProjectBuildJob.updated_at.asc(), CrawlerProjectBuildJob.build_job_id.asc())
+            .limit(max(1, min(limit, 100)))
+        )
+        resumed: list[int] = []
+        for job in self.db.scalars(stmt).all():
+            if self._refresh_job_execution(job, trigger="RECOVERY"):
+                resumed.append(job.build_job_id)
+        return resumed
+
+    def _refresh_job_execution(self, job: CrawlerProjectBuildJob, trigger: str = "GET") -> bool:
+        if job.build_status == "PENDING":
+            metadata = dict(job.build_metadata or {})
+            metadata["lastResumeTrigger"] = trigger
+            metadata["lastResumeCheckAt"] = utcnow().isoformat()
+            job.build_metadata = metadata
+            self._append_log(job, "QUEUED", "检测到待执行构建任务，已确认后台执行器。")
+            self.db.commit()
+            start_project_release_build_thread(job.build_job_id, None)
+            return True
+        if job.build_status == "RUNNING" and job.build_job_id not in _ASYNC_BUILD_THREADS:
+            updated = job.updated_at or job.started_at or job.created_at
+            age_seconds = max(0.0, (utcnow() - updated).total_seconds())
+            if age_seconds >= settings.crawler_project_build_stale_seconds:
+                metadata = dict(job.build_metadata or {})
+                metadata["autoRequeuedAt"] = utcnow().isoformat()
+                metadata["autoRequeueTrigger"] = trigger
+                metadata["autoRequeueReason"] = f"RUNNING job stale for {int(age_seconds)}s"
+                metadata["autoRequeueCount"] = int(metadata.get("autoRequeueCount") or 0) + 1
+                job.build_metadata = metadata
+                job.build_status = "PENDING"
+                self._append_log(job, "REQUEUED", "检测到构建任务执行器可能已中断，已自动重新入队；平台将从源码拉取开始重新构建。")
+                self.db.commit()
+                start_project_release_build_thread(job.build_job_id, None)
+                return True
+        return False
 
     def start_project_release_build(self, user: SysUser, company_id: int, repository_url: str, ref_name: str = "main") -> CrawlerProjectBuildJob:
         readiness = self.spider_project_readiness()
@@ -235,6 +325,17 @@ class BuildCenterService:
             self.db.commit()
             return job
         except AppError as exc:
+            try:
+                self.db.refresh(job)
+            except Exception:
+                pass
+            if job.build_status == "CANCELED":
+                job.finished_at = job.finished_at or utcnow()
+                if not job.error_message:
+                    job.error_message = "构建任务已取消"
+                self._append_log(job, "CANCELED", job.error_message)
+                self.db.commit()
+                return job
             job.build_status = "FAILED"
             job.finished_at = utcnow()
             job.error_message = exc.message
@@ -302,8 +403,10 @@ class BuildCenterService:
             shutil.rmtree(workspace)
         source.parent.mkdir(parents=True, exist_ok=True)
         job.workspace_path = str(workspace)
+        self._raise_if_canceled(job)
         self._append_log(job, "CLONE", f"拉取源码：{job.repository_url} ref={job.ref_name}")
         self._run(job, ["git", "clone", "--depth", "1", "--branch", job.ref_name, job.repository_url, str(source)], cwd=workspace.parent)
+        self._raise_if_canceled(job)
         git_commit = self._capture(job, ["git", "rev-parse", "--short=12", "HEAD"], cwd=source)
         release_version = self._read_release_version(source)
         self._append_log(job, "CONTRACT", "执行爬虫项目被动构建契约 scripts/platform_build_contract.sh")
@@ -315,6 +418,7 @@ class BuildCenterService:
             "OUTPUT_MANIFEST": ".release/crawler_manifest.prebuild.json",
         }
         self._run(job, ["bash", "scripts/platform_build_contract.sh"], cwd=source, env=env)
+        self._raise_if_canceled(job)
         pre_manifest = self._load_manifest(source / ".release" / "crawler_manifest.prebuild.json")
         project_code = pre_manifest.project_code
         image_repo = self._image_repository_for(project_code)
@@ -322,8 +426,10 @@ class BuildCenterService:
         tag = f"{push_image_repo}:{release_version}"
         self._append_log(job, "DOCKER_BUILD", f"构建镜像：{tag}（Release 对外仓库：{image_repo}）")
         self._docker_build(job, source, tag, release_version, git_commit)
+        self._raise_if_canceled(job)
         self._append_log(job, "DOCKER_PUSH", f"推送镜像：{tag}")
         self._docker_push(job, tag, push_image_repo, release_version)
+        self._raise_if_canceled(job)
         digest = self._resolve_image_digest(job, tag, push_image_repo)
         job.git_commit = git_commit
         job.release_version = release_version
@@ -340,12 +446,21 @@ class BuildCenterService:
             "OUTPUT_MANIFEST": ".release/crawler_manifest.json",
         }
         self._run(job, ["bash", "scripts/platform_build_contract.sh"], cwd=source, env=final_env)
+        self._raise_if_canceled(job)
         manifest_path = source / ".release" / "crawler_manifest.json"
         job.manifest_path = str(manifest_path)
         manifest = self._load_manifest(manifest_path)
         if manifest.image_repository != image_repo or manifest.image_digest != digest:
             raise AppError("构建产物 manifest 与镜像 digest 不一致", code=40094, data={"imageRepository": image_repo, "imageDigest": digest})
         return manifest
+
+    def _raise_if_canceled(self, job: CrawlerProjectBuildJob) -> None:
+        try:
+            self.db.refresh(job)
+        except Exception:
+            return
+        if job.build_status == "CANCELED":
+            raise AppError(job.error_message or "构建任务已取消", code=40105, data={"buildJobId": job.build_job_id})
 
     def _read_release_version(self, source: Path) -> str:
         value = ""
@@ -544,4 +659,10 @@ class BuildCenterService:
 
     @staticmethod
     def _job_payload(job: CrawlerProjectBuildJob) -> dict[str, Any]:
-        return {column.name: getattr(job, column.name) for column in job.__table__.columns}
+        payload = {column.name: getattr(job, column.name) for column in job.__table__.columns}
+        status_value = str(payload.get("build_status") or "").upper()
+        payload["can_cancel"] = status_value in {"PENDING", "RUNNING"}
+        payload["can_retry"] = status_value in {"FAILED", "CANCELED"}
+        payload["is_terminal"] = status_value in {"SUCCEEDED", "FAILED", "CANCELED"}
+        payload["active_in_current_process"] = job.build_job_id in _ASYNC_BUILD_THREADS
+        return payload

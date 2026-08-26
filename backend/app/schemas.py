@@ -394,6 +394,11 @@ class ProjectBuildCreate(ApiModel):
     repository_url: str = Field(min_length=1, max_length=500)
     ref_name: str = Field(default="main", min_length=1, max_length=120)
 
+
+class ProjectBuildCancel(ApiModel):
+    reason: str = Field(default="用户取消构建", max_length=500)
+
+
 class ProjectReleaseDeploy(ApiModel):
     release_id: int | None = None
     server_ids: list[int] = Field(default_factory=list)

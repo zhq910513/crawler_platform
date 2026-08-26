@@ -66,6 +66,8 @@ export function deployProjectRelease(projectId: number, payload: ProjectReleaseD
 export function analyzeProjectPublishPipeline(payload: ProjectPublishPipelineRequest) { return request<ProjectPublishPipelineResult>(http.post('/project-publish/pipeline-analyses', payload)) }
 export function runProjectPublishPipeline(payload: ProjectPublishPipelineRequest) { return request<ProjectPublishPipelineResult>(http.post('/project-publish/pipelines', payload)) }
 export function getProjectBuildJob(buildJobId: number) { return request<Record<string, unknown>>(http.get(`/project-builds/${buildJobId}`)) }
+export function cancelProjectBuildJob(buildJobId: number, reason = '用户取消构建') { return request<{ buildJob: Record<string, unknown>; message: string }>(http.post(`/project-builds/${buildJobId}/cancellations`, { reason })) }
+export function retryProjectBuildJob(buildJobId: number) { return request<{ buildJob: Record<string, unknown>; message: string }>(http.post(`/project-builds/${buildJobId}/retries`)) }
 export function listProjectReleaseDeployments(projectId: number) { return request<Record<string, unknown>[]>(http.get(`/projects/${projectId}/release-deployments`)) }
 export function listTaskDefinitions(projectId: number) { return request<TaskDefinition[]>(http.get(`/projects/${projectId}/task-definitions`)) }
 
