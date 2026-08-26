@@ -26,6 +26,7 @@ def test_git_clone_retries_transient_tls_failure(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(build_center_module.settings, 'crawler_project_git_clone_attempts', 2)
     monkeypatch.setattr(build_center_module.settings, 'crawler_project_git_clone_retry_seconds', 0)
     monkeypatch.setattr(build_center_module.settings, 'crawler_project_git_clone_timeout_seconds', 30)
+    monkeypatch.setattr(build_center_module.settings, 'crawler_project_source_archive_fallback_enabled', False)
     calls: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001
@@ -50,6 +51,7 @@ def test_git_clone_failure_exposes_retry_context(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(build_center_module.settings, 'crawler_project_git_clone_attempts', 2)
     monkeypatch.setattr(build_center_module.settings, 'crawler_project_git_clone_retry_seconds', 0)
     monkeypatch.setattr(build_center_module.settings, 'crawler_project_git_clone_timeout_seconds', 30)
+    monkeypatch.setattr(build_center_module.settings, 'crawler_project_source_archive_fallback_enabled', False)
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001
         return subprocess.CompletedProcess(cmd, 128, '', 'fatal: unable to access repo: GnuTLS recv error (-110)')

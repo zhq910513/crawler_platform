@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     crawler_project_git_clone_attempts: int = int(os.getenv("CRAWLER_PROJECT_GIT_CLONE_ATTEMPTS", "3"))
     crawler_project_git_clone_retry_seconds: int = int(os.getenv("CRAWLER_PROJECT_GIT_CLONE_RETRY_SECONDS", "5"))
     crawler_project_git_clone_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_GIT_CLONE_TIMEOUT_SECONDS", "300"))
+    crawler_project_source_archive_fallback_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_ARCHIVE_FALLBACK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_project_source_archive_attempts: int = int(os.getenv("CRAWLER_PROJECT_SOURCE_ARCHIVE_ATTEMPTS", "1"))
+    crawler_project_source_archive_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_SOURCE_ARCHIVE_TIMEOUT_SECONDS", "120"))
+    crawler_project_source_bundle_upload_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_project_source_bundle_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_SOURCE_BUNDLE_ROOT", "/data/project-builds/source-bundles")))
+    crawler_project_source_bundle_max_bytes: int = int(os.getenv("CRAWLER_PROJECT_SOURCE_BUNDLE_MAX_BYTES", str(200 * 1024 * 1024)))
+    crawler_project_source_cache_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_project_source_cache_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_ROOT", "/data/project-builds/source-cache")))
+    crawler_project_source_mirror_map: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_MIRROR_MAP", ""))
 
     @property
     def cors_origin_list(self) -> list[str]:

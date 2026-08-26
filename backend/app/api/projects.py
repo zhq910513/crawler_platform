@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -70,6 +70,24 @@ def retry_project_build_job(build_job_id: int, user: SysUser = Depends(get_curre
     require_company_scope(user, int(current["company_id"]))
     job = service.retry_project_release_build(user, build_job_id)
     return ok({"buildJob": service.get_job(job.build_job_id), "message": "构建任务已重新入队；页面将继续轮询新任务状态。"})
+
+
+
+
+@router.post("/project-source-bundles")
+async def upload_project_source_bundle(
+    company_id: int = Form(...),
+    repository_url: str = Form(...),
+    ref_name: str = Form("main"),
+    file: UploadFile = File(...),
+    user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.services.permissions import require_company_scope
+    require_company_scope(user, company_id)
+    content = await file.read()
+    result = BuildCenterService(db).save_source_bundle(user, company_id, repository_url, ref_name, file.filename or "source.zip", content)
+    return ok({"sourceBundle": result, "message": "源码包已上传；可点击重新构建，平台会在 GitHub 不可用时自动使用该源码包兜底。"})
 
 
 @router.get("/projects")

@@ -96,7 +96,9 @@
         </div>
         <div class="build-job-actions">
           <el-button v-if="canCancelCurrentBuild" size="small" :loading="buildActionLoading" @click="cancelCurrentBuild">取消构建</el-button>
+          <el-button v-if="canRetryCurrentBuild" size="small" :loading="sourceBundleUploading" @click="pickSourceBundle">上传源码包兜底</el-button>
           <el-button v-if="canRetryCurrentBuild" size="small" type="primary" :loading="buildActionLoading" @click="retryCurrentBuild">重新构建</el-button>
+          <input ref="sourceBundleInput" class="hidden-file-input" type="file" accept=".zip,.tgz,.tar.gz,application/zip,application/gzip" @change="uploadSourceBundleFromInput" />
         </div>
         <div v-if="String(publishBuildJob.errorMessage || publishBuildJob.error_message || '')" class="danger-text">{{ String(publishBuildJob.errorMessage || publishBuildJob.error_message) }}</div>
         <div v-if="buildLogItems.length" class="build-log-list">
@@ -214,7 +216,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
-import { analyzeProjectPublishPipeline, cancelProjectBuildJob, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listServers, getSystemSettings, retryProjectBuildJob, runProjectPublishPipeline } from '../api/platform'
+import { analyzeProjectPublishPipeline, cancelProjectBuildJob, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listServers, getSystemSettings, retryProjectBuildJob, runProjectPublishPipeline, uploadProjectSourceBundle } from '../api/platform'
 import { sessionState } from '../stores/session'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode } from '../types/api'
 import { zh } from '../utils/dictionaries'
@@ -227,8 +229,10 @@ const companyDialogVisible = ref(false)
 const serverDrawerVisible = ref(false)
 const publishing = ref(false)
 const buildActionLoading = ref(false)
+const sourceBundleUploading = ref(false)
 const joinResult = ref<AgentJoinTokenResult | null>(null)
 const installPanelRef = ref<HTMLElement | null>(null)
+const sourceBundleInput = ref<HTMLInputElement | null>(null)
 const joinOnlineNotified = ref(false)
 let joinPollingTimer: number | undefined
 let publishBuildPollingTimer: number | undefined
@@ -693,6 +697,29 @@ async function cancelCurrentBuild() {
   }
 }
 
+function pickSourceBundle() {
+  sourceBundleInput.value?.click()
+}
+
+async function uploadSourceBundleFromInput(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!form.companyId || !form.repositoryUrl) { ElMessage.warning('请先选择公司并填写仓库地址'); return }
+  sourceBundleUploading.value = true
+  try {
+    const result = await uploadProjectSourceBundle({ companyId: form.companyId, repositoryUrl: form.repositoryUrl, refName: form.refName || 'main', file })
+    ElMessage.success(result.message || '源码包已上传')
+    publishSummary.value = result.message || '源码包已上传，可点击重新构建'
+  } catch (error) {
+    const payload = apiErrorData<unknown>(error)
+    ElMessage.error(payload?.message || '源码包上传失败')
+  } finally {
+    sourceBundleUploading.value = false
+  }
+}
+
 async function retryCurrentBuild() {
   const buildJobId = buildJobIdOf(publishBuildJob.value)
   if (!buildJobId) return
@@ -924,4 +951,6 @@ onUnmounted(() => {
 .build-log-stage { font-size: 12px; color: #93c5fd; margin-bottom: 4px; }
 .build-log-item pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow: auto; font-size: 11px; line-height: 1.5; }
 .build-job-actions { display: flex; gap: 8px; margin: 8px 0; }
+
+.hidden-file-input { display: none; }
 </style>

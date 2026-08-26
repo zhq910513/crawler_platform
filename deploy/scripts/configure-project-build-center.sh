@@ -92,12 +92,50 @@ clone_timeout_seconds="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_GIT_CLONE_TIME
 clone_timeout_seconds="${clone_timeout_seconds:-300}"
 case "$clone_timeout_seconds" in ''|*[!0-9]*) clone_timeout_seconds="300" ;; esac
 set_env_value CRAWLER_PROJECT_GIT_CLONE_TIMEOUT_SECONDS "$clone_timeout_seconds"
+
+source_archive_fallback="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_ARCHIVE_FALLBACK_ENABLED)"
+source_archive_fallback="${source_archive_fallback:-1}"
+case "$source_archive_fallback" in 1|true|TRUE|yes|YES|on|ON) source_archive_fallback="1" ;; *) source_archive_fallback="0" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_ARCHIVE_FALLBACK_ENABLED "$source_archive_fallback"
+
+source_archive_attempts="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_ARCHIVE_ATTEMPTS)"
+source_archive_attempts="${source_archive_attempts:-1}"
+case "$source_archive_attempts" in ''|*[!0-9]*) source_archive_attempts="1" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_ARCHIVE_ATTEMPTS "$source_archive_attempts"
+
+source_archive_timeout_seconds="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_ARCHIVE_TIMEOUT_SECONDS)"
+source_archive_timeout_seconds="${source_archive_timeout_seconds:-120}"
+case "$source_archive_timeout_seconds" in ''|*[!0-9]*) source_archive_timeout_seconds="120" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_ARCHIVE_TIMEOUT_SECONDS "$source_archive_timeout_seconds"
+
+source_bundle_upload="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED)"
+source_bundle_upload="${source_bundle_upload:-1}"
+case "$source_bundle_upload" in 1|true|TRUE|yes|YES|on|ON) source_bundle_upload="1" ;; *) source_bundle_upload="0" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED "$source_bundle_upload"
+set_env_value CRAWLER_PROJECT_SOURCE_BUNDLE_ROOT "${CRAWLER_PROJECT_SOURCE_BUNDLE_ROOT:-$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_BUNDLE_ROOT)}"
+if [ -z "$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_BUNDLE_ROOT)" ]; then
+  set_env_value CRAWLER_PROJECT_SOURCE_BUNDLE_ROOT /data/project-builds/source-bundles
+fi
+source_bundle_max_bytes="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_BUNDLE_MAX_BYTES)"
+source_bundle_max_bytes="${source_bundle_max_bytes:-209715200}"
+case "$source_bundle_max_bytes" in ''|*[!0-9]*) source_bundle_max_bytes="209715200" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_BUNDLE_MAX_BYTES "$source_bundle_max_bytes"
+
+source_cache_enabled="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ENABLED)"
+source_cache_enabled="${source_cache_enabled:-1}"
+case "$source_cache_enabled" in 1|true|TRUE|yes|YES|on|ON) source_cache_enabled="1" ;; *) source_cache_enabled="0" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ENABLED "$source_cache_enabled"
+set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ROOT "${CRAWLER_PROJECT_SOURCE_CACHE_ROOT:-$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ROOT)}"
+if [ -z "$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ROOT)" ]; then
+  set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ROOT /data/project-builds/source-cache
+fi
+
 set_env_value CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX "$configured_prefix"
 set_env_value CRAWLER_AGENT_REGISTRY_PORT "$registry_port"
 if [ -z "$(cp_env_value "$ENV_FILE" CRAWLER_AGENT_REGISTRY_PUBLIC_HOST)" ] && [ "$registry_host" != "127.0.0.1" ] && [ "$registry_host" != "localhost" ] && [ "$registry_host" != "0.0.0.0" ]; then
   set_env_value CRAWLER_AGENT_REGISTRY_PUBLIC_HOST "$registry_host"
 fi
 
-mkdir -p data/project-builds
-chmod 0750 data/project-builds 2>/dev/null || true
+mkdir -p data/project-builds data/project-builds/source-bundles data/project-builds/source-cache
+chmod 0750 data/project-builds data/project-builds/source-bundles data/project-builds/source-cache 2>/dev/null || true
 cp_info "平台构建中心已自动配置：enabled=1 imagePrefix=${configured_prefix} buildRoot=/data/project-builds"

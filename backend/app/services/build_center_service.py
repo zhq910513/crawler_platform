@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import tarfile
 import threading
 import time
+import zipfile
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import status
 from pydantic import ValidationError
@@ -83,6 +87,8 @@ def start_project_release_build_thread(build_job_id: int, user_id: int | None) -
 class BuildCenterService:
     """Platform-driven spider project build center.
 
+    v1.0.102 adds code-level source resilience: mirror mapping, uploaded source bundles and successful-source cache fallback.
+    v1.0.101 adds GitHub source archive fallback after git clone failures.
     v1.0.98 adds recovery/cancel/retry lifecycle controls for async build jobs. v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
@@ -407,8 +413,11 @@ class BuildCenterService:
         self._append_log(job, "CLONE", f"拉取源码：{job.repository_url} ref={job.ref_name}")
         self._git_clone_source(job, source=source, cwd=workspace.parent)
         self._raise_if_canceled(job)
-        git_commit = self._capture(job, ["git", "rev-parse", "--short=12", "HEAD"], cwd=source)
+        git_commit = self._source_git_commit(job, source)
         release_version = self._read_release_version(source)
+        job.git_commit = git_commit
+        job.release_version = release_version
+        self._store_source_cache(job, source)
         self._append_log(job, "CONTRACT", "执行爬虫项目被动构建契约 scripts/platform_build_contract.sh")
         env = {
             "RELEASE_VERSION": release_version,
@@ -477,56 +486,71 @@ class BuildCenterService:
         retry_seconds = max(0, int(settings.crawler_project_git_clone_retry_seconds or 0))
         timeout_seconds = max(30, min(int(settings.crawler_project_git_clone_timeout_seconds or 300), int(settings.crawler_project_build_timeout_seconds or 1800)))
         last_output = ""
-        for attempt in range(1, attempts + 1):
-            if source.exists():
-                shutil.rmtree(source, ignore_errors=True)
-            cmd = [
-                "git",
-                "-c", "http.version=HTTP/1.1",
-                "-c", "http.lowSpeedLimit=1024",
-                "-c", "http.lowSpeedTime=60",
-                "-c", "http.postBuffer=524288000",
-                "clone",
-                "--depth", "1",
-                "--single-branch",
-                "--branch", job.ref_name,
-                job.repository_url,
-                str(source),
-            ]
-            env = os.environ.copy()
-            env.update({
-                "GIT_TERMINAL_PROMPT": "0",
-                "GIT_HTTP_LOW_SPEED_LIMIT": "1024",
-                "GIT_HTTP_LOW_SPEED_TIME": "60",
-            })
-            started = time.monotonic()
-            try:
-                proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True, timeout=timeout_seconds)
-                exit_code = proc.returncode
-                output = "\n".join(part for part in [proc.stdout.strip(), proc.stderr.strip()] if part)
-            except subprocess.TimeoutExpired as exc:
-                exit_code = 124
-                stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-                stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-                output = "\n".join(part for part in [stdout.strip(), stderr.strip(), f"git clone timeout after {timeout_seconds}s"] if part)
-            duration_ms = int((time.monotonic() - started) * 1000)
-            last_output = output
-            self._append_log(
-                job,
-                "CLONE",
-                f"第 {attempt}/{attempts} 次拉取源码\n$ {' '.join(cmd)}\n{output}".strip(),
-                exit_code=exit_code,
-                duration_ms=duration_ms,
-            )
-            self.db.commit()
-            if exit_code == 0:
-                return
-            if attempt < attempts:
-                wait_seconds = retry_seconds * attempt
-                self._append_log(job, "CLONE_RETRY", f"源码拉取失败，{wait_seconds}s 后重试；常见原因：GitHub TLS/网络瞬断、境内出口不稳定、仓库临时不可访问。")
+        clone_urls = self._source_clone_urls(job.repository_url)
+        for source_index, repository_url in enumerate(clone_urls, start=1):
+            if repository_url != job.repository_url:
+                self._append_log(job, "CLONE_MIRROR", f"使用源码镜像仓库兜底：{repository_url}（原仓库：{job.repository_url}）")
                 self.db.commit()
-                if wait_seconds:
-                    time.sleep(wait_seconds)
+            for attempt in range(1, attempts + 1):
+                if source.exists():
+                    shutil.rmtree(source, ignore_errors=True)
+                cmd = [
+                    "git",
+                    "-c", "http.version=HTTP/1.1",
+                    "-c", "http.lowSpeedLimit=1024",
+                    "-c", "http.lowSpeedTime=60",
+                    "-c", "http.postBuffer=524288000",
+                    "clone",
+                    "--depth", "1",
+                    "--single-branch",
+                    "--branch", job.ref_name,
+                    repository_url,
+                    str(source),
+                ]
+                env = os.environ.copy()
+                env.update({
+                    "GIT_TERMINAL_PROMPT": "0",
+                    "GIT_HTTP_LOW_SPEED_LIMIT": "1024",
+                    "GIT_HTTP_LOW_SPEED_TIME": "60",
+                })
+                started = time.monotonic()
+                try:
+                    proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True, timeout=timeout_seconds)
+                    exit_code = proc.returncode
+                    output = "\n".join(part for part in [proc.stdout.strip(), proc.stderr.strip()] if part)
+                except subprocess.TimeoutExpired as exc:
+                    exit_code = 124
+                    stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+                    stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+                    output = "\n".join(part for part in [stdout.strip(), stderr.strip(), f"git clone timeout after {timeout_seconds}s"] if part)
+                duration_ms = int((time.monotonic() - started) * 1000)
+                last_output = output
+                self._append_log(
+                    job,
+                    "CLONE",
+                    f"源码地址 {source_index}/{len(clone_urls)}，第 {attempt}/{attempts} 次拉取源码\n$ {' '.join(cmd)}\n{output}".strip(),
+                    exit_code=exit_code,
+                    duration_ms=duration_ms,
+                )
+                self.db.commit()
+                if exit_code == 0:
+                    metadata = dict(job.build_metadata or {})
+                    metadata["sourceCloneUrl"] = repository_url
+                    job.build_metadata = metadata
+                    self.db.commit()
+                    return
+                if attempt < attempts:
+                    wait_seconds = retry_seconds * attempt
+                    self._append_log(job, "CLONE_RETRY", f"源码拉取失败，{wait_seconds}s 后重试；常见原因：GitHub TLS/网络瞬断、境内出口不稳定、仓库临时不可访问。")
+                    self.db.commit()
+                    if wait_seconds:
+                        time.sleep(wait_seconds)
+        if self._try_source_archive_fallback(job, source=source, cwd=cwd, last_git_output=last_output):
+            return
+        if self._try_local_source_bundle_fallback(job, source=source, cwd=cwd, last_error=last_output):
+            return
+        if self._try_source_cache_fallback(job, source=source, cwd=cwd, last_error=last_output):
+            return
         raise AppError(
             "源码拉取失败：Git 网络/TLS 连接异常或仓库不可访问",
             code=40106,
@@ -535,13 +559,343 @@ class BuildCenterService:
                 "refName": job.ref_name,
                 "attempts": attempts,
                 "lastOutput": last_output[-4000:],
+                "archiveFallbackEnabled": bool(settings.crawler_project_source_archive_fallback_enabled),
+                "archiveFallbackTried": bool(self._github_source_archive_candidates(job.repository_url, job.ref_name)),
+                "localBundleFallbackEnabled": bool(settings.crawler_project_source_bundle_upload_enabled),
+                "sourceCacheFallbackEnabled": bool(settings.crawler_project_source_cache_enabled),
                 "nextActions": [
                     "稍后点击构建任务的重新构建，平台会重新拉取源码。",
-                    "如果 GitHub 访问长期不稳定，建议先将爬虫项目镜像到平台服务器访问稳定的 Git 仓库。",
-                    "私有仓库或需要代理的网络环境，请在控制端宿主机预配置 Git 凭据/代理。",
+                    "平台会按顺序尝试：源码镜像映射、git clone、GitHub 官方归档包、已上传源码包、最近成功源码缓存。",
+                    "如果 GitHub 出口长期不可用，可在发布页上传 crawler_platform_spiders 源码 zip/tar.gz 后重新构建，无需登录服务器手动放文件。",
+                    "也可配置 CRAWLER_PROJECT_SOURCE_MIRROR_MAP，把 GitHub 仓库自动改写到平台可访问的内网/国内 Git 镜像仓库。",
                 ],
             },
         )
+
+
+    def _source_git_commit(self, job: CrawlerProjectBuildJob, source: Path) -> str:
+        if (source / ".git").exists():
+            return self._capture(job, ["git", "rev-parse", "--short=12", "HEAD"], cwd=source)
+        metadata = dict(job.build_metadata or {})
+        commit = str(metadata.get("sourceArchiveCommit") or "").strip()
+        if not commit:
+            safe_ref = re.sub(r"[^A-Za-z0-9_.-]+", "_", job.ref_name or "archive").strip("_") or "archive"
+            commit = f"archive-{safe_ref}"
+        commit = commit[:100]
+        self._append_log(job, "SOURCE_ARCHIVE", f"源码由归档包获取，目录中没有 .git 元数据；使用构建标识：{commit}")
+        self.db.commit()
+        return commit
+
+    def save_source_bundle(self, user: SysUser, company_id: int, repository_url: str, ref_name: str, filename: str, content: bytes) -> dict[str, Any]:
+        if not settings.crawler_project_source_bundle_upload_enabled:
+            raise AppError("源码包上传未启用", code=40110, http_status=status.HTTP_400_BAD_REQUEST)
+        if not content:
+            raise AppError("源码包为空", code=40111, http_status=status.HTTP_400_BAD_REQUEST)
+        max_bytes = max(1024 * 1024, int(settings.crawler_project_source_bundle_max_bytes or 0))
+        if len(content) > max_bytes:
+            raise AppError("源码包超过平台允许大小", code=40112, http_status=status.HTTP_400_BAD_REQUEST, data={"maxBytes": max_bytes, "actualBytes": len(content)})
+        suffix = self._source_bundle_suffix(filename)
+        if not suffix:
+            raise AppError("仅支持 zip、tar.gz、tgz 源码包", code=40113, http_status=status.HTTP_400_BAD_REQUEST)
+        key = self._source_key(repository_url, ref_name)
+        root = Path(settings.crawler_project_source_bundle_root).expanduser().resolve() / key
+        root.mkdir(parents=True, exist_ok=True)
+        ts = utcnow().strftime("%Y%m%d%H%M%S")
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", filename or "source-bundle").strip("._") or "source-bundle"
+        target = root / f"{ts}-{getattr(user, 'user_id', 0) or 0}-{safe_name}"
+        target.write_bytes(content)
+        metadata = {
+            "repositoryUrl": (repository_url or "").strip(),
+            "refName": (ref_name or "main").strip(),
+            "filename": filename,
+            "storedPath": str(target),
+            "sizeBytes": len(content),
+            "uploadedBy": getattr(user, "user_id", None),
+            "uploadedAt": utcnow().isoformat(),
+            "sourceKey": key,
+            "suffix": suffix,
+        }
+        (root / "latest.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        return metadata
+
+    def _source_key(self, repository_url: str, ref_name: str) -> str:
+        raw = json.dumps({"repositoryUrl": (repository_url or "").strip(), "refName": (ref_name or "main").strip()}, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+    def _source_clone_urls(self, repository_url: str) -> list[str]:
+        original = (repository_url or "").strip()
+        result: list[str] = []
+        mapping = self._source_mirror_map()
+        for candidate in mapping.get(original, []):
+            value = str(candidate or "").strip()
+            if value and value not in result:
+                result.append(value)
+        if original and original not in result:
+            result.append(original)
+        return result
+
+    def _source_mirror_map(self) -> dict[str, list[str]]:
+        value = (settings.crawler_project_source_mirror_map or "").strip()
+        if not value:
+            return {}
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError:
+            payload = {}
+            for item in value.split(";"):
+                if "=" not in item:
+                    continue
+                left, right = item.split("=", 1)
+                payload[left.strip()] = [part.strip() for part in right.split(",") if part.strip()]
+        result: dict[str, list[str]] = {}
+        if isinstance(payload, dict):
+            for key, val in payload.items():
+                original = str(key or "").strip()
+                if not original:
+                    continue
+                if isinstance(val, str):
+                    mirrors = [val]
+                elif isinstance(val, list):
+                    mirrors = [str(item) for item in val]
+                else:
+                    mirrors = []
+                cleaned = [item.strip() for item in mirrors if item and str(item).strip()]
+                if cleaned:
+                    result[original] = cleaned
+        return result
+
+    def _source_bundle_suffix(self, filename: str) -> str:
+        lower = (filename or "").lower()
+        if lower.endswith(".tar.gz") or lower.endswith(".tgz"):
+            return "tar.gz"
+        if lower.endswith(".zip"):
+            return "zip"
+        return ""
+
+    def _source_bundle_candidates(self, repository_url: str, ref_name: str) -> list[Path]:
+        key = self._source_key(repository_url, ref_name)
+        root = Path(settings.crawler_project_source_bundle_root).expanduser().resolve() / key
+        if not root.exists():
+            return []
+        candidates = [item for item in root.iterdir() if item.is_file() and self._source_bundle_suffix(item.name)]
+        return sorted(candidates, key=lambda item: item.stat().st_mtime, reverse=True)
+
+    def _try_local_source_bundle_fallback(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path, last_error: str) -> bool:
+        if not settings.crawler_project_source_bundle_upload_enabled:
+            return False
+        candidates = self._source_bundle_candidates(job.repository_url, job.ref_name)
+        if not candidates:
+            self._append_log(job, "SOURCE_BUNDLE_SKIP", "没有找到当前仓库/ref 对应的已上传源码包。")
+            self.db.commit()
+            return False
+        last_exc = last_error
+        for bundle in candidates[:3]:
+            archive_type = self._source_bundle_suffix(bundle.name)
+            extract_dir = cwd / f"source-bundle-extract-{job.build_job_id}-{bundle.stem[:32]}"
+            shutil.rmtree(extract_dir, ignore_errors=True)
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            started = time.monotonic()
+            try:
+                root_name = self._extract_source_archive(bundle, extract_dir, source, archive_type)
+                metadata = dict(job.build_metadata or {})
+                metadata["sourceBundlePath"] = str(bundle)
+                metadata["sourceBundleRoot"] = root_name
+                job.build_metadata = metadata
+                self._append_log(job, "SOURCE_BUNDLE", f"使用已上传源码包兜底成功：{bundle}\nroot={root_name}", exit_code=0, duration_ms=int((time.monotonic() - started) * 1000))
+                self.db.commit()
+                return True
+            except Exception as exc:
+                last_exc = str(exc)
+                self._append_log(job, "SOURCE_BUNDLE", f"已上传源码包不可用：{bundle}\n{last_exc}", exit_code=1, duration_ms=int((time.monotonic() - started) * 1000))
+                self.db.commit()
+            finally:
+                shutil.rmtree(extract_dir, ignore_errors=True)
+        metadata = dict(job.build_metadata or {})
+        metadata["sourceBundleLastError"] = str(last_exc)[-1000:]
+        job.build_metadata = metadata
+        return False
+
+    def _source_cache_dir(self, repository_url: str, ref_name: str) -> Path:
+        return Path(settings.crawler_project_source_cache_root).expanduser().resolve() / self._source_key(repository_url, ref_name)
+
+    def _store_source_cache(self, job: CrawlerProjectBuildJob, source: Path) -> None:
+        if not settings.crawler_project_source_cache_enabled:
+            return
+        cache_root = self._source_cache_dir(job.repository_url, job.ref_name)
+        tmp = cache_root.parent / f".{cache_root.name}.tmp-{job.build_job_id}"
+        latest = cache_root / "latest"
+        try:
+            shutil.rmtree(tmp, ignore_errors=True)
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            ignore = shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "node_modules", "dist")
+            shutil.copytree(source, tmp, ignore=ignore)
+            cache_root.mkdir(parents=True, exist_ok=True)
+            old = cache_root / "latest.old"
+            shutil.rmtree(old, ignore_errors=True)
+            if latest.exists():
+                latest.rename(old)
+            tmp.rename(latest)
+            shutil.rmtree(old, ignore_errors=True)
+            metadata = {
+                "repositoryUrl": job.repository_url,
+                "refName": job.ref_name,
+                "buildJobId": job.build_job_id,
+                "cachedAt": utcnow().isoformat(),
+                "releaseVersion": job.release_version or "",
+                "gitCommit": job.git_commit or "",
+            }
+            (cache_root / "latest.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+            self._append_log(job, "SOURCE_CACHE", f"已刷新源码缓存：{latest}")
+            self.db.commit()
+        except Exception as exc:
+            self._append_log(job, "SOURCE_CACHE", f"刷新源码缓存失败，不影响本次构建：{exc}", exit_code=1)
+            self.db.commit()
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def _try_source_cache_fallback(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path, last_error: str) -> bool:
+        if not settings.crawler_project_source_cache_enabled:
+            return False
+        latest = self._source_cache_dir(job.repository_url, job.ref_name) / "latest"
+        if not latest.exists():
+            self._append_log(job, "SOURCE_CACHE_SKIP", "没有找到当前仓库/ref 的最近成功源码缓存。")
+            self.db.commit()
+            return False
+        started = time.monotonic()
+        try:
+            if source.exists():
+                shutil.rmtree(source, ignore_errors=True)
+            shutil.copytree(latest, source)
+            metadata = dict(job.build_metadata or {})
+            metadata["sourceCachePath"] = str(latest)
+            metadata["sourceCacheFallbackReason"] = last_error[-1000:]
+            job.build_metadata = metadata
+            self._append_log(job, "SOURCE_CACHE", f"Git/归档/上传源码均不可用，使用最近成功源码缓存兜底：{latest}\n注意：该缓存可能不是远端最新提交。", exit_code=0, duration_ms=int((time.monotonic() - started) * 1000))
+            self.db.commit()
+            return True
+        except Exception as exc:
+            self._append_log(job, "SOURCE_CACHE", f"源码缓存兜底失败：{latest}\n{exc}", exit_code=1, duration_ms=int((time.monotonic() - started) * 1000))
+            self.db.commit()
+            return False
+
+    def _github_source_archive_candidates(self, repository_url: str, ref_name: str) -> list[tuple[str, str]]:
+        owner = repo = ""
+        value = (repository_url or "").strip()
+        if value.startswith("git@github.com:"):
+            tail = value.split(":", 1)[1]
+            parts = tail.strip("/").split("/")
+            if len(parts) >= 2:
+                owner, repo = parts[0], parts[1]
+        else:
+            parsed = urlparse(value)
+            if parsed.hostname and parsed.hostname.lower() == "github.com":
+                parts = parsed.path.strip("/").split("/")
+                if len(parts) >= 2:
+                    owner, repo = parts[0], parts[1]
+        repo = repo[:-4] if repo.endswith(".git") else repo
+        if not owner or not repo:
+            return []
+        ref = quote((ref_name or "main").strip(), safe="/")
+        return [
+            (f"https://codeload.github.com/{owner}/{repo}/tar.gz/refs/heads/{ref}", "tar.gz"),
+            (f"https://codeload.github.com/{owner}/{repo}/tar.gz/refs/tags/{ref}", "tar.gz"),
+            (f"https://github.com/{owner}/{repo}/archive/refs/heads/{ref}.zip", "zip"),
+            (f"https://github.com/{owner}/{repo}/archive/refs/tags/{ref}.zip", "zip"),
+        ]
+
+    def _try_source_archive_fallback(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path, last_git_output: str) -> bool:
+        if not settings.crawler_project_source_archive_fallback_enabled:
+            return False
+        candidates = self._github_source_archive_candidates(job.repository_url, job.ref_name)
+        if not candidates:
+            self._append_log(job, "SOURCE_ARCHIVE_SKIP", "当前仓库不是 GitHub 标准 URL，无法自动使用 GitHub codeload 归档包兜底。")
+            self.db.commit()
+            return False
+        attempts = max(1, int(settings.crawler_project_source_archive_attempts or 1))
+        timeout_seconds = max(15, min(int(settings.crawler_project_source_archive_timeout_seconds or 120), int(settings.crawler_project_build_timeout_seconds or 1800)))
+        self._append_log(job, "SOURCE_ARCHIVE", "git clone 多次失败，开始尝试 GitHub 源码归档包兜底；该路径不依赖 git clone 协议。")
+        self.db.commit()
+        last_error = last_git_output
+        for url, archive_type in candidates:
+            for attempt in range(1, attempts + 1):
+                if source.exists():
+                    shutil.rmtree(source, ignore_errors=True)
+                archive_file = cwd / f"source-archive-{job.build_job_id}-{attempt}.{ 'zip' if archive_type == 'zip' else 'tar.gz' }"
+                extract_dir = cwd / f"source-archive-extract-{job.build_job_id}-{attempt}"
+                shutil.rmtree(extract_dir, ignore_errors=True)
+                extract_dir.mkdir(parents=True, exist_ok=True)
+                started = time.monotonic()
+                try:
+                    request = Request(url, headers={"User-Agent": f"crawler-platform-build-center/{settings.app_version}"})
+                    with urlopen(request, timeout=timeout_seconds) as resp, archive_file.open("wb") as fh:
+                        shutil.copyfileobj(resp, fh)
+                    root_name = self._extract_source_archive(archive_file, extract_dir, source, archive_type)
+                    commit = self._commit_from_archive_root(root_name)
+                    metadata = dict(job.build_metadata or {})
+                    metadata["sourceArchiveUrl"] = url
+                    metadata["sourceArchiveType"] = archive_type
+                    metadata["sourceArchiveCommit"] = commit or metadata.get("sourceArchiveCommit") or ""
+                    job.build_metadata = metadata
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    self._append_log(job, "SOURCE_ARCHIVE", f"第 {attempt}/{attempts} 次归档包兜底成功：{url}\nroot={root_name}\ncommit={commit or 'unknown'}", exit_code=0, duration_ms=duration_ms)
+                    self.db.commit()
+                    return True
+                except Exception as exc:
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    last_error = str(exc)
+                    self._append_log(job, "SOURCE_ARCHIVE", f"第 {attempt}/{attempts} 次归档包兜底失败：{url}\n{last_error}", exit_code=1, duration_ms=duration_ms)
+                    self.db.commit()
+                finally:
+                    try:
+                        archive_file.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+        metadata = dict(job.build_metadata or {})
+        metadata["sourceArchiveLastError"] = last_error[-1000:]
+        job.build_metadata = metadata
+        return False
+
+    def _extract_source_archive(self, archive_file: Path, extract_dir: Path, source: Path, archive_type: str) -> str:
+        if archive_type == "zip":
+            with zipfile.ZipFile(archive_file) as zf:
+                self._safe_zip_extract(zf, extract_dir)
+        else:
+            with tarfile.open(archive_file, mode="r:*") as tf:
+                self._safe_tar_extract(tf, extract_dir)
+        roots = [child for child in extract_dir.iterdir() if child.name not in {"__MACOSX"}]
+        root = roots[0] if len(roots) == 1 and roots[0].is_dir() else extract_dir
+        root_name = root.name
+        if source.exists():
+            shutil.rmtree(source, ignore_errors=True)
+        source.mkdir(parents=True, exist_ok=True)
+        for child in root.iterdir():
+            shutil.move(str(child), str(source / child.name))
+        if not any(source.iterdir()):
+            raise RuntimeError("源码归档包为空")
+        return root_name
+
+    def _safe_tar_extract(self, tf: tarfile.TarFile, target: Path) -> None:
+        target_root = target.resolve()
+        for member in tf.getmembers():
+            dest = (target / member.name).resolve()
+            if not str(dest).startswith(str(target_root) + os.sep) and dest != target_root:
+                raise RuntimeError(f"源码归档包包含非法路径：{member.name}")
+        try:
+            tf.extractall(target, filter="data")
+        except TypeError:  # pragma: no cover - Python < 3.12 compatibility
+            tf.extractall(target)
+
+    def _safe_zip_extract(self, zf: zipfile.ZipFile, target: Path) -> None:
+        target_root = target.resolve()
+        for info in zf.infolist():
+            dest = (target / info.filename).resolve()
+            if not str(dest).startswith(str(target_root) + os.sep) and dest != target_root:
+                raise RuntimeError(f"源码归档包包含非法路径：{info.filename}")
+        zf.extractall(target)
+
+    def _commit_from_archive_root(self, root_name: str) -> str:
+        match = re.search(r"([0-9a-f]{12,40})$", root_name or "", flags=re.IGNORECASE)
+        return match.group(1)[:40] if match else ""
 
     def _load_manifest(self, path: Path) -> ProjectManifest:
         if not path.exists():
@@ -587,6 +941,14 @@ class BuildCenterService:
             "imageRepositoryPrefix": self._image_repository_prefix(),
             "buildRoot": str(build_root),
             "buildRootParentExists": build_root.parent.exists(),
+            "sourceArchiveFallbackEnabled": bool(settings.crawler_project_source_archive_fallback_enabled),
+            "sourceArchiveFallback": "GitHub codeload tar.gz/zip" if settings.crawler_project_source_archive_fallback_enabled else "DISABLED",
+            "sourceBundleUploadEnabled": bool(settings.crawler_project_source_bundle_upload_enabled),
+            "sourceBundleRoot": str(Path(settings.crawler_project_source_bundle_root).expanduser()),
+            "sourceBundleRootParentExists": Path(settings.crawler_project_source_bundle_root).expanduser().parent.exists(),
+            "sourceCacheEnabled": bool(settings.crawler_project_source_cache_enabled),
+            "sourceCacheRoot": str(Path(settings.crawler_project_source_cache_root).expanduser()),
+            "sourceMirrorMapConfigured": bool((settings.crawler_project_source_mirror_map or '').strip()),
         }
 
     def _docker_executor_available(self) -> bool:
