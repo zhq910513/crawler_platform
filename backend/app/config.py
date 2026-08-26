@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     crawler_project_source_cache_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
     crawler_project_source_cache_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_ROOT", "/data/project-builds/source-cache")))
     crawler_project_source_mirror_map: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_MIRROR_MAP", ""))
+    crawler_project_docker_pull_attempts: int = int(os.getenv("CRAWLER_PROJECT_DOCKER_PULL_ATTEMPTS", "2"))
+    crawler_project_docker_pull_retry_seconds: int = int(os.getenv("CRAWLER_PROJECT_DOCKER_PULL_RETRY_SECONDS", "5"))
 
     @property
     def cors_origin_list(self) -> list[str]:

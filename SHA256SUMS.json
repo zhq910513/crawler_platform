@@ -1,8 +1,8 @@
 [
   {
     "path": ".env.example",
-    "sha256": "7b78d190a46bd07dd4b9a57c4bcf665759a516013ce25a6c1ca3349fb2f847a5",
-    "bytes": 3337
+    "sha256": "1ef1dac995a991bde0eae61dbaaad500dfb9fa8d1a189658f2e21f548421ee28",
+    "bytes": 3420
   },
   {
     "path": ".gitattributes",
@@ -53,6 +53,11 @@
     "path": "RELEASE_NOTES_1.0.102.md",
     "sha256": "a3240b62335b8f90759821d324f145789b898b80490fa8f7fc1d9e39c457ca17",
     "bytes": 1363
+  },
+  {
+    "path": "RELEASE_NOTES_1.0.103.md",
+    "sha256": "6ab2b33316f87bc8a419f033dce4a0b569d242131ddfeb4a1c19e3c85e1b981a",
+    "bytes": 1172
   },
   {
     "path": "RELEASE_NOTES_1.0.11.md",
@@ -491,7 +496,7 @@
   },
   {
     "path": "VERSION",
-    "sha256": "029693e5781b7e95f083d9830fb1bb2407ff0cb41122662b211d622a6e5a0cb7",
+    "sha256": "722aeade6dff739e5af08dc4195e387833696775f354b3ede5de61440bd8e2bd",
     "bytes": 8
   },
   {
@@ -676,8 +681,8 @@
   },
   {
     "path": "backend/app/config.py",
-    "sha256": "ca3cec3c18f7b7b2e72670f008caf70b76a5f484eadd5931d2679d89660b9a73",
-    "bytes": 8805
+    "sha256": "4d2c3f0347d2ae8d8aa45f9a4b1122f0c06d9bdbb95460adc43ea90aad2b9e7c",
+    "bytes": 9031
   },
   {
     "path": "backend/app/db.py",
@@ -791,8 +796,8 @@
   },
   {
     "path": "backend/app/services/build_center_service.py",
-    "sha256": "ef2ab931a5be200bbeecde620df32f4e8dfac4ce2c8d5f5a90be571acd7ab076",
-    "bytes": 60524
+    "sha256": "b2b270ce37d1cbc8768b9563fd313b4ca912d1c934fc02d98d4b68db19cbbdf7",
+    "bytes": 66950
   },
   {
     "path": "backend/app/services/cicd_service.py",
@@ -836,8 +841,8 @@
   },
   {
     "path": "backend/app/services/docker_engine_client.py",
-    "sha256": "41f70392cbb47eb9a4929bed9a953d76e73518921a47ce18faf230deb13284c6",
-    "bytes": 6167
+    "sha256": "c8089488a88108d6347478c0f0a6097e0d8ab51607501fdb630f19f785b0c6e0",
+    "bytes": 11592
   },
   {
     "path": "backend/app/services/operation_service.py",
@@ -1180,6 +1185,11 @@
     "bytes": 2390
   },
   {
+    "path": "backend/tests/test_project_build_docker_diagnostics_10103.py",
+    "sha256": "0694a49c1bbd678b2cdbf1ae835be56e2d876e8700c1d177b17a25a593a3aabc",
+    "bytes": 2012
+  },
+  {
     "path": "backend/tests/test_project_build_git_clone_retry_10100.py",
     "sha256": "c27df5d621eceda31f886008f4adb879c846e93519d96cda3cad82b74f4c3fae",
     "bytes": 3404
@@ -1321,7 +1331,7 @@
   },
   {
     "path": "deploy/scripts/check-alembic-graph.py",
-    "sha256": "30a52ade2e6e3d2f73bd314e4e1803f78da6e1fe188134d6e17a0eb80ee09e36",
+    "sha256": "23b65b80f0c2f09eaa88aeadef9dd046dd11a7c003018ac410f7ee89be86b016",
     "bytes": 6993
   },
   {
@@ -1381,8 +1391,8 @@
   },
   {
     "path": "deploy/scripts/configure-project-build-center.sh",
-    "sha256": "042c3e9cfaa65ca9ab9c69821fba7b685bea0d3f0cb25f445846453236c735d0",
-    "bytes": 7636
+    "sha256": "7865363d46a8d8fc0e651a426f779fab536843597bbcaa3dbadacfb399f7cd5b",
+    "bytes": 8260
   },
   {
     "path": "deploy/scripts/container-compile-check.sh",
@@ -1391,7 +1401,7 @@
   },
   {
     "path": "deploy/scripts/deploy-single-server.sh",
-    "sha256": "9db684f5f61c331a8b7c04c78635ad26eef9bfac31453fc42765078f569a4893",
+    "sha256": "8aa8a8cbbde156cb5abecafadd89fd62adef8d39aa03a80d5b5e46938145180d",
     "bytes": 5996
   },
   {
@@ -1551,7 +1561,7 @@
   },
   {
     "path": "docker-compose.yml",
-    "sha256": "b9adbfca241d95aed8cee85558724529d97da6d0304bbe89a0589d2a215dd9bd",
+    "sha256": "d6e0ff32081d213c9636d691e85f8c5525dd352a6ec6d35380746bb88f2fcbe6",
     "bytes": 3616
   },
   {
@@ -1695,6 +1705,11 @@
     "bytes": 1126
   },
   {
+    "path": "docs/project-build-docker-diagnostics-1.0.103.md",
+    "sha256": "3fd24912b5ec451d32feb8b12b8ac3ac17f1b22c05daf55e386da3999ee71456",
+    "bytes": 910
+  },
+  {
     "path": "docs/project-build-git-clone-retry-1.0.100.md",
     "sha256": "259c7bedc125e24d853797d0ddaea0e801f8a2d78e47e1660b91793df4ca70b9",
     "bytes": 1144
@@ -1831,12 +1846,12 @@
   },
   {
     "path": "frontend/package-lock.json",
-    "sha256": "1cce24bd6ea62198847aa5e2cdc618053ddee87cb238324e6b9d1a218b63a6c7",
+    "sha256": "554829345b38f242b7871b356039360f9d37a59568e3f961665b4ba44d8603b0",
     "bytes": 69351
   },
   {
     "path": "frontend/package.json",
-    "sha256": "9f600e9280d0c82985f7af48556452f787110751b40d16bef6963aaa1ffe84e7",
+    "sha256": "9e8ac0081a12849519b7922f8a36f024166246bd1acbe300e39fee45ca4b3b27",
     "bytes": 503
   },
   {

@@ -87,6 +87,7 @@ def start_project_release_build_thread(build_job_id: int, user_id: int | None) -
 class BuildCenterService:
     """Platform-driven spider project build center.
 
+    v1.0.103 adds Docker build diagnostics: context summary, base image pre-pull and Engine API error tail logging.
     v1.0.102 adds code-level source resilience: mirror mapping, uploaded source bundles and successful-source cache fallback.
     v1.0.101 adds GitHub source archive fallback after git clone failures.
     v1.0.98 adds recovery/cancel/retry lifecycle controls for async build jobs. v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
@@ -994,6 +995,11 @@ class BuildCenterService:
             "CRAWLER_BUILD_SHA": git_commit,
             "PIP_INDEX_URL": settings.crawler_project_build_pip_index_url,
         }
+        dockerfile = source / "Dockerfile"
+        base_images = self._dockerfile_base_images(dockerfile)
+        self._append_log(job, "DOCKER_CONTEXT", self._docker_context_diagnostics(source, dockerfile, base_images))
+        self.db.commit()
+        self._prepare_base_images(job, base_images)
         if self._use_docker_cli():
             self._run(
                 job,
@@ -1013,10 +1019,113 @@ class BuildCenterService:
         try:
             output = DockerEngineClient(timeout=settings.crawler_project_build_timeout_seconds).build(source, tag, build_args=build_args, platform=settings.crawler_project_build_platform)
         except DockerEngineError as exc:
-            raise AppError("Docker Engine API 构建失败", code=40102, data={"image": tag, "error": str(exc)[-4000:]}) from exc
+            duration_ms = int((time.monotonic() - started) * 1000)
+            detail = self._docker_error_detail(exc)
+            self._append_log(job, "DOCKER_BUILD_API", detail, exit_code=1, duration_ms=duration_ms)
+            self.db.commit()
+            raise AppError("Docker Engine API 构建失败", code=40102, data={"image": tag, "error": detail[-8000:], "baseImages": base_images}) from exc
         duration_ms = int((time.monotonic() - started) * 1000)
-        self._append_log(job, "DOCKER_BUILD_API", output[-4000:] or "Docker Engine API build completed", exit_code=0, duration_ms=duration_ms)
+        self._append_log(job, "DOCKER_BUILD_API", output[-8000:] or "Docker Engine API build completed", exit_code=0, duration_ms=duration_ms)
         self.db.commit()
+
+    def _dockerfile_base_images(self, dockerfile: Path) -> list[str]:
+        if not dockerfile.exists():
+            return []
+        images: list[str] = []
+        for raw in dockerfile.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if not line.upper().startswith("FROM "):
+                continue
+            parts = line.split()
+            candidates = [part for part in parts[1:] if not part.startswith("--")]
+            if not candidates:
+                continue
+            image = candidates[0].strip()
+            if image and image.lower() != "scratch" and not image.startswith("$"):
+                images.append(image)
+        return images
+
+    def _docker_context_diagnostics(self, source: Path, dockerfile: Path, base_images: list[str]) -> str:
+        files = 0
+        total_bytes = 0
+        try:
+            for path in source.rglob("*"):
+                if path.is_file():
+                    files += 1
+                    total_bytes += path.stat().st_size
+        except Exception:
+            pass
+        return "\n".join([
+            f"Dockerfile: {'存在' if dockerfile.exists() else '缺失'} {dockerfile}",
+            f"基础镜像: {', '.join(base_images) if base_images else '未解析到 FROM 镜像'}",
+            f"构建平台: {settings.crawler_project_build_platform or 'default'}",
+            f"构建上下文估算: files={files} bytes={total_bytes}",
+            f"执行器: {'DOCKER_CLI' if self._use_docker_cli() else 'DOCKER_ENGINE_API'}",
+        ])
+
+    def _prepare_base_images(self, job: CrawlerProjectBuildJob, base_images: list[str]) -> None:
+        if not base_images:
+            return
+        attempts = max(1, int(settings.crawler_project_docker_pull_attempts or 1))
+        retry_seconds = max(0, int(settings.crawler_project_docker_pull_retry_seconds or 0))
+        for image in base_images:
+            if self._docker_image_available(image):
+                self._append_log(job, "DOCKER_PULL", f"本地已有基础镜像，跳过远端拉取：{image}", exit_code=0)
+                self.db.commit()
+                continue
+            last_error = ""
+            for attempt in range(1, attempts + 1):
+                started = time.monotonic()
+                try:
+                    if self._use_docker_cli():
+                        output = self._docker_pull_cli(image)
+                    else:
+                        output = DockerEngineClient(timeout=min(settings.crawler_project_build_timeout_seconds, 600)).pull(image)
+                    self._append_log(job, "DOCKER_PULL", f"第 {attempt}/{attempts} 次拉取基础镜像成功：{image}\n{output[-4000:]}", exit_code=0, duration_ms=int((time.monotonic() - started) * 1000))
+                    self.db.commit()
+                    break
+                except Exception as exc:
+                    last_error = self._docker_error_detail(exc)
+                    self._append_log(job, "DOCKER_PULL", f"第 {attempt}/{attempts} 次拉取基础镜像失败：{image}\n{last_error[-4000:]}", exit_code=1, duration_ms=int((time.monotonic() - started) * 1000))
+                    self.db.commit()
+                    if attempt < attempts and retry_seconds:
+                        time.sleep(retry_seconds)
+            else:
+                self._append_log(job, "DOCKER_PULL", f"基础镜像未能预拉取：{image}。平台仍会继续执行 docker build；如果构建失败，请检查 Docker Hub/镜像源网络或提前预热该基础镜像。\n最后错误：{last_error[-2000:]}", exit_code=1)
+                self.db.commit()
+
+    def _docker_image_available(self, image: str) -> bool:
+        if self._use_docker_cli():
+            try:
+                proc = subprocess.run(["docker", "image", "inspect", image], text=True, capture_output=True, timeout=20)
+                return proc.returncode == 0
+            except Exception:
+                return False
+        return DockerEngineClient(timeout=30).image_exists(image)
+
+    def _docker_pull_cli(self, image: str) -> str:
+        proc = subprocess.run(["docker", "pull", image], text=True, capture_output=True, timeout=min(settings.crawler_project_build_timeout_seconds, 600))
+        output = "\n".join(part for part in [proc.stdout.strip(), proc.stderr.strip()] if part)
+        if proc.returncode != 0:
+            raise RuntimeError(output or f"docker pull failed: {image}")
+        return output
+
+    def _docker_error_detail(self, exc: Exception) -> str:
+        output = getattr(exc, "output", "") or ""
+        message = str(exc)
+        if output and output not in message:
+            message = message + "\n--- docker output ---\n" + str(output)[-8000:]
+        suggestions: list[str] = []
+        lower = message.lower()
+        if any(token in lower for token in ("pull access denied", "toomanyrequests", "network is unreachable", "i/o timeout", "connection reset", "failed to resolve", "temporary failure", "dial tcp", "tls handshake timeout")):
+            suggestions.append("可能是基础镜像拉取失败：请检查控制端 Docker daemon 到 Docker Hub/镜像源的网络，或提前预热基础镜像。")
+        if "no such file" in lower and "dockerfile" in lower:
+            suggestions.append("可能是构建上下文缺少 Dockerfile，请确认爬虫项目根目录存在 Dockerfile。")
+        if "permission denied" in lower:
+            suggestions.append("可能是 Docker Socket/构建目录权限不足，请检查 API 容器对 /var/run/docker.sock 和 /data/project-builds 的权限。")
+        if suggestions:
+            message = message + "\n--- next actions ---\n" + "\n".join(suggestions)
+        return message
 
     def _docker_push(self, job: CrawlerProjectBuildJob, tag: str, image_repository: str, release_version: str) -> None:
         if self._use_docker_cli():

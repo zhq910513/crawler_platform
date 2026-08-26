@@ -130,6 +130,16 @@ if [ -z "$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ROOT)" ]; then
   set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ROOT /data/project-builds/source-cache
 fi
 
+docker_pull_attempts="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_DOCKER_PULL_ATTEMPTS)"
+docker_pull_attempts="${docker_pull_attempts:-2}"
+case "$docker_pull_attempts" in ''|*[!0-9]*) docker_pull_attempts="2" ;; esac
+set_env_value CRAWLER_PROJECT_DOCKER_PULL_ATTEMPTS "$docker_pull_attempts"
+
+docker_pull_retry_seconds="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_DOCKER_PULL_RETRY_SECONDS)"
+docker_pull_retry_seconds="${docker_pull_retry_seconds:-5}"
+case "$docker_pull_retry_seconds" in ''|*[!0-9]*) docker_pull_retry_seconds="5" ;; esac
+set_env_value CRAWLER_PROJECT_DOCKER_PULL_RETRY_SECONDS "$docker_pull_retry_seconds"
+
 set_env_value CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX "$configured_prefix"
 set_env_value CRAWLER_AGENT_REGISTRY_PORT "$registry_port"
 if [ -z "$(cp_env_value "$ENV_FILE" CRAWLER_AGENT_REGISTRY_PUBLIC_HOST)" ] && [ "$registry_host" != "127.0.0.1" ] && [ "$registry_host" != "localhost" ] && [ "$registry_host" != "0.0.0.0" ]; then
