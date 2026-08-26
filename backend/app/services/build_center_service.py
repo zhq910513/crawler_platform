@@ -405,7 +405,7 @@ class BuildCenterService:
         job.workspace_path = str(workspace)
         self._raise_if_canceled(job)
         self._append_log(job, "CLONE", f"拉取源码：{job.repository_url} ref={job.ref_name}")
-        self._run(job, ["git", "clone", "--depth", "1", "--branch", job.ref_name, job.repository_url, str(source)], cwd=workspace.parent)
+        self._git_clone_source(job, source=source, cwd=workspace.parent)
         self._raise_if_canceled(job)
         git_commit = self._capture(job, ["git", "rev-parse", "--short=12", "HEAD"], cwd=source)
         release_version = self._read_release_version(source)
@@ -471,6 +471,77 @@ class BuildCenterService:
         if not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", value):
             raise AppError("爬虫项目缺少稳定 VERSION，平台不能用 main/dev/latest 生成不可变 Release", code=40095, data={"version": value})
         return value
+
+    def _git_clone_source(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path) -> None:
+        attempts = max(1, int(settings.crawler_project_git_clone_attempts or 1))
+        retry_seconds = max(0, int(settings.crawler_project_git_clone_retry_seconds or 0))
+        timeout_seconds = max(30, min(int(settings.crawler_project_git_clone_timeout_seconds or 300), int(settings.crawler_project_build_timeout_seconds or 1800)))
+        last_output = ""
+        for attempt in range(1, attempts + 1):
+            if source.exists():
+                shutil.rmtree(source, ignore_errors=True)
+            cmd = [
+                "git",
+                "-c", "http.version=HTTP/1.1",
+                "-c", "http.lowSpeedLimit=1024",
+                "-c", "http.lowSpeedTime=60",
+                "-c", "http.postBuffer=524288000",
+                "clone",
+                "--depth", "1",
+                "--single-branch",
+                "--branch", job.ref_name,
+                job.repository_url,
+                str(source),
+            ]
+            env = os.environ.copy()
+            env.update({
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_HTTP_LOW_SPEED_LIMIT": "1024",
+                "GIT_HTTP_LOW_SPEED_TIME": "60",
+            })
+            started = time.monotonic()
+            try:
+                proc = subprocess.run(cmd, cwd=str(cwd), env=env, text=True, capture_output=True, timeout=timeout_seconds)
+                exit_code = proc.returncode
+                output = "\n".join(part for part in [proc.stdout.strip(), proc.stderr.strip()] if part)
+            except subprocess.TimeoutExpired as exc:
+                exit_code = 124
+                stdout = exc.stdout.decode("utf-8", errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+                stderr = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+                output = "\n".join(part for part in [stdout.strip(), stderr.strip(), f"git clone timeout after {timeout_seconds}s"] if part)
+            duration_ms = int((time.monotonic() - started) * 1000)
+            last_output = output
+            self._append_log(
+                job,
+                "CLONE",
+                f"第 {attempt}/{attempts} 次拉取源码\n$ {' '.join(cmd)}\n{output}".strip(),
+                exit_code=exit_code,
+                duration_ms=duration_ms,
+            )
+            self.db.commit()
+            if exit_code == 0:
+                return
+            if attempt < attempts:
+                wait_seconds = retry_seconds * attempt
+                self._append_log(job, "CLONE_RETRY", f"源码拉取失败，{wait_seconds}s 后重试；常见原因：GitHub TLS/网络瞬断、境内出口不稳定、仓库临时不可访问。")
+                self.db.commit()
+                if wait_seconds:
+                    time.sleep(wait_seconds)
+        raise AppError(
+            "源码拉取失败：Git 网络/TLS 连接异常或仓库不可访问",
+            code=40106,
+            data={
+                "repositoryUrl": job.repository_url,
+                "refName": job.ref_name,
+                "attempts": attempts,
+                "lastOutput": last_output[-4000:],
+                "nextActions": [
+                    "稍后点击构建任务的重新构建，平台会重新拉取源码。",
+                    "如果 GitHub 访问长期不稳定，建议先将爬虫项目镜像到平台服务器访问稳定的 Git 仓库。",
+                    "私有仓库或需要代理的网络环境，请在控制端宿主机预配置 Git 凭据/代理。",
+                ],
+            },
+        )
 
     def _load_manifest(self, path: Path) -> ProjectManifest:
         if not path.exists():

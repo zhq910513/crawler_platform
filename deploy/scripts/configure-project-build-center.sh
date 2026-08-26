@@ -77,6 +77,21 @@ pip_index="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_BUILD_PIP_INDEX_URL)"
 pip_index="${pip_index:-$(cp_env_value "$ENV_FILE" PIP_INDEX_URL)}"
 pip_index="${pip_index:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 set_env_value CRAWLER_PROJECT_BUILD_PIP_INDEX_URL "$pip_index"
+
+clone_attempts="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_GIT_CLONE_ATTEMPTS)"
+clone_attempts="${clone_attempts:-3}"
+case "$clone_attempts" in ''|*[!0-9]*) clone_attempts="3" ;; esac
+set_env_value CRAWLER_PROJECT_GIT_CLONE_ATTEMPTS "$clone_attempts"
+
+clone_retry_seconds="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_GIT_CLONE_RETRY_SECONDS)"
+clone_retry_seconds="${clone_retry_seconds:-5}"
+case "$clone_retry_seconds" in ''|*[!0-9]*) clone_retry_seconds="5" ;; esac
+set_env_value CRAWLER_PROJECT_GIT_CLONE_RETRY_SECONDS "$clone_retry_seconds"
+
+clone_timeout_seconds="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_GIT_CLONE_TIMEOUT_SECONDS)"
+clone_timeout_seconds="${clone_timeout_seconds:-300}"
+case "$clone_timeout_seconds" in ''|*[!0-9]*) clone_timeout_seconds="300" ;; esac
+set_env_value CRAWLER_PROJECT_GIT_CLONE_TIMEOUT_SECONDS "$clone_timeout_seconds"
 set_env_value CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX "$configured_prefix"
 set_env_value CRAWLER_AGENT_REGISTRY_PORT "$registry_port"
 if [ -z "$(cp_env_value "$ENV_FILE" CRAWLER_AGENT_REGISTRY_PUBLIC_HOST)" ] && [ "$registry_host" != "127.0.0.1" ] && [ "$registry_host" != "localhost" ] && [ "$registry_host" != "0.0.0.0" ]; then
