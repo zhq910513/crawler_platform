@@ -3,11 +3,10 @@
 *.py[cod]
 frontend/node_modules/
 frontend/dist/
-data/mysql/*
-data/redis/*
-data/task-logs/*
-data/backups/*
-!data/**/.gitkeep
+# 运行期持久化目录由部署脚本/Compose 自动创建，不属于 Git 工作区。
+# 远程自动部署不得因为 data/ 下的 MySQL、Redis、任务日志、构建缓存等运行数据被阻断。
+data/
+!data/.gitkeep
 agent/state.json
 .env.*
 !.env.example

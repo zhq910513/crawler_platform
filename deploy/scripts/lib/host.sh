@@ -171,6 +171,31 @@ cp_check_crlf() {
   return 0
 }
 
+
+cp_git_ensure_runtime_excludes() {
+  # 运行期目录可能由 docker-compose 或构建中心在部署工作区中创建，例如 data/mysql、data/project-builds。
+  # 这些目录属于持久化运行数据，不属于代码发布事实；自动部署应忽略它们，而不是要求人工清理。
+  [ -d .git/info ] || return 0
+  local exclude_file=".git/info/exclude" marker_begin="# crawler_platform runtime excludes: begin" marker_end="# crawler_platform runtime excludes: end"
+  touch "$exclude_file" 2>/dev/null || return 0
+  if grep -F "$marker_begin" "$exclude_file" >/dev/null 2>&1; then
+    return 0
+  fi
+  cat >> "$exclude_file" <<'EOF'
+
+# crawler_platform runtime excludes: begin
+/data/
+/.release/
+/agent/state.json
+/agent/.env.local
+/crawler_agent.env
+/frontend/node_modules/
+/frontend/dist/
+# crawler_platform runtime excludes: end
+EOF
+  return 0
+}
+
 cp_fix_project_permissions() {
   # 部署脚本不再修改 Git 管理文件的执行权限，避免 CI/CD 后把工作区变脏。
   # 内部脚本调用统一使用 `bash deploy/scripts/xxx.sh`，因此无需 chmod +x。
@@ -183,6 +208,7 @@ cp_git_restore_mode_only_changes() {
   # 仅自动恢复“文件权限位变化”；真实内容改动、删除、未跟踪文件仍阻断部署。
   # 适用于历史部署脚本曾 chmod Git 管理脚本导致的 old mode/new mode 漂移。
   [ -d .git ] || return 0
+  cp_git_ensure_runtime_excludes || true
   local status
   status="$(git status --porcelain 2>/dev/null || true)"
   [ -n "$status" ] || return 0

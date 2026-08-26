@@ -45,6 +45,24 @@ jobs:
           script: |
             set -Eeuo pipefail
             cd "${{ secrets.SERVER_PROJECT_DIR }}"
+            if [ -d .git/info ]; then
+              exclude_file=".git/info/exclude"
+              touch "$exclude_file" 2>/dev/null || true
+              if ! grep -F "# crawler_platform runtime excludes: begin" "$exclude_file" >/dev/null 2>&1; then
+                cat >> "$exclude_file" <<'EOF'
+
+# crawler_platform runtime excludes: begin
+/data/
+/.release/
+/agent/state.json
+/agent/.env.local
+/crawler_agent.env
+/frontend/node_modules/
+/frontend/dist/
+# crawler_platform runtime excludes: end
+EOF
+              fi
+            fi
             if [ -d .git ] && [ -n "$(git status --porcelain)" ]; then
               if ! git status --porcelain | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
                 echo "检测到仅 Git 文件权限位变化，已在远程部署入口前自动恢复。"
