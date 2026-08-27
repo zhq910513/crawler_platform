@@ -13,6 +13,9 @@ PIP_INDEX_URL="${PIP_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 fail(){ echo "[FAIL] $*" >&2; exit 1; }
 warn(){ echo "[WARN] $*" >&2; }
 
+
+
+
 if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then
   warn "建议使用 root/sudo 安装执行节点服务；普通用户必须具备 Docker 权限和目标目录写权限。"
 fi

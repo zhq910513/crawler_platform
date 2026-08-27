@@ -4,16 +4,16 @@
 
 ## 核心变化
 
-- 所有 API 返回 `{ "code": 200, "message": "success", "data": ... }`。
-- 前后端 JSON 字段统一 camelCase，数据库字段保持 snake_case。
-- 后端采用 Controller/API → Service → Repository 三层结构。
-- 普通用户强制限制在账户归属公司内，并继续受项目成员权限控制。
-- 所有账号只允许单会话，十分钟内有有效操作视为在线，新登录需确认强制登录。
-- 项目接入改为公司级发现凭证 → 待接入项目 → 正式项目。
-- `sch.py` 只解析任务目录，正式任务必须由前端从任务定义中创建。
-- 项目支持多执行节点运行范围，支持主备和负载均衡；同一任务多机运行预留为任务层分片能力。
-- 任务计划先创建运行实例，再动态分配执行节点；无资源时进入等待资源，不丢 Cron 触发。
-- 告警通知先预留飞书、企业微信、钉钉、邮箱基础配置，只有 P0 才外发。
+* 所有 API 返回 `{ "code": 200, "message": "success", "data": ... }`。
+* 前后端 JSON 字段统一 camelCase，数据库字段保持 snake\_case。
+* 后端采用 Controller/API → Service → Repository 三层结构。
+* 普通用户强制限制在账户归属公司内，并继续受项目成员权限控制。
+* 所有账号只允许单会话，十分钟内有有效操作视为在线，新登录需确认强制登录。
+* 项目接入改为公司级发现凭证 → 待接入项目 → 正式项目。
+* `sch.py` 只解析任务目录，正式任务必须由前端从任务定义中创建。
+* 项目支持多执行节点运行范围，支持主备和负载均衡；同一任务多机运行预留为任务层分片能力。
+* 任务计划先创建运行实例，再动态分配执行节点；无资源时进入等待资源，不丢 Cron 触发。
+* 告警通知先预留飞书、企业微信、钉钉、邮箱基础配置，只有 P0 才外发。
 
 ## 上线检查命令
 
@@ -46,27 +46,28 @@
 后台健康检查：`curl -fsS http://127.0.0.1/health`
 
 
+
 ## 宿主机兼容策略
 
 宿主机最低部署条件只包括：bash、Docker daemon 可用、Docker Compose 可用、当前用户具备 Docker 权限。Python、pip、npm、node、jq、curl、git、ss、netstat、timedatectl 等均属于可选工具；缺失或版本过旧时，预检只给出 WARNING，不打断部署流程。
 
 发布门禁、Python 编译、后端测试、前端构建、smoke-test 默认使用 Docker 工具容器执行。不要在客户服务器上直接执行 `python3 -m compileall backend agent` 作为上线判断，因为客户宿主机可能是 Python 3.6 或更旧版本，会对容器内可正常运行的代码产生误判。
 
-需要强制使用宿主机工具时可显式设置 `CP_USE_HOST_TOOLS=1`，但仅建议研发机使用，测试服和客户服务器默认不启用。
+需要强制使用宿主机工具时可显式设置 `CP\\\\\\\_USE\\\\\\\_HOST\\\\\\\_TOOLS=1`，但仅建议研发机使用，测试服和客户服务器默认不启用。
 
 ## API 约定
 
-- 登录：`POST /api/v1/sessions`
-- 当前会话：`GET /api/v1/sessions/{sessionId}`
-- 公司：`GET/POST /api/v1/companies`
-- 项目接入凭证：`POST /api/v1/companies/{companyId}/discovery-tokens`
-- 待接入项目：`GET/POST /api/v1/discovered-projects`
-- 正式项目：`GET/POST /api/v1/projects`
-- 项目执行节点范围：`GET/PUT /api/v1/projects/{projectId}/servers`
-- 任务定义：`GET /api/v1/projects/{projectId}/task-definitions`
-- 正式任务：`GET/POST /api/v1/tasks`
-- 执行记录：`GET/POST /api/v1/runs`
-- 告警通知配置：`GET/POST /api/v1/notification-channels`
+* 登录：`POST /api/v1/sessions`
+* 当前会话：`GET /api/v1/sessions/{sessionId}`
+* 公司：`GET/POST /api/v1/companies`
+* 项目接入凭证：`POST /api/v1/companies/{companyId}/discovery-tokens`
+* 待接入项目：`GET/POST /api/v1/discovered-projects`
+* 正式项目：`GET/POST /api/v1/projects`
+* 项目执行节点范围：`GET/PUT /api/v1/projects/{projectId}/servers`
+* 任务定义：`GET /api/v1/projects/{projectId}/task-definitions`
+* 正式任务：`GET/POST /api/v1/tasks`
+* 执行记录：`GET/POST /api/v1/runs`
+* 告警通知配置：`GET/POST /api/v1/notification-channels`
 
 ## 项目 Manifest 示例
 
@@ -75,19 +76,19 @@
   "manifestVersion": "1",
   "projectKey": "baidu-shop-detail",
   "projectName": "百度爱采购店铺详情抓取",
-  "projectCode": "baidu_shop_detail",
-  "repositoryUrl": "git@example.com:spiders/baidu_shop_detail.git",
-  "imageRepository": "registry.example.com/spiders/baidu_shop_detail",
+  "projectCode": "baidu\\\\\\\_shop\\\\\\\_detail",
+  "repositoryUrl": "git@example.com:spiders/baidu\\\\\\\_shop\\\\\\\_detail.git",
+  "imageRepository": "registry.example.com/spiders/baidu\\\\\\\_shop\\\\\\\_detail",
   "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "releaseVersion": "1.0.1",
   "releaseChannel": "stable",
-  "taskDefinitions": [
+  "taskDefinitions": \\\\\\\[
     {
-      "definitionKey": "shop_detail",
+      "definitionKey": "shop\\\\\\\_detail",
       "taskName": "店铺详情抓取",
-      "entryModule": "spiders.baidu_shop_detail.main",
+      "entryModule": "spiders.baidu\\\\\\\_shop\\\\\\\_detail.main",
       "entryFunction": "run",
-      "suggestedCron": "0 */1 * * *",
+      "suggestedCron": "0 \\\\\\\*/1 \\\\\\\* \\\\\\\* \\\\\\\*",
       "executionMode": "SINGLE",
       "idempotencyPolicy": "IDEMPOTENT"
     }
@@ -123,7 +124,7 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 
 `bash deploy/scripts/release-upgrade.sh`
 
-发布版本解析优先级：当前 Git tag（如 `v1.0.77`） > 最新 commit message 中的平台版本号（如 `主动修复Agent生命周期续跑与收敛缺口v1.0.77`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP_VERSION`、`PLATFORM_IMAGE_TAG`、`APP_GIT_COMMIT` 和 `APP_BUILD_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
+发布版本解析优先级：当前 Git tag（如 `v1.0.77`） > 最新 commit message 中的平台版本号（如 `主动修复Agent生命周期续跑与收敛缺口v1.0.77`） > 根目录 `VERSION` 文件。脚本会自动同步 `.env` 的 `APP\\\\\\\_VERSION`、`PLATFORM\\\\\\\_IMAGE\\\\\\\_TAG`、`APP\\\\\\\_GIT\\\\\\\_COMMIT` 和 `APP\\\\\\\_BUILD\\\\\\\_TIME`，并在启动后校验 `/health` 返回版本，避免出现 Git 已更新但容器仍运行旧镜像标签的问题。
 
 从 v1.0.72 起，平台版本、Agent 版本和通信协议版本正式解耦；v1.0.77 将“数据库配置”重构为公司级数据资源池，显式拆分资源大类、具体类型、业务用途和连接方式，支持同一家公司配置多种数据库/存储类型以及多个同类型实例。平台普通 patch 发布不再默认构建、推送或替换 Agent；当前 Agent 独立版本为 `1.1.2`，协议版本为 `1.0`。只有 Agent 代码、协议能力或最低兼容要求发生变化时，才进入独立 Agent 镜像准备和节点升级流程。首次服务器接入使用 Join Token；后续 Agent 修复、升级和恢复应复用长期 Agent Credential，不要求重新 Join。
 
@@ -142,6 +143,7 @@ bash deploy/scripts/test-server-validate.sh --yes --skip-reset
 详细配置见：`docs/auto-deploy-test-server.md`。
 
 版本统一规则：Git tag > 最新 commit message > `VERSION`。发布脚本会生成 `.release/version.json`，并同步 `.env`、后端 `/health`、前端 `/version.json`、Agent 运行版本。
+
 
 
 ## 1.0.71 执行节点接入与退役链路
@@ -172,10 +174,13 @@ CI/CD 注册新 release 后，平台通过 Agent 心跳返回 `pendingImagePulls
 bash deploy/scripts/prepare-agent-image.sh
 ```
 
-脚本会自动构建 Agent 镜像、推送到内置 registry、写入 `.env` 的 `CRAWLER_AGENT_IMAGE` 并重启后端服务。云安全组/防火墙放行 5000/TCP 仍需操作员在云控制台处理。执行节点安装命令如需自动配置 HTTP 私有仓库，可追加 `--auto-configure-docker-registry`。
+脚本会自动构建 Agent 镜像、推送到内置 registry、写入 `.env` 的 `CRAWLER\\\\\\\_AGENT\\\\\\\_IMAGE` 并重启后端服务。云安全组/防火墙放行 5000/TCP 仍需操作员在云控制台处理。执行节点安装命令如需自动配置 HTTP 私有仓库，可追加 `--auto-configure-docker-registry`。
 
 ## 1.0.68 导航栏版本展示与 CI/CD 执行组件镜像自动化
 
 1.0.68 保持旧版深色侧边栏风格，不改变导航宽度、菜单字体、圆角和选中态；通过固定侧边栏高度、菜单内部滚动和版本卡固定保留，解决导航项增多后左下角版本不可见的问题。
 
-GitHub Actions 部署入口会自动传入平台服务器公网主机 `CP_DEPLOY_PUBLIC_HOST`，并在 CI/CD 场景启用 `STRICT_AGENT_IMAGE_PREPARE=1`。执行组件镜像准备脚本会据此自动写入 `CRAWLER_AGENT_IMAGE=<公网主机>:5000/crawler_platform_agent:<版本>`。如果准备失败，CI/CD 会失败并输出原因，避免部署成功后运行总览仍残留执行组件镜像地址必须处理项。
+GitHub Actions 部署入口会自动传入平台服务器公网主机 `CP\\\\\\\_DEPLOY\\\\\\\_PUBLIC\\\\\\\_HOST`，并在 CI/CD 场景启用 `STRICT\\\\\\\_AGENT\\\\\\\_IMAGE\\\\\\\_PREPARE=1`。执行组件镜像准备脚本会据此自动写入 `CRAWLER\\\\\\\_AGENT\\\\\\\_IMAGE=<公网主机>:5000/crawler\\\\\\\_platform\\\\\\\_agent:<版本>`。如果准备失败，CI/CD 会失败并输出原因，
+
+避免部署成功后运行总览仍残留执行组件镜像地址必须处理项。
+
