@@ -81,14 +81,19 @@ def test_remote_auto_deploy_recovers_mode_only_changes_without_reset_hard() -> N
     contract = (ROOT / 'deploy/scripts/check-deploy-worktree-contract.py').read_text(encoding='utf-8')
 
     assert 'cp_git_restore_mode_only_changes()' in host
+    assert 'cp_git_status_deploy_relevant()' in host
+    assert 'cp_git_register_deploy_runtime_excludes()' in host
     assert 'core.fileMode=false' in host
     assert 'git reset -q HEAD -- .' in host
     assert 'git checkout -q -- .' in host
+    assert 'data/' in host and '.release/' in host
     assert 'git reset --hard' not in host
     assert 'chmod +x deploy/scripts/*.sh' not in host
     assert 'chmod +x agent/install-linux.sh' not in host
+    assert 'cp_git_register_deploy_runtime_excludes' in remote
     assert 'cp_git_restore_mode_only_changes' in remote
-    assert '真实未提交改动' in remote
+    assert '真实未提交源码改动' in remote
+    assert '运行期 data/' in remote
     gate = (ROOT / 'deploy/scripts/commercial-release-gate.sh').read_text(encoding='utf-8')
     workflow = (ROOT / '.github/workflows/deploy-test-server.yml').read_text(encoding='utf-8')
     assert 'check-deploy-worktree-contract.py' in gate
@@ -96,4 +101,6 @@ def test_remote_auto_deploy_recovers_mode_only_changes_without_reset_hard() -> N
     assert '内部部署脚本调用应使用 bash' in contract
     assert '检测到仅 Git 文件权限位变化' in workflow
     assert 'core.fileMode=false' in workflow
+    assert 'data/ .release/ agent/state.json crawler_agent.env' in workflow
+    assert 'relevant_status' in workflow
     assert '[ ! -f deploy/scripts/remote-auto-deploy.sh ]' in workflow

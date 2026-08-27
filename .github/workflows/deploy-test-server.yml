@@ -45,34 +45,25 @@ jobs:
           script: |
             set -Eeuo pipefail
             cd "${{ secrets.SERVER_PROJECT_DIR }}"
-            if [ -d .git/info ]; then
-              exclude_file=".git/info/exclude"
-              touch "$exclude_file" 2>/dev/null || true
-              if ! grep -F "# crawler_platform runtime excludes: begin" "$exclude_file" >/dev/null 2>&1; then
-                cat >> "$exclude_file" <<'EOF'
-
-# crawler_platform runtime excludes: begin
-/data/
-/.release/
-/agent/state.json
-/agent/.env.local
-/crawler_agent.env
-/frontend/node_modules/
-/frontend/dist/
-# crawler_platform runtime excludes: end
-EOF
-              fi
-            fi
-            if [ -d .git ] && [ -n "$(git status --porcelain)" ]; then
-              if ! git status --porcelain | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
-                echo "检测到仅 Git 文件权限位变化，已在远程部署入口前自动恢复。"
-                git status --short
-                git reset -q HEAD -- .
-                git checkout -q -- .
+            if [ -d .git ]; then
+              mkdir -p .git/info
+              touch .git/info/exclude
+              for item in data/ .release/ agent/state.json crawler_agent.env; do
+                grep -Fxq "$item" .git/info/exclude || echo "$item" >> .git/info/exclude
+              done
+              relevant_status="$(git status --porcelain | awk 'substr($0,1,3)=="?? " {p=substr($0,4); if (p=="data/" || p ~ /^data\// || p==".release/" || p ~ /^\.release\// || p=="agent/state.json" || p=="crawler_agent.env") next} {print}')"
+              if [ -n "$relevant_status" ]; then
+                if ! printf '%s\n' "$relevant_status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
+                  echo "检测到仅 Git 文件权限位变化，已在远程部署入口前自动恢复。"
+                  git status --short
+                  git reset -q HEAD -- .
+                  git checkout -q -- .
+                fi
               fi
             fi
             if [ ! -f deploy/scripts/remote-auto-deploy.sh ]; then
-              if [ -n "$(git status --porcelain)" ]; then git status --short; exit 1; fi
+              relevant_status="$(git status --porcelain | awk 'substr($0,1,3)=="?? " {p=substr($0,4); if (p=="data/" || p ~ /^data\// || p==".release/" || p ~ /^\.release\// || p=="agent/state.json" || p=="crawler_agent.env") next} {print}')"
+              if [ -n "$relevant_status" ]; then printf '%s\n' "$relevant_status"; exit 1; fi
               git fetch origin main --tags
               git checkout main
               git pull --ff-only origin main

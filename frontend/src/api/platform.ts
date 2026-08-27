@@ -66,14 +66,6 @@ export function deployProjectRelease(projectId: number, payload: ProjectReleaseD
 export function analyzeProjectPublishPipeline(payload: ProjectPublishPipelineRequest) { return request<ProjectPublishPipelineResult>(http.post('/project-publish/pipeline-analyses', payload)) }
 export function runProjectPublishPipeline(payload: ProjectPublishPipelineRequest) { return request<ProjectPublishPipelineResult>(http.post('/project-publish/pipelines', payload)) }
 export function getProjectBuildJob(buildJobId: number) { return request<Record<string, unknown>>(http.get(`/project-builds/${buildJobId}`)) }
-export function uploadProjectSourceBundle(payload: { companyId: number; repositoryUrl: string; refName: string; file: File }) {
-  const form = new FormData()
-  form.append('company_id', String(payload.companyId))
-  form.append('repository_url', payload.repositoryUrl)
-  form.append('ref_name', payload.refName || 'main')
-  form.append('file', payload.file)
-  return request<{ sourceBundle: Record<string, unknown>; message: string }>(http.post('/project-source-bundles', form, { headers: { 'Content-Type': 'multipart/form-data' } }))
-}
 export function cancelProjectBuildJob(buildJobId: number, reason = '用户取消构建') { return request<{ buildJob: Record<string, unknown>; message: string }>(http.post(`/project-builds/${buildJobId}/cancellations`, { reason })) }
 export function retryProjectBuildJob(buildJobId: number) { return request<{ buildJob: Record<string, unknown>; message: string }>(http.post(`/project-builds/${buildJobId}/retries`)) }
 export function listProjectReleaseDeployments(projectId: number) { return request<Record<string, unknown>[]>(http.get(`/projects/${projectId}/release-deployments`)) }

@@ -28,9 +28,13 @@ def scan_host_helpers() -> None:
     text = read(host)
     if "cp_git_restore_mode_only_changes()" not in text:
         fail("host.sh 缺少 Git 权限位漂移自愈函数 cp_git_restore_mode_only_changes")
-    for snippet in ["core.fileMode=false", "git reset -q HEAD -- .", "git checkout -q -- ."]:
+    if "cp_git_status_deploy_relevant()" not in text:
+        fail("host.sh 缺少部署工作区运行期目录过滤函数 cp_git_status_deploy_relevant")
+    if "cp_git_register_deploy_runtime_excludes()" not in text:
+        fail("host.sh 缺少部署工作区运行期目录 exclude 注册函数")
+    for snippet in ["core.fileMode=false", "git reset -q HEAD -- .", "git checkout -q -- .", "data/", ".release/"]:
         if snippet not in text:
-            fail(f"Git 权限位漂移自愈函数缺少关键保护：{snippet}")
+            fail(f"Git 权限位漂移/运行期目录自愈函数缺少关键保护：{snippet}")
     forbidden = ["chmod +x deploy/scripts/*.sh", "chmod +x agent/install-linux.sh"]
     for item in forbidden:
         if item in text:
@@ -40,6 +44,8 @@ def scan_host_helpers() -> None:
 def scan_remote_entry() -> None:
     remote = ROOT / "deploy/scripts/remote-auto-deploy.sh"
     text = read(remote)
+    if "cp_git_register_deploy_runtime_excludes" not in text:
+        fail("remote-auto-deploy.sh 未在部署前注册运行期目录 exclude")
     if "cp_git_restore_mode_only_changes" not in text:
         fail("remote-auto-deploy.sh 未在部署前调用权限位漂移自愈")
     if "git status --porcelain" in text and "工作区存在未提交改动" in text:
@@ -54,6 +60,8 @@ def scan_workflow_bootstrap() -> None:
         "core.fileMode=false",
         "git reset -q HEAD -- .",
         "git checkout -q -- .",
+        "data/ .release/ agent/state.json crawler_agent.env",
+        "relevant_status",
         "[ ! -f deploy/scripts/remote-auto-deploy.sh ]",
         "CP_DEPLOY_PUBLIC_HOST",
         "STRICT_AGENT_IMAGE_PREPARE=\"1\"",

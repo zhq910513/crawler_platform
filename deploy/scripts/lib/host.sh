@@ -171,31 +171,6 @@ cp_check_crlf() {
   return 0
 }
 
-
-cp_git_ensure_runtime_excludes() {
-  # 运行期目录可能由 docker-compose 或构建中心在部署工作区中创建，例如 data/mysql、data/project-builds。
-  # 这些目录属于持久化运行数据，不属于代码发布事实；自动部署应忽略它们，而不是要求人工清理。
-  [ -d .git/info ] || return 0
-  local exclude_file=".git/info/exclude" marker_begin="# crawler_platform runtime excludes: begin" marker_end="# crawler_platform runtime excludes: end"
-  touch "$exclude_file" 2>/dev/null || return 0
-  if grep -F "$marker_begin" "$exclude_file" >/dev/null 2>&1; then
-    return 0
-  fi
-  cat >> "$exclude_file" <<'EOF'
-
-# crawler_platform runtime excludes: begin
-/data/
-/.release/
-/agent/state.json
-/agent/.env.local
-/crawler_agent.env
-/frontend/node_modules/
-/frontend/dist/
-# crawler_platform runtime excludes: end
-EOF
-  return 0
-}
-
 cp_fix_project_permissions() {
   # 部署脚本不再修改 Git 管理文件的执行权限，避免 CI/CD 后把工作区变脏。
   # 内部脚本调用统一使用 `bash deploy/scripts/xxx.sh`，因此无需 chmod +x。
@@ -204,13 +179,45 @@ cp_fix_project_permissions() {
   fi
 }
 
-cp_git_restore_mode_only_changes() {
-  # 仅自动恢复“文件权限位变化”；真实内容改动、删除、未跟踪文件仍阻断部署。
-  # 适用于历史部署脚本曾 chmod Git 管理脚本导致的 old mode/new mode 漂移。
+cp_git_register_deploy_runtime_excludes() {
+  # 生产部署目录会产生运行期数据，例如 data/project-builds、MySQL/Redis 数据、任务日志和备份。
+  # 这些目录不是源码改动，不应阻断自动部署；写入 .git/info/exclude 可兼容服务器上旧版
+  # remote-auto-deploy.sh 在切换到新版前的工作区洁净检查。
   [ -d .git ] || return 0
-  cp_git_ensure_runtime_excludes || true
+  mkdir -p .git/info 2>/dev/null || return 0
+  touch .git/info/exclude 2>/dev/null || return 0
+  local item
+  for item in \
+    'data/' \
+    '.release/' \
+    'agent/state.json' \
+    'crawler_agent.env'
+  do
+    grep -Fxq "$item" .git/info/exclude 2>/dev/null || printf '%s\n' "$item" >> .git/info/exclude
+  done
+}
+
+cp_git_status_deploy_relevant() {
+  # 输出“应阻断部署”的 Git 状态；忽略明确的运行期目录。
+  [ -d .git ] || return 0
+  git status --porcelain 2>/dev/null | awk '
+    substr($0,1,3)=="?? " {
+      p=substr($0,4)
+      if (p=="data/" || p ~ /^data\//) next
+      if (p==".release/" || p ~ /^\.release\//) next
+      if (p=="agent/state.json" || p=="crawler_agent.env") next
+    }
+    {print}
+  '
+}
+
+cp_git_restore_mode_only_changes() {
+  # 仅自动恢复“文件权限位变化”；真实内容改动、删除、未跟踪源码文件仍阻断部署。
+  # 明确的运行期目录由 cp_git_status_deploy_relevant 过滤，不参与源码洁净判断。
+  [ -d .git ] || return 0
+  cp_git_register_deploy_runtime_excludes
   local status
-  status="$(git status --porcelain 2>/dev/null || true)"
+  status="$(cp_git_status_deploy_relevant || true)"
   [ -n "$status" ] || return 0
 
   if printf '%s\n' "$status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}'; then
@@ -225,7 +232,7 @@ cp_git_restore_mode_only_changes() {
     git status --short >&2 || true
     git reset -q HEAD -- . || return 1
     git checkout -q -- . || return 1
-    if [ -z "$(git status --porcelain 2>/dev/null || true)" ]; then
+    if [ -z "$(cp_git_status_deploy_relevant || true)" ]; then
       cp_info "Git 文件权限位漂移已自动恢复。"
       return 0
     fi
