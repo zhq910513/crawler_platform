@@ -1,20 +1,22 @@
-# Release Notes v1.0.103
+# v1.0.103
 
-## 目标
+## 修复
 
-修复项目构建进入 Docker build 阶段后只显示“Docker Engine API 构建失败”但缺少真实失败原因的问题，并在代码层补齐基础镜像预拉取、构建上下文诊断和 Docker Engine API 失败日志回传。
+- 修复远程自动部署被 `data/` 运行期目录阻断的问题：部署入口会在 Git 工作区检查前写入 `.git/info/exclude` 运行期忽略规则，`data/`、`.release/`、本地数据库文件不再阻断自动部署。
+- 修复平台控制端访问 GitHub 长期不稳定时只有远程拉取路径的问题：构建中心新增已上传源码包兜底与源码缓存兜底。
+- 修复 Docker Engine API 构建失败时错误信息缺少上下文的问题：保留最近 Docker stream tail，并在 Build Job 日志中输出 Docker context、Dockerfile 状态、基础镜像和上下文大小。
+- 修复构建中心 readiness 对 `git` 命令的硬性阻断：当源码包、源码缓存或官方归档包兜底可用时，`git` 缺失不再直接阻断发布分析。
 
-## 改动
+## 新增配置
 
-- Docker Engine API client 保留 build/pull/push JSON stream 的可读日志尾部。
-- Docker Engine API build 失败时写入 `DOCKER_BUILD_API` 失败日志，不再只写最终 `FAILED`。
-- 构建前新增 `DOCKER_CONTEXT`：展示 Dockerfile、基础镜像、构建平台、上下文估算、执行器。
-- 构建前新增基础镜像预检查 / 预拉取日志 `DOCKER_PULL`。
-- 新增配置：
-  - `CRAWLER_PROJECT_DOCKER_PULL_ATTEMPTS=2`
-  - `CRAWLER_PROJECT_DOCKER_PULL_RETRY_SECONDS=5`
-- Docker Engine API tar context 开始尊重常见 `.dockerignore` 规则，避免 API 构建路径和 docker CLI 构建路径差异过大。
+- `CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED=1`
+- `CRAWLER_PROJECT_SOURCE_BUNDLE_DIR=/data/project-builds/source-bundles`
+- `CRAWLER_PROJECT_SOURCE_CACHE_ENABLED=1`
+- `CRAWLER_PROJECT_SOURCE_CACHE_DIR=/data/project-builds/source-cache`
+- `CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED=1`
 
-## 边界
+## 新增接口
 
-如果控制端 Docker daemon 无法访问 Docker Hub 或镜像源，代码无法凭空获取基础镜像；本版本会把该根因直接暴露到构建任务日志，并允许通过预热基础镜像或配置镜像源解决。
+- `POST /api/v1/project-builds/source-bundles`
+
+用于预置爬虫项目源码包。后续构建在 `git clone` / GitHub 归档包不可用时会自动使用对应 `repositoryUrl + refName` 的源码包。

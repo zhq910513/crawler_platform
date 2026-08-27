@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -34,6 +34,22 @@ def list_project_build_jobs(company_id: int | None = Query(default=None), limit:
         from app.services.permissions import require_company_scope
         require_company_scope(user, company_id)
     return ok(BuildCenterService(db).list_jobs(company_id, limit))
+
+
+@router.post("/project-builds/source-bundles")
+async def upload_project_build_source_bundle(
+    company_id: int = Form(...),
+    repository_url: str = Form(...),
+    ref_name: str = Form(default="main"),
+    file: UploadFile = File(...),
+    user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.services.permissions import require_company_scope
+    require_company_scope(user, company_id)
+    content = await file.read()
+    payload = BuildCenterService(db).save_source_bundle(user, company_id, repository_url, ref_name, file.filename or "source.zip", content)
+    return ok({"sourceBundle": payload, "message": "源码包已保存；后续构建在 git clone/归档包不可用时会自动使用该源码包兜底。"})
 
 
 @router.get("/project-builds/{build_job_id}")

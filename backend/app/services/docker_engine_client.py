@@ -118,6 +118,7 @@ class DockerEngineClient:
 
     @staticmethod
     def _raise_on_stream_error(text: str, stage: str) -> None:
+        stream_tail: list[str] = []
         for line in text.splitlines():
             line = line.strip()
             if not line:
@@ -125,10 +126,22 @@ class DockerEngineClient:
             try:
                 payload = json.loads(line)
             except json.JSONDecodeError:
+                stream_tail.append(line)
+                stream_tail = stream_tail[-12:]
                 continue
+            if payload.get("stream"):
+                stream_tail.append(str(payload.get("stream") or "").strip())
+                stream_tail = [item for item in stream_tail if item][-12:]
+            if payload.get("status"):
+                progress = payload.get("progress") or ""
+                stream_tail.append((str(payload.get("status")) + (" " + str(progress) if progress else "")).strip())
+                stream_tail = [item for item in stream_tail if item][-12:]
             if payload.get("error"):
                 detail = payload.get("errorDetail") or {}
                 message = detail.get("message") or payload.get("error")
+                tail = "\n".join(item for item in stream_tail[-8:] if item)
+                if tail:
+                    raise DockerEngineError(f"{stage} failed: {message}\n--- recent docker stream ---\n{tail}")
                 raise DockerEngineError(f"{stage} failed: {message}")
 
     @staticmethod

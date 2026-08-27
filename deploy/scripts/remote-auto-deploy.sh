@@ -16,10 +16,10 @@ if [ ! -d .git ]; then
   exit 1
 fi
 
-cp_git_register_deploy_runtime_excludes
+cp_ensure_runtime_data_git_excludes
 if ! cp_git_restore_mode_only_changes; then
-  cp_git_status_deploy_relevant >&2 || git status --short >&2 || true
-  cp_die "工作区存在真实未提交源码改动，自动部署已停止。运行期 data/、.release/ 等目录会自动忽略；内容改动、删除或未跟踪源码文件需要提交、清理或人工确认。"
+  cp_git_status_filtered >&2 || git status --short >&2 || true
+  cp_die "工作区存在真实未提交源码改动，自动部署已停止。data/、.release/ 等运行期产物不会阻断部署；内容改动、删除或未跟踪源码文件需要提交、清理或人工确认。"
   exit 1
 fi
 
