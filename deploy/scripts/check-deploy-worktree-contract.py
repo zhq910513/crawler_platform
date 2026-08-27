@@ -28,6 +28,8 @@ def scan_host_helpers() -> None:
     text = read(host)
     if "cp_git_restore_mode_only_changes()" not in text:
         fail("host.sh 缺少 Git 权限位漂移自愈函数 cp_git_restore_mode_only_changes")
+    if "cp_git_relevant_status()" not in text or "CP_DEPLOY_IGNORED_UNTRACKED_PATHS" not in text:
+        fail("host.sh 缺少本地运行目录忽略契约，data/ 等运行数据会阻断远程自动部署")
     for snippet in ["core.fileMode=false", "git reset -q HEAD -- .", "git checkout -q -- ."]:
         if snippet not in text:
             fail(f"Git 权限位漂移自愈函数缺少关键保护：{snippet}")

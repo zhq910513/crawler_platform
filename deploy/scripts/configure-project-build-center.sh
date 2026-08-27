@@ -108,26 +108,19 @@ source_archive_timeout_seconds="${source_archive_timeout_seconds:-120}"
 case "$source_archive_timeout_seconds" in ''|*[!0-9]*) source_archive_timeout_seconds="120" ;; esac
 set_env_value CRAWLER_PROJECT_SOURCE_ARCHIVE_TIMEOUT_SECONDS "$source_archive_timeout_seconds"
 
-source_bundle_upload="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED)"
-source_bundle_upload="${source_bundle_upload:-1}"
-case "$source_bundle_upload" in 1|true|TRUE|yes|YES|on|ON) source_bundle_upload="1" ;; *) source_bundle_upload="0" ;; esac
-set_env_value CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED "$source_bundle_upload"
+
 source_bundle_dir="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_BUNDLE_DIR)"
 source_bundle_dir="${source_bundle_dir:-/data/project-builds/source-bundles}"
 set_env_value CRAWLER_PROJECT_SOURCE_BUNDLE_DIR "$source_bundle_dir"
 
-source_cache="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ENABLED)"
-source_cache="${source_cache:-1}"
-case "$source_cache" in 1|true|TRUE|yes|YES|on|ON) source_cache="1" ;; *) source_cache="0" ;; esac
-set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ENABLED "$source_cache"
-source_cache_dir="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_DIR)"
-source_cache_dir="${source_cache_dir:-/data/project-builds/source-cache}"
-set_env_value CRAWLER_PROJECT_SOURCE_CACHE_DIR "$source_cache_dir"
+source_cache_enabled="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ENABLED)"
+source_cache_enabled="${source_cache_enabled:-1}"
+case "$source_cache_enabled" in 1|true|TRUE|yes|YES|on|ON) source_cache_enabled="1" ;; *) source_cache_enabled="0" ;; esac
+set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ENABLED "$source_cache_enabled"
 
-context_diag="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED)"
-context_diag="${context_diag:-1}"
-case "$context_diag" in 1|true|TRUE|yes|YES|on|ON) context_diag="1" ;; *) context_diag="0" ;; esac
-set_env_value CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED "$context_diag"
+source_cache_root="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_CACHE_ROOT)"
+source_cache_root="${source_cache_root:-/data/project-builds/source-cache}"
+set_env_value CRAWLER_PROJECT_SOURCE_CACHE_ROOT "$source_cache_root"
 
 set_env_value CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX "$configured_prefix"
 set_env_value CRAWLER_AGENT_REGISTRY_PORT "$registry_port"

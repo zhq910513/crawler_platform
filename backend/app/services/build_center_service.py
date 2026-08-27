@@ -87,7 +87,7 @@ def start_project_release_build_thread(build_job_id: int, user_id: int | None) -
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.103 adds offline source bundle/cache fallback and deployment runtime-data guards. v1.0.101 adds GitHub source archive fallback after git clone failures.
+    v1.0.104 adds local source bundle/source cache fallbacks and deployment runtime-directory hygiene. v1.0.101 adds GitHub source archive fallback after git clone failures.
     v1.0.98 adds recovery/cancel/retry lifecycle controls for async build jobs. v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
@@ -112,8 +112,13 @@ class BuildCenterService:
             missing.append("平台构建执行器未启用：CRAWLER_PROJECT_BUILD_ENABLED=1")
         if not self._image_repository_prefix():
             missing.append("镜像仓库命名前缀无法自动确定：请配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX 或 CRAWLER_AGENT_REGISTRY_PUBLIC_HOST/CRAWLER_CONTROL_PUBLIC_BASE_URL")
-        if not diagnostics["gitAvailable"] and not diagnostics.get("offlineSourceFallbackAvailable"):
-            missing.append("Git 命令不可用：git，且没有可用的源码包/源码缓存兜底")
+        source_fallback_available = bool(
+            settings.crawler_project_source_archive_fallback_enabled
+            or settings.crawler_project_source_cache_enabled
+            or Path(settings.crawler_project_source_bundle_dir).expanduser().exists()
+        )
+        if not diagnostics["gitAvailable"] and not source_fallback_available:
+            missing.append("Git 命令不可用：git，且源码包/归档包/缓存兜底均不可用")
         if not diagnostics["dockerExecutorAvailable"]:
             if not diagnostics["dockerCliAvailable"]:
                 missing.append("Docker 执行器不可用：未找到 docker 命令，且 /var/run/docker.sock 不可访问")
@@ -130,8 +135,8 @@ class BuildCenterService:
                 next_actions=(
                     "执行发布脚本会自动启用 CRAWLER_PROJECT_BUILD_ENABLED=1，并补齐内置 registry 镜像仓库前缀。",
                     "如自动推导出的 registry 地址不符合执行节点访问路径，可显式配置 CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX。",
-                    "确保构建执行环境可执行 git；如果控制端无法稳定访问 GitHub，可上传源码包或复用源码缓存，平台会在 git clone/归档包失败后自动兜底。",
-                    "确保 API 容器挂载 /var/run/docker.sock；v1.0.95 起 docker CLI 缺失时会自动走 Docker Engine API。",
+                    "构建执行环境优先使用 git；git 不可用时会自动尝试源码包、GitHub 归档包和本地源码缓存兜底。",
+                    "确保构建执行环境可访问 /var/run/docker.sock；v1.0.95 起 docker CLI 缺失时会自动走 Docker Engine API。",
                     "构建器调用爬虫项目 scripts/platform_build_contract.sh 生成 manifest，再由平台登记 Release。",
                     "项目发布失败时请先查看返回的 buildJob.buildLogs；v1.0.96 起构建失败会直接带回最近构建日志。",
                     "爬虫项目必须提供 scripts/platform_build_contract.sh。",
@@ -147,6 +152,8 @@ class BuildCenterService:
             message="平台构建中心已启用：发布时将由平台拉取源码、执行被动构建契约、构建镜像、登记不可变 Release。",
             next_actions=("点击发布项目后，平台将创建 Build Job 并同步完成最小构建发布闭环。",),
             limitations=(
+                "v1.0.104 允许 data/ 等本地运行目录存在，不再因运行数据导致远程自动部署停止。",
+                "v1.0.104 会在 git clone 失败或 git 缺失时尝试本地源码包、GitHub 归档包和上次成功源码缓存兜底。",
                 "v1.0.96 会在平台发布脚本中自动启用本地构建执行器、构建目录、Docker Socket 和内置 registry 前缀。",
                 "当 API 容器没有 docker 命令但已挂载 Docker Socket 时，构建中心会自动使用 Docker Engine API 完成 build/push/inspect。",
                 "私有仓库凭据和外部 registry 凭据的数据库模型仍属于后续版本；当前优先打通平台内置 registry 的最小闭环。",
@@ -413,9 +420,9 @@ class BuildCenterService:
         self._append_log(job, "CLONE", f"拉取源码：{job.repository_url} ref={job.ref_name}")
         self._git_clone_source(job, source=source, cwd=workspace.parent)
         self._raise_if_canceled(job)
-        self._store_source_cache(job, source)
         git_commit = self._source_git_commit(job, source)
         release_version = self._read_release_version(source)
+        self._store_source_cache(job, source=source, git_commit=git_commit)
         self._append_log(job, "CONTRACT", "执行爬虫项目被动构建契约 scripts/platform_build_contract.sh")
         env = {
             "RELEASE_VERSION": release_version,
@@ -432,7 +439,6 @@ class BuildCenterService:
         push_image_repo = self._push_image_repository_for(project_code, image_repo)
         tag = f"{push_image_repo}:{release_version}"
         self._append_log(job, "DOCKER_BUILD", f"构建镜像：{tag}（Release 对外仓库：{image_repo}）")
-        self._log_docker_context(job, source)
         self._docker_build(job, source, tag, release_version, git_commit)
         self._raise_if_canceled(job)
         self._append_log(job, "DOCKER_PUSH", f"推送镜像：{tag}")
@@ -485,11 +491,12 @@ class BuildCenterService:
         retry_seconds = max(0, int(settings.crawler_project_git_clone_retry_seconds or 0))
         timeout_seconds = max(30, min(int(settings.crawler_project_git_clone_timeout_seconds or 300), int(settings.crawler_project_build_timeout_seconds or 1800)))
         last_output = ""
-        if shutil.which("git") is None:
+        git_bin = shutil.which("git")
+        if not git_bin:
             last_output = "git command not found in build executor"
             self._append_log(job, "CLONE_SKIP", "构建执行环境缺少 git 命令，跳过 git clone，直接尝试源码包/归档包/缓存兜底。", exit_code=127)
             self.db.commit()
-        for attempt in ([] if shutil.which("git") is None else range(1, attempts + 1)):
+        for attempt in ([] if not git_bin else range(1, attempts + 1)):
             if source.exists():
                 shutil.rmtree(source, ignore_errors=True)
             cmd = [
@@ -532,6 +539,10 @@ class BuildCenterService:
             )
             self.db.commit()
             if exit_code == 0:
+                metadata = dict(job.build_metadata or {})
+                metadata["sourceInput"] = "git"
+                job.build_metadata = metadata
+                self.db.commit()
                 return
             if attempt < attempts:
                 wait_seconds = retry_seconds * attempt
@@ -539,7 +550,7 @@ class BuildCenterService:
                 self.db.commit()
                 if wait_seconds:
                     time.sleep(wait_seconds)
-        if self._try_uploaded_source_bundle_fallback(job, source=source, cwd=cwd):
+        if self._try_local_source_bundle_fallback(job, source=source, cwd=cwd):
             return
         if self._try_source_archive_fallback(job, source=source, cwd=cwd, last_git_output=last_output):
             return
@@ -555,154 +566,150 @@ class BuildCenterService:
                 "lastOutput": last_output[-4000:],
                 "archiveFallbackEnabled": bool(settings.crawler_project_source_archive_fallback_enabled),
                 "archiveFallbackTried": bool(self._github_source_archive_candidates(job.repository_url, job.ref_name)),
+                "sourceBundleDir": str(Path(settings.crawler_project_source_bundle_dir).expanduser()),
+                "sourceCacheEnabled": bool(settings.crawler_project_source_cache_enabled),
+                "sourceCacheRoot": str(Path(settings.crawler_project_source_cache_root).expanduser()),
                 "nextActions": [
                     "稍后点击构建任务的重新构建，平台会重新拉取源码。",
                     "平台已自动尝试本地源码包、GitHub codeload 归档包和源码缓存兜底；如果仍失败，说明没有任何可用源码输入。",
-                    "如果 GitHub 访问长期不稳定，可通过项目构建源码包上传接口预置 zip/tar.gz，或使用平台可访问的 Git 镜像仓库地址。",
+                    "如果 GitHub 访问长期不稳定，可在源码包目录预置 zip/tar.gz，或使用平台可访问的 Git 镜像仓库地址。",
                     "私有仓库或需要代理的网络环境，请在控制端宿主机预配置 Git 凭据/代理；平台不会内置不可信第三方代理。",
                 ],
             },
         )
 
 
+    def _source_git_commit(self, job: CrawlerProjectBuildJob, source: Path) -> str:
+        if (source / ".git").exists():
+            return self._capture(job, ["git", "rev-parse", "--short=12", "HEAD"], cwd=source)
+        metadata = dict(job.build_metadata or {})
+        commit = str(metadata.get("sourceArchiveCommit") or metadata.get("sourceCacheCommit") or metadata.get("sourceBundleCommit") or "").strip()
+        source_input = str(metadata.get("sourceInput") or "archive").strip() or "archive"
+        if not commit:
+            safe_ref = re.sub(r"[^A-Za-z0-9_.-]+", "_", job.ref_name or source_input).strip("_") or source_input
+            commit = f"{source_input}-{safe_ref}"
+        commit = commit[:100]
+        self._append_log(job, "SOURCE_IDENTIFY", f"源码由 {source_input} 获取，目录中没有 .git 元数据；使用构建标识：{commit}")
+        self.db.commit()
+        return commit
+
     def _source_key(self, repository_url: str, ref_name: str) -> str:
-        value = f"{(repository_url or '').strip()}\n{(ref_name or 'main').strip()}".encode("utf-8")
-        return hashlib.sha256(value).hexdigest()[:24]
+        raw = f"{(repository_url or '').strip()}\n{(ref_name or 'main').strip()}".encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()[:24]
 
-    def _source_bundle_candidates(self, job: CrawlerProjectBuildJob) -> list[Path]:
+    def _safe_repo_name(self, repository_url: str) -> str:
+        value = (repository_url or "crawler_project").rstrip("/")
+        name = value.split("/")[-1] or "crawler_project"
+        if name.endswith(".git"):
+            name = name[:-4]
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "crawler_project"
+
+    def _safe_ref_name(self, ref_name: str) -> str:
+        return re.sub(r"[^A-Za-z0-9_.-]+", "_", ref_name or "main").strip("_") or "main"
+
+    def _local_source_bundle_candidates(self, job: CrawlerProjectBuildJob) -> list[tuple[Path, str]]:
+        base = Path(settings.crawler_project_source_bundle_dir).expanduser()
+        repo = self._safe_repo_name(job.repository_url)
+        ref = self._safe_ref_name(job.ref_name)
         key = self._source_key(job.repository_url, job.ref_name)
-        directory = Path(settings.crawler_project_source_bundle_dir).expanduser()
-        names = [f"{key}.tar.gz", f"{key}.tgz", f"{key}.zip"]
-        return [directory / name for name in names]
+        names = [
+            f"{repo}__{ref}.zip", f"{repo}-{ref}.zip", f"{key}.zip",
+            f"{repo}__{ref}.tar.gz", f"{repo}-{ref}.tar.gz", f"{key}.tar.gz",
+            f"{repo}__{ref}.tgz", f"{repo}-{ref}.tgz", f"{key}.tgz",
+        ]
+        result: list[tuple[Path, str]] = []
+        for name in names:
+            archive_type = "zip" if name.endswith(".zip") else "tar.gz"
+            result.append((base / name, archive_type))
+        return result
 
-    def save_source_bundle(self, user: SysUser, company_id: int, repository_url: str, ref_name: str, filename: str, content: bytes) -> dict[str, Any]:
-        if not settings.crawler_project_source_bundle_upload_enabled:
-            raise AppError("源码包上传兜底未启用", code=40110)
-        suffix = self._bundle_suffix(filename)
-        if suffix not in {"tar.gz", "tgz", "zip"}:
-            raise AppError("源码包格式不支持，仅允许 .zip/.tar.gz/.tgz", code=40111, data={"filename": filename})
-        if not content:
-            raise AppError("源码包为空", code=40112)
-        if len(content) > 200 * 1024 * 1024:
-            raise AppError("源码包超过 200MB，拒绝保存", code=40113)
-        directory = Path(settings.crawler_project_source_bundle_dir).expanduser()
-        directory.mkdir(parents=True, exist_ok=True)
-        key = self._source_key(repository_url, ref_name)
-        target = directory / f"{key}.{suffix}"
-        target.write_bytes(content)
-        return {
-            "sourceKey": key,
-            "bundlePath": str(target),
-            "repositoryUrl": repository_url,
-            "refName": ref_name,
-            "size": len(content),
-            "uploadedBy": getattr(user, "user_id", None),
-        }
-
-    def _bundle_suffix(self, filename: str) -> str:
-        name = (filename or "").lower().strip()
-        if name.endswith(".tar.gz"):
-            return "tar.gz"
-        if name.endswith(".tgz"):
-            return "tgz"
-        if name.endswith(".zip"):
-            return "zip"
-        return ""
-
-    def _try_uploaded_source_bundle_fallback(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path) -> bool:
-        if not settings.crawler_project_source_bundle_upload_enabled:
+    def _try_local_source_bundle_fallback(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path) -> bool:
+        candidates = self._local_source_bundle_candidates(job)
+        existing = [(path, archive_type) for path, archive_type in candidates if path.exists() and path.is_file()]
+        if not existing:
+            self._append_log(job, "SOURCE_BUNDLE_SKIP", f"未发现本地源码包兜底文件；目录={Path(settings.crawler_project_source_bundle_dir).expanduser()}，支持命名：{', '.join(path.name for path, _ in candidates[:3])} ...")
+            self.db.commit()
             return False
-        for bundle in self._source_bundle_candidates(job):
-            if not bundle.exists() or not bundle.is_file():
-                continue
-            archive_type = "zip" if bundle.suffix.lower() == ".zip" else "tar.gz"
-            extract_dir = cwd / f"source-bundle-extract-{job.build_job_id}"
+        for bundle, archive_type in existing:
+            extract_dir = cwd / f"source-bundle-extract-{job.build_job_id}-{self._source_key(str(bundle), archive_type)}"
             shutil.rmtree(extract_dir, ignore_errors=True)
             extract_dir.mkdir(parents=True, exist_ok=True)
             started = time.monotonic()
             try:
                 root_name = self._extract_source_archive(bundle, extract_dir, source, archive_type)
                 metadata = dict(job.build_metadata or {})
+                metadata["sourceInput"] = "bundle"
                 metadata["sourceBundlePath"] = str(bundle)
                 metadata["sourceBundleRoot"] = root_name
+                metadata["sourceBundleCommit"] = f"bundle-{self._safe_ref_name(job.ref_name)}"
                 job.build_metadata = metadata
                 duration_ms = int((time.monotonic() - started) * 1000)
-                self._append_log(job, "SOURCE_BUNDLE", f"使用已上传源码包兜底：{bundle}\nroot={root_name}", exit_code=0, duration_ms=duration_ms)
+                self._append_log(job, "SOURCE_BUNDLE", f"本地源码包兜底成功：{bundle}\nroot={root_name}", exit_code=0, duration_ms=duration_ms)
                 self.db.commit()
                 return True
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started) * 1000)
-                self._append_log(job, "SOURCE_BUNDLE", f"已上传源码包解压失败：{bundle}\n{exc}", exit_code=1, duration_ms=duration_ms)
+                self._append_log(job, "SOURCE_BUNDLE", f"本地源码包兜底失败：{bundle}\n{exc}", exit_code=1, duration_ms=duration_ms)
                 self.db.commit()
             finally:
                 shutil.rmtree(extract_dir, ignore_errors=True)
         return False
 
-    def _store_source_cache(self, job: CrawlerProjectBuildJob, source: Path) -> None:
-        if not settings.crawler_project_source_cache_enabled or not source.exists():
-            return
-        cache_dir = Path(settings.crawler_project_source_cache_dir).expanduser()
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        target = cache_dir / f"{self._source_key(job.repository_url, job.ref_name)}.tar.gz"
-        tmp = target.with_suffix(target.suffix + ".tmp")
-        ignored = {".git", "__pycache__", ".pytest_cache", "node_modules", "dist", ".venv", "venv"}
-        try:
-            with tarfile.open(tmp, "w:gz") as tf:
-                for path in sorted(source.rglob("*")):
-                    rel = path.relative_to(source)
-                    if any(part in ignored for part in rel.parts):
-                        continue
-                    tf.add(path, arcname=str(rel), recursive=False)
-            tmp.replace(target)
-            self._append_log(job, "SOURCE_CACHE", f"已更新源码缓存：{target}")
-            self.db.commit()
-        except Exception as exc:
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
-            self._append_log(job, "SOURCE_CACHE", f"源码缓存更新失败，不影响本次构建：{exc}", exit_code=1)
-            self.db.commit()
+    def _source_cache_path(self, job: CrawlerProjectBuildJob) -> Path:
+        key = self._source_key(job.repository_url, job.ref_name)
+        return Path(settings.crawler_project_source_cache_root).expanduser() / key
 
     def _try_source_cache_fallback(self, job: CrawlerProjectBuildJob, source: Path, cwd: Path) -> bool:
         if not settings.crawler_project_source_cache_enabled:
             return False
-        cache = Path(settings.crawler_project_source_cache_dir).expanduser() / f"{self._source_key(job.repository_url, job.ref_name)}.tar.gz"
-        if not cache.exists():
-            self._append_log(job, "SOURCE_CACHE_SKIP", "没有可复用源码缓存。")
+        cache = self._source_cache_path(job)
+        if not cache.exists() or not cache.is_dir():
+            self._append_log(job, "SOURCE_CACHE_SKIP", f"没有可用的上次成功源码缓存：{cache}")
             self.db.commit()
             return False
-        extract_dir = cwd / f"source-cache-extract-{job.build_job_id}"
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        started = time.monotonic()
-        try:
-            root_name = self._extract_source_archive(cache, extract_dir, source, "tar.gz")
-            duration_ms = int((time.monotonic() - started) * 1000)
-            self._append_log(job, "SOURCE_CACHE", f"远端源码拉取不可用，已使用本地源码缓存：{cache}\nroot={root_name}", exit_code=0, duration_ms=duration_ms)
-            self.db.commit()
-            return True
-        except Exception as exc:
-            duration_ms = int((time.monotonic() - started) * 1000)
-            self._append_log(job, "SOURCE_CACHE", f"源码缓存解压失败：{cache}\n{exc}", exit_code=1, duration_ms=duration_ms)
-            self.db.commit()
-            return False
-        finally:
-            shutil.rmtree(extract_dir, ignore_errors=True)
-
-
-    def _source_git_commit(self, job: CrawlerProjectBuildJob, source: Path) -> str:
-        if (source / ".git").exists():
-            return self._capture(job, ["git", "rev-parse", "--short=12", "HEAD"], cwd=source)
-        metadata = dict(job.build_metadata or {})
-        commit = str(metadata.get("sourceArchiveCommit") or "").strip()
-        if not commit:
-            safe_ref = re.sub(r"[^A-Za-z0-9_.-]+", "_", job.ref_name or "archive").strip("_") or "archive"
-            commit = f"archive-{safe_ref}"
-        commit = commit[:100]
-        self._append_log(job, "SOURCE_ARCHIVE", f"源码由归档包获取，目录中没有 .git 元数据；使用构建标识：{commit}")
+        meta_path = cache / ".crawler_source_cache.json"
+        metadata = {}
+        if meta_path.exists():
+            try:
+                metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                metadata = {}
+        if source.exists():
+            shutil.rmtree(source, ignore_errors=True)
+        shutil.copytree(cache, source, ignore=shutil.ignore_patterns(".crawler_source_cache.json"))
+        job_meta = dict(job.build_metadata or {})
+        job_meta["sourceInput"] = "cache"
+        job_meta["sourceCachePath"] = str(cache)
+        job_meta["sourceCacheCommit"] = str(metadata.get("gitCommit") or f"cache-{self._safe_ref_name(job.ref_name)}")
+        job.build_metadata = job_meta
+        self._append_log(job, "SOURCE_CACHE", f"使用上次成功源码缓存继续构建：{cache}")
         self.db.commit()
-        return commit
+        return True
+
+    def _store_source_cache(self, job: CrawlerProjectBuildJob, source: Path, git_commit: str) -> None:
+        if not settings.crawler_project_source_cache_enabled:
+            return
+        try:
+            cache = self._source_cache_path(job)
+            tmp = cache.parent / f".{cache.name}.tmp-{job.build_job_id}"
+            shutil.rmtree(tmp, ignore_errors=True)
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            ignore = shutil.ignore_patterns(".git", ".release", "node_modules", "dist", "__pycache__", ".pytest_cache", ".venv", "venv")
+            shutil.copytree(source, tmp, ignore=ignore)
+            (tmp / ".crawler_source_cache.json").write_text(json.dumps({
+                "repositoryUrl": job.repository_url,
+                "refName": job.ref_name,
+                "gitCommit": git_commit,
+                "cachedAt": utcnow().isoformat(),
+                "buildJobId": job.build_job_id,
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            shutil.rmtree(cache, ignore_errors=True)
+            tmp.rename(cache)
+            self._append_log(job, "SOURCE_CACHE", f"已刷新源码缓存：{cache}")
+            self.db.commit()
+        except Exception as exc:  # 缓存失败不能影响本次构建
+            self._append_log(job, "SOURCE_CACHE", f"刷新源码缓存失败，不影响本次构建：{exc}", exit_code=1)
+            self.db.commit()
 
     def _github_source_archive_candidates(self, repository_url: str, ref_name: str) -> list[tuple[str, str]]:
         owner = repo = ""
@@ -758,6 +765,7 @@ class BuildCenterService:
                     root_name = self._extract_source_archive(archive_file, extract_dir, source, archive_type)
                     commit = self._commit_from_archive_root(root_name)
                     metadata = dict(job.build_metadata or {})
+                    metadata["sourceInput"] = "archive"
                     metadata["sourceArchiveUrl"] = url
                     metadata["sourceArchiveType"] = archive_type
                     metadata["sourceArchiveCommit"] = commit or metadata.get("sourceArchiveCommit") or ""
@@ -855,13 +863,6 @@ class BuildCenterService:
         docker_daemon_via_cli = self._docker_daemon_available() if docker_cli_available else False
         docker_engine_api_available = docker_client.is_available()
         build_root = Path(settings.crawler_project_build_root).expanduser()
-        source_bundle_dir = Path(settings.crawler_project_source_bundle_dir).expanduser()
-        source_cache_dir = Path(settings.crawler_project_source_cache_dir).expanduser()
-        offline_source_fallback_available = bool(
-            (settings.crawler_project_source_bundle_upload_enabled and source_bundle_dir.exists())
-            or (settings.crawler_project_source_cache_enabled and source_cache_dir.exists())
-            or settings.crawler_project_source_archive_fallback_enabled
-        )
         return {
             "buildEnabled": bool(settings.crawler_project_build_enabled),
             "gitAvailable": shutil.which("git") is not None,
@@ -877,14 +878,10 @@ class BuildCenterService:
             "buildRootParentExists": build_root.parent.exists(),
             "sourceArchiveFallbackEnabled": bool(settings.crawler_project_source_archive_fallback_enabled),
             "sourceArchiveFallback": "GitHub codeload tar.gz/zip" if settings.crawler_project_source_archive_fallback_enabled else "DISABLED",
-            "sourceBundleUploadEnabled": bool(settings.crawler_project_source_bundle_upload_enabled),
-            "sourceBundleDir": str(source_bundle_dir),
-            "sourceBundleDirExists": source_bundle_dir.exists(),
+            "sourceBundleDir": str(Path(settings.crawler_project_source_bundle_dir).expanduser()),
+            "sourceBundleDirExists": Path(settings.crawler_project_source_bundle_dir).expanduser().exists(),
             "sourceCacheEnabled": bool(settings.crawler_project_source_cache_enabled),
-            "sourceCacheDir": str(source_cache_dir),
-            "sourceCacheDirExists": source_cache_dir.exists(),
-            "offlineSourceFallbackAvailable": offline_source_fallback_available,
-            "dockerContextDiagnosticsEnabled": bool(settings.crawler_project_docker_context_diagnostics_enabled),
+            "sourceCacheRoot": str(Path(settings.crawler_project_source_cache_root).expanduser()),
         }
 
     def _docker_executor_available(self) -> bool:
@@ -923,56 +920,6 @@ class BuildCenterService:
         except Exception:
             return False
         return parsed.port == settings.crawler_agent_registry_port and (parsed.path or "").lstrip("/").startswith("crawler_projects/")
-
-    def _dockerfile_base_images(self, dockerfile: Path) -> list[str]:
-        if not dockerfile.exists():
-            return []
-        images: list[str] = []
-        for raw in dockerfile.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if not line.upper().startswith("FROM "):
-                continue
-            parts = line.split()
-            idx = 1
-            while idx < len(parts) and parts[idx].startswith("--"):
-                idx += 1
-            if idx < len(parts):
-                image = parts[idx].strip()
-                if image and image.lower() != "scratch":
-                    images.append(image)
-        return images
-
-    def _directory_size_bytes(self, root: Path) -> int:
-        total = 0
-        ignored = {".git", "__pycache__", ".pytest_cache", "node_modules", "dist", ".venv", "venv"}
-        for path in root.rglob("*"):
-            try:
-                rel = path.relative_to(root)
-                if any(part in ignored for part in rel.parts):
-                    continue
-                if path.is_file():
-                    total += path.stat().st_size
-            except OSError:
-                continue
-        return total
-
-    def _log_docker_context(self, job: CrawlerProjectBuildJob, source: Path) -> None:
-        if not settings.crawler_project_docker_context_diagnostics_enabled:
-            return
-        dockerfile = source / "Dockerfile"
-        base_images = self._dockerfile_base_images(dockerfile)
-        size = self._directory_size_bytes(source)
-        message = (
-            f"Docker context: {source}\n"
-            f"Dockerfile: {'present' if dockerfile.exists() else 'missing'}\n"
-            f"Base images: {', '.join(base_images) if base_images else '<none>'}\n"
-            f"Context size: {size} bytes"
-        )
-        self._append_log(job, "DOCKER_CONTEXT", message)
-        self.db.commit()
-
 
     def _docker_build(self, job: CrawlerProjectBuildJob, source: Path, tag: str, release_version: str, git_commit: str) -> None:
         build_args = {

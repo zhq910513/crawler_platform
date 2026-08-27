@@ -89,6 +89,9 @@ def test_remote_auto_deploy_recovers_mode_only_changes_without_reset_hard() -> N
     assert 'chmod +x agent/install-linux.sh' not in host
     assert 'cp_git_restore_mode_only_changes' in remote
     assert '真实未提交改动' in remote
+    assert 'cp_git_relevant_status' in host
+    assert 'CP_DEPLOY_IGNORED_UNTRACKED_PATHS' in host
+    assert '工作区仅包含可保留的本地运行目录' in host
     gate = (ROOT / 'deploy/scripts/commercial-release-gate.sh').read_text(encoding='utf-8')
     workflow = (ROOT / '.github/workflows/deploy-test-server.yml').read_text(encoding='utf-8')
     assert 'check-deploy-worktree-contract.py' in gate

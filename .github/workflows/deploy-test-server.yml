@@ -45,47 +45,16 @@ jobs:
           script: |
             set -Eeuo pipefail
             cd "${{ secrets.SERVER_PROJECT_DIR }}"
-            # 远程目录可能存在 data/、.release/ 等运行期产物。它们不能阻断自动部署；
-            # 但真实源码改动仍必须阻断，避免覆盖人工修改。
-            ensure_runtime_data_ignore() {
-              [ -d .git ] || return 0
-              mkdir -p .git/info
-              file=.git/info/exclude
-              [ -f "$file" ] || : > "$file"
-              tmp="${file}.tmp_runtime_excludes.$$"
-              awk '
-                $0 == "# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" { skip=1; next }
-                $0 == "# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" { skip=0; next }
-                skip { next }
-                { print }
-              ' "$file" > "$tmp"
-              {
-                cat "$tmp"
-                printf '\n# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES\n'
-                printf 'data/*\n!data/**/\n!data/**/.gitkeep\n.release/*\n*.db\n*.sqlite\n*.sqlite3\n'
-                printf '# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES\n'
-              } > "$file"
-              rm -f "$tmp"
-            }
-            filtered_status() {
-              git status --porcelain --untracked-files=all 2>/dev/null | awk '
-                { path=substr($0,4); if(path ~ /^data\//) next; if(path ~ /^\.release\//) next; if(path ~ /\.sqlite3?$/) next; if(path ~ /\.db$/) next; print }
-              '
-            }
-            ensure_runtime_data_ignore
-            status="$(filtered_status || true)"
-            if [ -n "$status" ]; then
-              if ! printf '%s\n' "$status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
+            if [ -d .git ] && [ -n "$(git status --porcelain)" ]; then
+              if ! git status --porcelain | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
                 echo "检测到仅 Git 文件权限位变化，已在远程部署入口前自动恢复。"
-                printf '%s\n' "$status"
+                git status --short
                 git reset -q HEAD -- .
                 git checkout -q -- .
-                ensure_runtime_data_ignore
-                status="$(filtered_status || true)"
               fi
             fi
             if [ ! -f deploy/scripts/remote-auto-deploy.sh ]; then
-              if [ -n "${status:-}" ]; then printf '%s\n' "$status"; exit 1; fi
+              if [ -n "$(git status --porcelain)" ]; then git status --short; exit 1; fi
               git fetch origin main --tags
               git checkout main
               git pull --ff-only origin main

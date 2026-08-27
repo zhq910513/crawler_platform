@@ -96,11 +96,9 @@ class Settings(BaseSettings):
     crawler_project_source_archive_fallback_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_ARCHIVE_FALLBACK_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
     crawler_project_source_archive_attempts: int = int(os.getenv("CRAWLER_PROJECT_SOURCE_ARCHIVE_ATTEMPTS", "1"))
     crawler_project_source_archive_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_SOURCE_ARCHIVE_TIMEOUT_SECONDS", "120"))
-    crawler_project_source_bundle_upload_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_BUNDLE_UPLOAD_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
     crawler_project_source_bundle_dir: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_SOURCE_BUNDLE_DIR", str(Path(os.getenv("CRAWLER_PROJECT_BUILD_ROOT", "/data/project-builds")) / "source-bundles"))))
     crawler_project_source_cache_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
-    crawler_project_source_cache_dir: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_DIR", str(Path(os.getenv("CRAWLER_PROJECT_BUILD_ROOT", "/data/project-builds")) / "source-cache"))))
-    crawler_project_docker_context_diagnostics_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
+    crawler_project_source_cache_root: Path = Field(default_factory=lambda: Path(os.getenv("CRAWLER_PROJECT_SOURCE_CACHE_ROOT", str(Path(os.getenv("CRAWLER_PROJECT_BUILD_ROOT", "/data/project-builds")) / "source-cache"))))
 
     @property
     def cors_origin_list(self) -> list[str]:

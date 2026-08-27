@@ -171,81 +171,6 @@ cp_check_crlf() {
   return 0
 }
 
-
-cp_runtime_data_gitignore_block() {
-  cat <<'EOF'
-# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
-data/*
-!data/**/
-!data/**/.gitkeep
-# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
-EOF
-}
-
-cp_ensure_runtime_data_gitignore() {
-  # v1.0.103: deployment runtime data such as MySQL, Redis, logs and project-build
-  # workspaces must never block automatic deployment. Keep the ignore block in code
-  # and repair legacy per-directory patterns before checking workspace dirtiness.
-  local file="${1:-.gitignore}" tmp
-  [ -f "$file" ] || : > "$file"
-  tmp="${file}.tmp_runtime_excludes.$$"
-  awk '
-    $0 == "# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" { skip=1; next }
-    $0 == "# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" { skip=0; next }
-    skip { next }
-    $0 == "data/mysql/*" { next }
-    $0 == "data/redis/*" { next }
-    $0 == "data/task-logs/*" { next }
-    $0 == "data/backups/*" { next }
-    $0 == "data/project-builds/*" { next }
-    { print }
-  ' "$file" > "$tmp" || return 1
-  {
-    cat "$tmp"
-    printf '\n'
-    cp_runtime_data_gitignore_block
-  } | awk 'BEGIN{blank=0} { if($0==""){ if(blank) next; blank=1 } else blank=0; print }' > "$file"
-  rm -f "$tmp"
-}
-
-
-cp_ensure_runtime_data_git_excludes() {
-  # Use .git/info/exclude for remote working trees so deployment can ignore
-  # runtime data before the repository has been reset to the new committed .gitignore.
-  [ -d .git ] || return 0
-  mkdir -p .git/info || return 1
-  local file=".git/info/exclude" tmp
-  [ -f "$file" ] || : > "$file"
-  tmp="${file}.tmp_runtime_excludes.$$"
-  awk '
-    $0 == "# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" { skip=1; next }
-    $0 == "# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" { skip=0; next }
-    skip { next }
-    { print }
-  ' "$file" > "$tmp" || return 1
-  {
-    cat "$tmp"
-    printf '\n'
-    cp_runtime_data_gitignore_block
-  } > "$file"
-  rm -f "$tmp"
-}
-
-cp_git_status_filtered() {
-  # Filter runtime/generated paths that are deliberately ignored by the platform.
-  # Do not use this to hide source changes: only well-known runtime roots are removed.
-  git status --porcelain --untracked-files=all 2>/dev/null | awk '
-    {
-      path=substr($0,4)
-      if (path ~ /^data\//) next
-      if (path ~ /^\.release\//) next
-      if (path ~ /^crawler_platform_dev\.db$/) next
-      if (path ~ /\.sqlite3?$/) next
-      print
-    }
-  '
-}
-
 cp_fix_project_permissions() {
   # 部署脚本不再修改 Git 管理文件的执行权限，避免 CI/CD 后把工作区变脏。
   # 内部脚本调用统一使用 `bash deploy/scripts/xxx.sh`，因此无需 chmod +x。
@@ -254,29 +179,73 @@ cp_fix_project_permissions() {
   fi
 }
 
+cp_git_ignored_untracked_patterns() {
+  # Runtime-local directories may be created by docker-compose volumes or the
+  # platform build center under the deployment working tree. They are not part
+  # of the source release and must not block remote-auto-deploy, but arbitrary
+  # untracked files still block deployment.
+  printf '%s\n' ${CP_DEPLOY_IGNORED_UNTRACKED_PATHS:-data/ .release/ logs/ tmp/}
+}
+
+cp_git_is_ignored_untracked_path() {
+  local path="$1" pattern
+  [ -n "$path" ] || return 1
+  while IFS= read -r pattern; do
+    [ -n "$pattern" ] || continue
+    case "$path" in
+      "$pattern"|"$pattern"*) return 0 ;;
+    esac
+  done <<EOF
+$(cp_git_ignored_untracked_patterns)
+EOF
+  return 1
+}
+
+cp_git_relevant_status() {
+  # Print only status rows that should block deployment. Known runtime-local
+  # untracked directories are filtered out; tracked content changes, deletions,
+  # staged changes and arbitrary untracked files remain visible.
+  local line status path
+  git status --porcelain 2>/dev/null | while IFS= read -r line; do
+    status="${line:0:2}"
+    path="${line:3}"
+    if [ "$status" = "??" ] && cp_git_is_ignored_untracked_path "$path"; then
+      continue
+    fi
+    printf '%s\n' "$line"
+  done
+}
+
 cp_git_restore_mode_only_changes() {
-  # 仅自动恢复“文件权限位变化”；真实内容改动、删除、未跟踪源码文件仍阻断部署。
-  # v1.0.103 起，data/ 和 .release/ 等运行期产物不再阻断自动部署。
+  # 仅自动恢复“文件权限位变化”；真实内容改动、删除和未知未跟踪文件仍阻断部署。
+  # 允许 data/、.release/ 等本地运行目录存在，避免平台运行数据导致远程自动部署停止。
   [ -d .git ] || return 0
-  cp_ensure_runtime_data_git_excludes || return 1
-  local status
-  status="$(cp_git_status_filtered || true)"
-  [ -n "$status" ] || return 0
+  local full_status relevant_status after_status
+  full_status="$(git status --porcelain 2>/dev/null || true)"
+  [ -n "$full_status" ] || return 0
 
-  if printf '%s\n' "$status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}'; then
+  relevant_status="$(cp_git_relevant_status || true)"
+  if [ -z "$relevant_status" ]; then
+    cp_warn "工作区仅包含可保留的本地运行目录，继续自动部署。"
+    git status --short >&2 || true
+    return 0
+  fi
+
+  if printf '%s\n' "$relevant_status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}'; then
     return 1
   fi
-  if printf '%s\n' "$status" | awk 'substr($0,1,2)=="!!" {found=1} END{exit found?0:1}'; then
+  if printf '%s\n' "$relevant_status" | awk 'substr($0,1,2)=="!!" {found=1} END{exit found?0:1}'; then
     return 1
   fi
 
-  if git -c core.fileMode=false diff --quiet --ignore-submodules --     && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
+  if git -c core.fileMode=false diff --quiet --ignore-submodules -- \
+    && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
     cp_warn "检测到仅 Git 文件权限位变化，自动恢复后继续部署。"
-    printf '%s\n' "$status" >&2 || true
+    git status --short >&2 || true
     git reset -q HEAD -- . || return 1
     git checkout -q -- . || return 1
-    cp_ensure_runtime_data_git_excludes || return 1
-    if [ -z "$(cp_git_status_filtered || true)" ]; then
+    after_status="$(cp_git_relevant_status || true)"
+    if [ -z "$after_status" ]; then
       cp_info "Git 文件权限位漂移已自动恢复。"
       return 0
     fi
