@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".env.example",
-      "sha256": "7089657a5cce2e2747aaf6a887cd36d05e9fb0dc3d61f46a0fe5263a11e7e10f",
+      "sha256": "6220d4dbdac2cbc3afec2348268c03b6f9c3ec6555940e3372ad220d2855ccab",
       "size": 3261
     },
     {
@@ -28,8 +28,8 @@
     },
     {
       "path": "RELEASE_FILE_SHA256SUMS.txt",
-      "sha256": "698adbbabb6c32792aa2c9176d2f0796602f485a49d6ae9cbc52b9858b90b3c5",
-      "size": 43885
+      "sha256": "189d68b5e3934ebf6bc796fbf9026bca42cc35fc3a1ca7a567508a286c154572",
+      "size": 44086
     },
     {
       "path": "RELEASE_NOTES_1.0.1.md",
@@ -80,6 +80,11 @@
       "path": "RELEASE_NOTES_1.0.107.md",
       "sha256": "5bd79f007c36a87e6caa4845620885bd56e6db441caa68f90da3d839a23efc0c",
       "size": 1285
+    },
+    {
+      "path": "RELEASE_NOTES_1.0.108.md",
+      "sha256": "492cd85912d6bab580d4847ab98c726100b213148f4abf847996f9b889426b31",
+      "size": 1243
     },
     {
       "path": "RELEASE_NOTES_1.0.11.md",
@@ -518,7 +523,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "ad9ede330f5730399cec12d51979762c637ef890007db5dda7d4fb4e36c5f014",
+      "sha256": "4b1fef2d389ccc1efdaec63d7b463e5f9eac627291818a42cf96d6957a8f88ac",
       "size": 8
     },
     {
@@ -818,8 +823,8 @@
     },
     {
       "path": "backend/app/services/build_center_service.py",
-      "sha256": "01d0c9b57b69f3cf3f4660a351e3348f4284c91d40303e001cad7bd307bb4130",
-      "size": 59588
+      "sha256": "6e70294149de9606bc9f31ef64b22440151903edd67ca90b557d8b3f590c4b6c",
+      "size": 60181
     },
     {
       "path": "backend/app/services/cicd_service.py",
@@ -863,8 +868,8 @@
     },
     {
       "path": "backend/app/services/docker_engine_client.py",
-      "sha256": "aeb71bc8a4d68d11bfd026126c7b5e9a47191c2a134872436ddab8167f48a48c",
-      "size": 6794
+      "sha256": "0c407cf6492a68ab93f4c518d5824a53202519727e298708ee39783747208e73",
+      "size": 8691
     },
     {
       "path": "backend/app/services/operation_service.py",
@@ -1213,8 +1218,8 @@
     },
     {
       "path": "backend/tests/test_project_build_docker_diagnostics_10103.py",
-      "sha256": "7a502f48038bfb3245e6efeb88ccafcd82a5ac02e9fed7a85f2660366e333afc",
-      "size": 2173
+      "sha256": "7801e19ac4c8590ee0258db9e7d26c9a56938415d2246d13cfa3f23ec7a38e97",
+      "size": 5557
     },
     {
       "path": "backend/tests/test_project_build_git_clone_retry_10100.py",
@@ -1403,7 +1408,7 @@
     },
     {
       "path": "deploy/scripts/check-alembic-graph.py",
-      "sha256": "7be0b571aeffb2a4be800b740efd867ac3958a1286c2bf01450095344c7209ef",
+      "sha256": "1db42aeb21fada509255d331a1e15725e16f9c1c6ea85fd78c0ca00425950217",
       "size": 6993
     },
     {
@@ -1473,7 +1478,7 @@
     },
     {
       "path": "deploy/scripts/deploy-single-server.sh",
-      "sha256": "0d5d2d7cff3376e4254adba6191bd32a4352137df35e162b8ccf3c8891ea0efe",
+      "sha256": "8b365427abe46f3d415ee42cfa4e6b5782753de863a7b860ca0e675e9965a42b",
       "size": 5996
     },
     {
@@ -1633,7 +1638,7 @@
     },
     {
       "path": "docker-compose.yml",
-      "sha256": "d5f2c0434b52bfa9b63992a531890c72c4998500dd3d8beb37f79ae7d866e5df",
+      "sha256": "0acf29fe3727f4764ba049ba90e1cb6b5c93e6d1650ca36a0260cbece24481eb",
       "size": 3616
     },
     {
@@ -1720,6 +1725,11 @@
       "path": "docs/deploy-runtime-data-worktree-fix-1.0.102.md",
       "sha256": "744e5390c79266f6d36c7d8d06c6a78d8636f3b3b994a94dc1d2d68698a3437f",
       "size": 1026
+    },
+    {
+      "path": "docs/docker-engine-api-build-fix-1.0.108.md",
+      "sha256": "7ea6559a99d08efed3f3b7d9d8142bad23b5af2bd8ca6f4c2c399aabd7ed69ac",
+      "size": 847
     },
     {
       "path": "docs/frontend-operation-contract-and-account-binding.md",
@@ -1953,12 +1963,12 @@
     },
     {
       "path": "frontend/package-lock.json",
-      "sha256": "da71eafc356cc3856fe52ee79b93684820ee354b6c4de8efffd88d51b935d6a1",
+      "sha256": "409121a2b92ad8ef002846f55547829e215c7b33f9f5c53ee18d8167be55807c",
       "size": 69351
     },
     {
       "path": "frontend/package.json",
-      "sha256": "2d8c2e25f26a6e367b5e84fb5ae78e2d0f9aaff818119f085c77db47be83bbeb",
+      "sha256": "54a8fdfc3e491add1419d6798da4dfe69608b3dfb4eaaf570e06e1e622172470",
       "size": 503
     },
     {

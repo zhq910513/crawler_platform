@@ -993,7 +993,11 @@ class BuildCenterService:
         try:
             output = DockerEngineClient(timeout=settings.crawler_project_build_timeout_seconds).build(source, tag, build_args=build_args, platform=settings.crawler_project_build_platform)
         except DockerEngineError as exc:
-            raise AppError("Docker Engine API 构建失败", code=40102, data={"image": tag, "error": str(exc)[-4000:]}) from exc
+            duration_ms = int((time.monotonic() - started) * 1000)
+            detail = str(exc)[-4000:]
+            self._append_log(job, "DOCKER_BUILD_API", detail, exit_code=1, duration_ms=duration_ms)
+            self.db.commit()
+            raise AppError("Docker Engine API 构建失败", code=40102, data={"image": tag, "error": detail}) from exc
         duration_ms = int((time.monotonic() - started) * 1000)
         self._append_log(job, "DOCKER_BUILD_API", output[-4000:] or "Docker Engine API build completed", exit_code=0, duration_ms=duration_ms)
         self.db.commit()
@@ -1006,7 +1010,11 @@ class BuildCenterService:
         try:
             output = DockerEngineClient(timeout=settings.crawler_project_build_timeout_seconds).push(image_repository, release_version)
         except DockerEngineError as exc:
-            raise AppError("Docker Engine API 推送失败", code=40103, data={"image": tag, "error": str(exc)[-4000:]}) from exc
+            duration_ms = int((time.monotonic() - started) * 1000)
+            detail = str(exc)[-4000:]
+            self._append_log(job, "DOCKER_PUSH_API", detail, exit_code=1, duration_ms=duration_ms)
+            self.db.commit()
+            raise AppError("Docker Engine API 推送失败", code=40103, data={"image": tag, "error": detail}) from exc
         duration_ms = int((time.monotonic() - started) * 1000)
         self._append_log(job, "DOCKER_PUSH_API", output[-4000:] or "Docker Engine API push completed", exit_code=0, duration_ms=duration_ms)
         self.db.commit()
@@ -1018,7 +1026,10 @@ class BuildCenterService:
             try:
                 payload = DockerEngineClient(timeout=60).inspect_image(tag)
             except DockerEngineError as exc:
-                raise AppError("Docker Engine API 读取镜像 digest 失败", code=40104, data={"image": tag, "error": str(exc)[-2000:]}) from exc
+                detail = str(exc)[-2000:]
+                self._append_log(job, "DOCKER_INSPECT_API", detail, exit_code=1)
+                self.db.commit()
+                raise AppError("Docker Engine API 读取镜像 digest 失败", code=40104, data={"image": tag, "error": detail}) from exc
             output = "\n".join(str(item) for item in payload.get("RepoDigests") or [])
             self._append_log(job, "DOCKER_INSPECT_API", output or "Docker Engine API inspect returned no RepoDigests", exit_code=0)
         for line in output.splitlines():

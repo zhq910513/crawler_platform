@@ -67,16 +67,17 @@ class DockerEngineClient:
             "dockerfile": "Dockerfile",
             "rm": "1",
             "forcerm": "1",
+            "version": "2",
         }
         if build_args:
             params["buildargs"] = json.dumps(build_args, ensure_ascii=False)
         if platform:
             params["platform"] = platform
-        path = "/build?" + urlencode(params)
+        path = self._versioned_path("/build?") + urlencode(params)
         status, body = self._request("POST", path, body=context, headers={"Content-Type": "application/x-tar"}, timeout=self.timeout)
         text = body.decode("utf-8", errors="replace")
         if status >= 400:
-            raise DockerEngineError(text[-4000:] or f"Docker build API failed: HTTP {status}")
+            raise DockerEngineError(self._http_error_message("Docker build", status, text))
         self._raise_on_stream_error(text, "Docker build")
         return text
 
@@ -84,20 +85,50 @@ class DockerEngineClient:
         # Docker accepts an empty auth config for local/insecure registries. The
         # value is base64url/json compatible with the Docker Engine API contract.
         auth = base64.b64encode(b"{}").decode("ascii")
-        path = f"/images/{quote(image_repository, safe='')}/push?" + urlencode({"tag": tag})
+        path = self._versioned_path(f"/images/{quote(image_repository, safe='')}/push?") + urlencode({"tag": tag})
         status, body = self._request("POST", path, headers={"X-Registry-Auth": auth}, timeout=self.timeout)
         text = body.decode("utf-8", errors="replace")
         if status >= 400:
-            raise DockerEngineError(text[-4000:] or f"Docker push API failed: HTTP {status}")
+            raise DockerEngineError(self._http_error_message("Docker push", status, text))
         self._raise_on_stream_error(text, "Docker push")
         return text
 
     def inspect_image(self, image_ref: str) -> dict[str, Any]:
-        status, body = self._request("GET", f"/images/{quote(image_ref, safe='')}/json", timeout=60)
+        status, body = self._request("GET", self._versioned_path(f"/images/{quote(image_ref, safe='')}/json"), timeout=60)
         text = body.decode("utf-8", errors="replace")
         if status >= 400:
-            raise DockerEngineError(text[-2000:] or f"Docker image inspect API failed: HTTP {status}")
+            raise DockerEngineError(self._http_error_message("Docker image inspect", status, text))
         return json.loads(text)
+
+    def _versioned_path(self, path: str) -> str:
+        api_version = (os.getenv("DOCKER_API_VERSION") or "").strip()
+        if not api_version:
+            status, body = self._request("GET", "/version", timeout=8)
+            text = body.decode("utf-8", errors="replace")
+            if status >= 400:
+                raise DockerEngineError(self._http_error_message("Docker API version negotiation", status, text))
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise DockerEngineError(f"Docker API version negotiation failed: invalid /version response: {text[-1000:]}") from exc
+            api_version = str(payload.get("ApiVersion") or "").strip()
+            if not api_version:
+                raise DockerEngineError("Docker API version negotiation failed: /version did not return ApiVersion")
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"/v{api_version}{path}"
+
+    @staticmethod
+    def _http_error_message(stage: str, status: int, text: str) -> str:
+        message = ""
+        try:
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                message = str(payload.get("message") or payload.get("error") or "").strip()
+        except json.JSONDecodeError:
+            pass
+        detail = message or text.strip() or f"HTTP {status}"
+        return f"{stage} failed: HTTP {status}: {detail}"[-6000:]
 
     def _request(
         self,
@@ -113,6 +144,8 @@ class DockerEngineClient:
             response = conn.getresponse()
             data = response.read()
             return response.status, data
+        except (OSError, TimeoutError, http.client.HTTPException) as exc:
+            raise DockerEngineError(f"Docker Engine request failed: {method} {path}: {exc}") from exc
         finally:
             conn.close()
 
@@ -136,9 +169,11 @@ class DockerEngineClient:
                 stream_tail.append(f"{status} {progress}".strip())
             if len(stream_tail) > 20:
                 stream_tail = stream_tail[-20:]
-            if payload.get("error"):
-                detail = payload.get("errorDetail") or {}
-                message = detail.get("message") or payload.get("error")
+            detail = payload.get("errorDetail") or {}
+            detail_message = str(detail.get("message") or "").strip() if isinstance(detail, dict) else ""
+            error_message = str(payload.get("error") or "").strip()
+            if detail_message or error_message:
+                message = detail_message or error_message
                 context = "\n".join(stream_tail).strip()[-6000:]
                 suffix = f"\nDocker stream tail:\n{context}" if context else ""
                 raise DockerEngineError(f"{stage} failed: {message}{suffix}")
