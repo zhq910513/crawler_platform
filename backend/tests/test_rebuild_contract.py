@@ -2076,3 +2076,36 @@ def test_frontend_docker_build_has_npm_registry_fallback_and_lockfile_canonical_
     assert 'frontend_build_ok=0' in release_gate
     assert '已跳过 /version.json 连带检查' in release_gate
     assert 'if [ "$frontend_build_ok" -eq 1 ]; then' in release_gate
+
+
+def test_discovered_task_definition_visible_in_task_schedule_panel_before_formal_creation() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, _, _ = create_flow(client, headers, 'pending_panel')
+
+    panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']})
+    assert panel.status_code == 200
+    data = panel.json()['data']
+    assert data['items'] == []
+    assert data['pendingDefinitionTotal'] == 1
+    pending = data['pendingDefinitions'][0]
+    assert pending['definitionKey'] == 'task_one'
+    assert pending['taskName'] == '任务一'
+    assert pending['entryPath'] == 'spiders.task_one:run'
+    assert pending['definitionStatus'] == 'AVAILABLE'
+
+    created = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': pending['definitionId'],
+        'taskCode': pending['definitionKey'],
+        'taskName': pending['taskName'],
+        'status': 'DRAFT',
+    })
+    assert created.status_code == 200
+
+    panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']})
+    data = panel.json()['data']
+    assert data['pendingDefinitionTotal'] == 0
+    assert len(data['items']) == 1
+    assert data['items'][0]['taskCode'] == 'task_one'
+    assert data['items'][0]['taskStatus'] == 'DRAFT'

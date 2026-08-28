@@ -36,8 +36,17 @@ class TaskSchedulePanelService:
             "last_run_status": self._upper(query.last_run_status),
         })
         rows, total = self.panels.list_panels(normalized, member_user_id=member_user_id)
+        pending_rows, pending_total = self.panels.list_pending_definitions(normalized, member_user_id=member_user_id)
         items = [self._panel_payload(row) for row in rows]
-        return {"items": items, "total": total, "page": normalized.page, "page_size": normalized.page_size}
+        pending_definitions = [self._pending_definition_payload(row) for row in pending_rows]
+        return {
+            "items": items,
+            "total": total,
+            "page": normalized.page,
+            "page_size": normalized.page_size,
+            "pending_definitions": pending_definitions,
+            "pending_definition_total": pending_total,
+        }
 
     @staticmethod
     def _clean(value: str | None) -> str | None:
@@ -74,4 +83,16 @@ class TaskSchedulePanelService:
             "last_run_status": row.get("last_run_status") or "NOT_RUN",
             "routing_status": row.get("routing_status") or "",
             "last_error_summary": row.get("last_error_summary") or "",
+        }
+
+    @staticmethod
+    def _pending_definition_payload(row: dict) -> dict:
+        entry_module = row.get("entry_module") or ""
+        entry_function = row.get("entry_function") or ""
+        required_configs = row.get("required_configs") or []
+        required_credentials = row.get("required_credentials") or []
+        return {
+            **row,
+            "entry_path": f"{entry_module}:{entry_function}" if entry_function else entry_module,
+            "binding_required": bool(required_configs or required_credentials),
         }

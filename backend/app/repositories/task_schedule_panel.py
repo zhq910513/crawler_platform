@@ -10,6 +10,7 @@ from app.models import (
     CrawlerProject,
     CrawlerProjectMember,
     CrawlerProjectServer,
+    CrawlerProjectTaskDefinition,
     CrawlerServer,
     CrawlerTask,
     CrawlerTaskRun,
@@ -23,6 +24,87 @@ from app.schemas import TaskSchedulePanelQuery
 class TaskSchedulePanelRepository:
     def __init__(self, db: Session):
         self.db = db
+
+
+    def list_pending_definitions(self, query: TaskSchedulePanelQuery, *, member_user_id: int | None = None) -> tuple[list[dict[str, Any]], int]:
+        if query.task_status:
+            return [], 0
+        filters = [CrawlerProjectTaskDefinition.definition_status == "AVAILABLE"]
+        if query.company_id is not None:
+            filters.append(CrawlerProjectTaskDefinition.company_id == query.company_id)
+        if query.project_id is not None:
+            filters.append(CrawlerProjectTaskDefinition.project_id == query.project_id)
+        if query.task_name:
+            filters.append(CrawlerProjectTaskDefinition.task_name.like(f"%{query.task_name}%"))
+        if query.task_code:
+            filters.append(CrawlerProjectTaskDefinition.definition_key.like(f"%{query.task_code}%"))
+        if query.entry_keyword:
+            filters.append(or_(CrawlerProjectTaskDefinition.entry_module.like(f"%{query.entry_keyword}%"), CrawlerProjectTaskDefinition.entry_function.like(f"%{query.entry_keyword}%")))
+        if query.task_group:
+            filters.append(CrawlerProjectTaskDefinition.task_group.like(f"%{query.task_group}%"))
+        if query.task_platform:
+            filters.append(or_(CrawlerProjectTaskDefinition.platform_code.like(f"%{query.task_platform}%"), CrawlerProject.project_name.like(f"%{query.task_platform}%"), CrawlerProjectTaskDefinition.task_group.like(f"%{query.task_platform}%")))
+        if query.schedule_status and query.schedule_status != "NONE":
+            return [], 0
+        if query.last_run_status and query.last_run_status != "NOT_RUN":
+            return [], 0
+        if query.owner_user_id is not None:
+            return [], 0
+        if query.server_id is not None:
+            filters.append(
+                exists(
+                    select(1).where(
+                        CrawlerProjectServer.project_id == CrawlerProjectTaskDefinition.project_id,
+                        CrawlerProjectServer.server_id == query.server_id,
+                        CrawlerProjectServer.deployment_status == "DEPLOYED",
+                        CrawlerProjectServer.scheduling_status.notin_(["DISABLED", "DRAINING"]),
+                    )
+                )
+            )
+        if member_user_id is not None:
+            filters.append(
+                exists(
+                    select(1).where(
+                        CrawlerProjectMember.project_id == CrawlerProjectTaskDefinition.project_id,
+                        CrawlerProjectMember.user_id == member_user_id,
+                    )
+                )
+            )
+
+        from_clause = (
+            CrawlerProjectTaskDefinition.__table__
+            .join(CrawlerProject.__table__, CrawlerProject.project_id == CrawlerProjectTaskDefinition.project_id)
+            .join(CrawlerCompany.__table__, CrawlerCompany.company_id == CrawlerProjectTaskDefinition.company_id)
+        )
+        columns = [
+            CrawlerProjectTaskDefinition.definition_id.label("definition_id"),
+            CrawlerProjectTaskDefinition.company_id.label("company_id"),
+            CrawlerCompany.company_name.label("company_name"),
+            CrawlerProjectTaskDefinition.project_id.label("project_id"),
+            CrawlerProject.project_name.label("project_name"),
+            CrawlerProjectTaskDefinition.definition_key.label("definition_key"),
+            CrawlerProjectTaskDefinition.task_name.label("task_name"),
+            CrawlerProjectTaskDefinition.entry_module.label("entry_module"),
+            CrawlerProjectTaskDefinition.entry_function.label("entry_function"),
+            CrawlerProjectTaskDefinition.platform_code.label("platform_code"),
+            CrawlerProjectTaskDefinition.task_group.label("task_group"),
+            CrawlerProjectTaskDefinition.suggested_cron.label("suggested_cron"),
+            CrawlerProjectTaskDefinition.required_configs.label("required_configs"),
+            CrawlerProjectTaskDefinition.required_credentials.label("required_credentials"),
+            CrawlerProjectTaskDefinition.contract_status.label("contract_status"),
+            CrawlerProjectTaskDefinition.contract_warnings.label("contract_warnings"),
+            CrawlerProjectTaskDefinition.definition_status.label("definition_status"),
+            CrawlerProjectTaskDefinition.updated_at.label("updated_at"),
+        ]
+        total = int(self.db.scalar(select(func.count()).select_from(CrawlerProjectTaskDefinition.__table__.join(CrawlerProject.__table__, CrawlerProject.project_id == CrawlerProjectTaskDefinition.project_id).join(CrawlerCompany.__table__, CrawlerCompany.company_id == CrawlerProjectTaskDefinition.company_id)).where(*filters)) or 0)
+        stmt = (
+            select(*columns)
+            .select_from(from_clause)
+            .where(*filters)
+            .order_by(CrawlerProjectTaskDefinition.updated_at.desc(), CrawlerProjectTaskDefinition.definition_id.desc())
+            .limit(200)
+        )
+        return [dict(row) for row in self.db.execute(stmt).mappings().all()], total
 
     def list_panels(self, query: TaskSchedulePanelQuery, *, member_user_id: int | None = None) -> tuple[list[dict[str, Any]], int]:
         latest_run_ids = (

@@ -69,6 +69,31 @@
       </el-collapse>
     </el-form>
 
+
+    <div v-if="pendingDefinitionTotal" class="discovered-task-card">
+      <div class="discovered-task-header">
+        <div>
+          <div class="discovered-task-title">自动发现待编排任务 <el-tag type="warning" effect="light">{{ pendingDefinitionTotal }}</el-tag></div>
+          <div class="cell-subtitle">项目发布后从 manifest.taskDefinitions 自动同步。这里只展示尚未创建正式任务的定义；完成配置、账号和计划后才进入正式任务列表。</div>
+        </div>
+      </div>
+      <el-table :data="pendingDefinitions" size="small" class="discovered-task-table">
+        <el-table-column label="项目" prop="projectName" min-width="120" show-overflow-tooltip />
+        <el-table-column label="平台" min-width="88" show-overflow-tooltip><template #default="s">{{ s.row.platformCode || s.row.taskGroup || '-' }}</template></el-table-column>
+        <el-table-column label="任务名称" prop="taskName" min-width="150" show-overflow-tooltip />
+        <el-table-column label="任务标识" prop="definitionKey" min-width="150" show-overflow-tooltip />
+        <el-table-column label="采集入口" prop="entryPath" min-width="190" show-overflow-tooltip />
+        <el-table-column label="依赖" min-width="110" align="center">
+          <template #default="s">
+            <el-tag v-if="s.row.bindingRequired" type="warning" effect="light">需绑定 {{ bindingRequirementCount(s.row) }} 项</el-tag>
+            <el-tag v-else type="success" effect="light">无外部绑定</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="契约" width="92" align="center"><template #default="s"><el-tag :type="s.row.contractStatus === 'OK' ? 'success' : 'warning'" effect="light">{{ s.row.contractStatus || 'UNKNOWN' }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="94" align="center" fixed="right"><template #default="s"><el-button link type="primary" @click="openPendingDefinition(s.row)">开始编排</el-button></template></el-table-column>
+      </el-table>
+    </div>
+
     <div class="ops-toolbar">
       <div class="ops-toolbar-left">
         <el-button type="primary" plain :icon="Plus" @click="openCreate">新增</el-button>
@@ -153,6 +178,16 @@
         </el-row>
         <el-form-item v-if="createForm.scheduleType === 'CRON'" label="高级表达式"><el-input v-model="createForm.cronExpression" placeholder="5 段格式：分钟 小时 日 月 星期" /></el-form-item>
         <el-form-item label="指定执行节点"><el-select v-model="createForm.serverIds" multiple clearable filterable placeholder="为空时使用项目默认节点"><el-option v-for="server in createProjectServers" :key="server.serverId" :label="server.serverName || String(server.serverId)" :value="server.serverId" /></el-select></el-form-item>
+        <div v-if="createConfigRequirements.length" class="binding-box">
+          <div class="binding-title">运行配置绑定</div>
+          <el-form-item v-for="requirement in createConfigRequirements" :key="String(requirement.slot)" :label="configRequirementLabel(requirement)" :required="Boolean(requirement.required)">
+            <el-select v-model="createConfigBindings[String(requirement.slot)]" clearable filterable placeholder="选择已验证的公司数据资源">
+              <el-option v-for="resource in resourcesForRequirement(requirement)" :key="resource.resourceId" :label="`${resource.resourceName}（${resource.resourceCode} / ${resource.resourceEngine}）`" :value="resource.resourceId" />
+            </el-select>
+          </el-form-item>
+          <div v-if="createConfigRequirements.some((item) => resourcesForRequirement(item).length === 0)" class="cell-subtitle">没有匹配且已验证的数据资源时，请先到“数据资源配置”完成资源新增和校验。</div>
+        </div>
+        <el-alert v-if="createCredentialRequirements.length" type="warning" :closable="false" show-icon title="该任务声明了平台账号绑定要求；请先确认平台账号资源已准备。" />
         <el-collapse>
           <el-collapse-item title="高级执行配置" name="advanced">
             <el-row :gutter="16">
@@ -242,10 +277,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, Edit, Operation, Plus, Refresh, Search, Tickets, VideoPlay, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { createRun, createTask, deleteTask, listCompanies, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
+import { createRun, createTask, deleteTask, listCompanies, listCompanyResourceConfigs, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
 import { listTaskSchedulePanels } from '../api/taskSchedules'
 import { sessionState } from '../stores/session'
-import type { Company, Project, ProjectServer, ScheduleUpdateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskSchedulePanelItem, TaskUpdateRequest, UserAccount } from '../types/api'
+import type { Company, CompanyResourceConfig, PendingTaskDefinitionItem, Project, ProjectServer, ScheduleUpdateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskSchedulePanelItem, TaskUpdateRequest, UserAccount } from '../types/api'
 import { formatTime } from '../utils/dictionaries'
 
 const router = useRouter()
@@ -253,6 +288,8 @@ const route = useRoute()
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref<TaskSchedulePanelItem[]>([])
+const pendingDefinitions = ref<PendingTaskDefinitionItem[]>([])
+const pendingDefinitionTotal = ref(0)
 const selectedRows = ref<TaskSchedulePanelItem[]>([])
 const total = ref(0)
 const advancedFilterNames = ref<string[]>([])
@@ -275,10 +312,15 @@ const createContext = reactive({ companyId: undefined as number | undefined, pro
 const createProjects = ref<Project[]>([])
 const definitions = ref<TaskDefinition[]>([])
 const createProjectServers = ref<ProjectServer[]>([])
+const createResources = ref<CompanyResourceConfig[]>([])
+const createConfigBindings = reactive<Record<string, number | undefined>>({})
 const createParamsText = ref('{}')
 const createLocksText = ref('')
 const createForm = reactive<TaskCreateRequest>({ definitionId: 0, ownerUserId: null, taskCode: '', taskName: '', parameters: {}, status: 'ENABLED', imagePolicy: 'RELEASE_CHANNEL', releaseChannel: 'stable', scheduleStatus: 'PAUSED', scheduleType: 'MANUAL', cronExpression: '', scheduleTimezone: 'Asia/Shanghai', overlapPolicy: 'QUEUE', scheduleConfig: {}, scheduleLabel: '', serverIds: [], runtimeMode: 'SHARED_ENV_ISOLATED', taskGroup: 'default', taskMaxConcurrency: 1, groupMaxConcurrency: 4, exclusiveMode: false, ioClass: 'NORMAL', shmSizeMb: 64, logLimitMb: 50, resourceLocks: [] })
 const createOwnerUsers = computed(() => ownerUsers.value.filter((item) => item.companyId === createContext.companyId && item.status === 'ENABLED'))
+const selectedCreateDefinition = computed(() => definitions.value.find((item) => item.definitionId === createForm.definitionId) || null)
+const createConfigRequirements = computed(() => (selectedCreateDefinition.value?.requiredConfigs || []).filter((item) => String(item.slot || '').trim()))
+const createCredentialRequirements = computed(() => (selectedCreateDefinition.value?.requiredCredentials || []).filter((item) => String(item.slot || '').trim()))
 
 const editVisible = ref(false)
 const editTask = ref<Task | null>(null)
@@ -333,6 +375,8 @@ async function loadPanel() {
   try {
     const result = await listTaskSchedulePanels({ ...query, companyId: effectiveCompanyId.value, taskName: query.taskName || undefined, taskCode: query.taskCode || undefined, entryKeyword: query.entryKeyword || undefined, taskGroup: query.taskGroup || undefined, taskPlatform: query.taskPlatform || undefined, taskStatus: query.taskStatus || undefined, scheduleStatus: query.scheduleStatus || undefined, lastRunStatus: query.lastRunStatus || undefined })
     rows.value = result.items
+    pendingDefinitions.value = result.pendingDefinitions || []
+    pendingDefinitionTotal.value = result.pendingDefinitionTotal || 0
     total.value = result.total
     query.page = result.page
     query.pageSize = result.pageSize
@@ -355,12 +399,32 @@ function resetCreateForm() {
   Object.assign(createForm, { definitionId: 0, ownerUserId: sessionState.user?.isSuperAdmin ? null : sessionState.user?.userId || null, taskCode: '', taskName: '', parameters: {}, status: 'ENABLED', imagePolicy: 'RELEASE_CHANNEL', releaseChannel: 'stable', scheduleStatus: 'PAUSED', scheduleType: 'MANUAL', cronExpression: '', scheduleTimezone: 'Asia/Shanghai', overlapPolicy: 'QUEUE', scheduleConfig: {}, scheduleLabel: '', serverIds: [], runtimeMode: 'SHARED_ENV_ISOLATED', taskGroup: 'default', taskMaxConcurrency: 1, groupMaxConcurrency: 4, exclusiveMode: false, ioClass: 'NORMAL', shmSizeMb: 64, logLimitMb: 50, resourceLocks: [] })
   createParamsText.value = '{}'
   createLocksText.value = ''
+  for (const key of Object.keys(createConfigBindings)) delete createConfigBindings[key]
 }
 async function openCreate() {
   resetCreateForm()
   createContext.companyId = sessionState.user?.isSuperAdmin ? (query.companyId || companies.value[0]?.companyId) : sessionState.user?.companyId || undefined
   createVisible.value = true
   await loadCreateProjects()
+}
+async function openPendingDefinition(row: PendingTaskDefinitionItem) {
+  resetCreateForm()
+  createContext.companyId = row.companyId
+  createVisible.value = true
+  const all = await listProjects(row.companyId)
+  createProjects.value = all.filter((item) => item.companyId === row.companyId)
+  createContext.projectId = row.projectId
+  await loadCreateResources()
+  const discovered = definitions.value.find((item) => item.definitionId === row.definitionId && item.definitionStatus === 'AVAILABLE')
+  if (!discovered) {
+    ElMessage.warning('该任务定义已变化，请刷新任务编排页面后重试')
+    return
+  }
+  createForm.definitionId = discovered.definitionId
+  applyDefinition()
+}
+function bindingRequirementCount(row: PendingTaskDefinitionItem) {
+  return (row.requiredConfigs?.length || 0) + (row.requiredCredentials?.length || 0)
 }
 async function loadCreateProjects() {
   const all = await listProjects(createContext.companyId)
@@ -373,9 +437,10 @@ async function loadCreateResources() {
   createProjectServers.value = []
   createForm.definitionId = 0
   if (!createContext.projectId) return
-  const [definitionRows, serverRows] = await Promise.all([listTaskDefinitions(createContext.projectId), listProjectServers(createContext.projectId)])
+  const [definitionRows, serverRows, resourceRows] = await Promise.all([listTaskDefinitions(createContext.projectId), listProjectServers(createContext.projectId), listCompanyResourceConfigs({ companyId: createContext.companyId })])
   definitions.value = definitionRows
   createProjectServers.value = serverRows.filter((item) => item.deploymentStatus === 'DEPLOYED' && item.schedulingStatus !== 'DISABLED')
+  createResources.value = resourceRows.filter((item) => !item.projectId || item.projectId === createContext.projectId)
   const available = definitions.value.find((item) => item.definitionStatus === 'AVAILABLE')
   if (available) { createForm.definitionId = available.definitionId; applyDefinition() }
 }
@@ -397,6 +462,27 @@ function applyDefinition() {
   createForm.logLimitMb = row.logLimitMb || 50
   createParamsText.value = JSON.stringify(row.defaultParams || {}, null, 2)
   createLocksText.value = (row.resourceLocks || []).join(',')
+  for (const key of Object.keys(createConfigBindings)) delete createConfigBindings[key]
+  for (const requirement of row.requiredConfigs || []) {
+    const slot = String(requirement.slot || '').trim()
+    if (!slot) continue
+    const candidates = resourcesForRequirement(requirement)
+    if (candidates.length === 1) createConfigBindings[slot] = candidates[0].resourceId
+  }
+}
+function normalizedRequirementEngine(requirement: Record<string, unknown>) {
+  const value = String(requirement.type || requirement.configType || requirement.resourceEngine || '').trim().toUpperCase()
+  const aliases: Record<string, string> = { MONGO: 'MONGODB', POSTGRES: 'POSTGRESQL', SQL_SERVER: 'SQLSERVER', OSS: 'ALIYUN_OSS' }
+  return aliases[value] || value
+}
+function resourcesForRequirement(requirement: Record<string, unknown>) {
+  const engine = normalizedRequirementEngine(requirement)
+  return createResources.value.filter((item) => item.enabled && ['CONFIG_VALID', 'CONNECTION_PASSED', 'MANUAL_CONFIRMED'].includes(item.testStatus) && (!engine || item.resourceEngine === engine))
+}
+function configRequirementLabel(requirement: Record<string, unknown>) {
+  const slot = String(requirement.slot || '')
+  const description = String(requirement.description || '')
+  return description ? `${slot} · ${description}` : slot
 }
 async function saveTask() {
   if (!createContext.projectId || !createForm.definitionId) { ElMessage.warning('请选择项目和可创建的平台任务'); return }
@@ -406,6 +492,18 @@ async function saveTask() {
   try {
     createForm.parameters = parameters
     createForm.resourceLocks = createLocksText.value.split(',').map((item) => item.trim()).filter(Boolean)
+    const configBindings: Record<string, unknown> = {}
+    for (const requirement of createConfigRequirements.value) {
+      const slot = String(requirement.slot || '').trim()
+      const resourceId = createConfigBindings[slot]
+      if (Boolean(requirement.required) && !resourceId) { ElMessage.warning(`请绑定必需配置：${slot}`); return }
+      if (!resourceId) continue
+      const resource = createResources.value.find((item) => item.resourceId === resourceId)
+      if (!resource) { ElMessage.warning(`配置绑定已失效：${slot}`); return }
+      configBindings[slot] = { resourceId: resource.resourceId, resourceCode: resource.resourceCode }
+    }
+    createForm.configBindings = configBindings
+    if (createCredentialRequirements.value.length) { ElMessage.warning('当前任务声明了账号绑定要求，请先在平台账号中完成账号准备后再创建；账号绑定编排将在后续版本继续完善。'); return }
     await createTask(createForm)
     createVisible.value = false
     ElMessage.success('正式任务已创建')
@@ -573,6 +671,13 @@ onMounted(async () => { await loadOptions(); await loadPanel() })
 .advanced-filter :deep(.el-collapse-item__wrap) { border-bottom: 0; }
 .advanced-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); column-gap: 12px; row-gap: 8px; padding: 4px 0 0; }
 .advanced-filter-grid :deep(.el-form-item) { margin-bottom: 0; }
+
+.discovered-task-card { margin: 8px 0 10px; padding: 10px 12px 12px; border: 1px solid #f0c36d; border-radius: 6px; background: #fffaf0; }
+.discovered-task-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.discovered-task-title { display: flex; align-items: center; gap: 8px; color: #7a4f01; font-size: 14px; font-weight: 700; }
+.discovered-task-table { width: 100%; }
+.discovered-task-table :deep(.el-table__header th) { background: #fff7e6; }
+
 .ops-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0 8px; }
 .ops-toolbar-left, .ops-toolbar-right { display: flex; align-items: center; gap: 8px; }
 .ops-toolbar-left :deep(.el-button) { height: 32px; padding: 0 12px; border-radius: 4px; font-size: 13px; }
@@ -587,6 +692,8 @@ onMounted(async () => { await loadOptions(); await loadPanel() })
 .server-cell { overflow: hidden; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
 .cell-subtitle { overflow: hidden; margin-top: 1px; color: #8a94a6; font-size: 11px; line-height: 15px; white-space: nowrap; text-overflow: ellipsis; }
 .pagination-wrap { display: flex; justify-content: flex-end; margin-top: 10px; }
+.binding-box { padding: 10px 12px 2px; margin-bottom: 12px; border: 1px solid #d9e2f2; border-radius: 6px; background: #f8fbff; }
+.binding-title { margin-bottom: 8px; color: #30456b; font-size: 13px; font-weight: 700; }
 .schedule-form { margin-top: 16px; }
 .preview-box { margin-top: 12px; padding: 12px 16px; background: #f7f8fa; border-radius: 6px; }
 .preview-box ul { margin: 8px 0 0; }

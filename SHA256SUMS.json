@@ -3,7 +3,7 @@
   "files": [
     {
       "path": ".env.example",
-      "sha256": "6220d4dbdac2cbc3afec2348268c03b6f9c3ec6555940e3372ad220d2855ccab",
+      "sha256": "624683912a55687f2a2954447b7833f8366459a23e603508e861e75ff5f424e5",
       "size": 3261
     },
     {
@@ -28,8 +28,8 @@
     },
     {
       "path": "RELEASE_FILE_SHA256SUMS.txt",
-      "sha256": "189d68b5e3934ebf6bc796fbf9026bca42cc35fc3a1ca7a567508a286c154572",
-      "size": 44086
+      "sha256": "78dc4607d06949c4338c911c7f132a65d0a34667feec2a1d424b5838ec6238a9",
+      "size": 44288
     },
     {
       "path": "RELEASE_NOTES_1.0.1.md",
@@ -85,6 +85,11 @@
       "path": "RELEASE_NOTES_1.0.108.md",
       "sha256": "492cd85912d6bab580d4847ab98c726100b213148f4abf847996f9b889426b31",
       "size": 1243
+    },
+    {
+      "path": "RELEASE_NOTES_1.0.109.md",
+      "sha256": "275456cadccc931c9a128b3066f5636864421c64150965bbaa5b481a8140e8ba",
+      "size": 1467
     },
     {
       "path": "RELEASE_NOTES_1.0.11.md",
@@ -523,7 +528,7 @@
     },
     {
       "path": "VERSION",
-      "sha256": "4b1fef2d389ccc1efdaec63d7b463e5f9eac627291818a42cf96d6957a8f88ac",
+      "sha256": "0657e88c566aa56f5f43a6bde0c06dcd4edfd58e17c6a6a94b881d5e6eaeaa77",
       "size": 8
     },
     {
@@ -763,8 +768,8 @@
     },
     {
       "path": "backend/app/repositories/task_schedule_panel.py",
-      "sha256": "28420d0bf00321f74fac786f07a578912dc74e8ce1b003ec934c4a75d38b888c",
-      "size": 8907
+      "sha256": "7aeedb22bff5ce090e50b8f7f4ea9d9bacb891992127d2f34ea582f8afa34197",
+      "size": 13938
     },
     {
       "path": "backend/app/repositories/users.py",
@@ -958,8 +963,8 @@
     },
     {
       "path": "backend/app/services/task_schedule_panel_service.py",
-      "sha256": "be08c35b6dc272544f705bcce53f79a3facd825c8eb30811e0faf2fd7ea18fb4",
-      "size": 3699
+      "sha256": "fb454a5c36c1e1909e8d39b638d579e3aefa1779b188a4f91c5e8ba63a9451cb",
+      "size": 4620
     },
     {
       "path": "backend/app/services/task_service.py",
@@ -1248,8 +1253,8 @@
     },
     {
       "path": "backend/tests/test_rebuild_contract.py",
-      "sha256": "2dcbc539178b5bdf41760815616bda6a859d6a197f1ce895b1e043cd2ecbab6d",
-      "size": 127975
+      "sha256": "c4937fe615978060517d8e6c9f841f475b5269703ffa6401b9050a49a9aca6d2",
+      "size": 129356
     },
     {
       "path": "backend/tests/test_release_gate_1019.py",
@@ -1303,8 +1308,8 @@
     },
     {
       "path": "backend/tests/test_task_schedule_panel_contract.py",
-      "sha256": "7277af00803b9b3bf805e49433db9d0fb3a1258f3c6488681d695f29b6cd9bc6",
-      "size": 8030
+      "sha256": "b645a6798d0b52d829036a3b68bb806c988c0b229c1e3b8c6eb7b171cda8b054",
+      "size": 8185
     },
     {
       "path": "cicd/github-actions-example.yml",
@@ -1408,7 +1413,7 @@
     },
     {
       "path": "deploy/scripts/check-alembic-graph.py",
-      "sha256": "1db42aeb21fada509255d331a1e15725e16f9c1c6ea85fd78c0ca00425950217",
+      "sha256": "a261f522356df461c6f401abf8c2c5b1e18d0eeb4ed02960ae1af5045f6f0efe",
       "size": 6993
     },
     {
@@ -1478,7 +1483,7 @@
     },
     {
       "path": "deploy/scripts/deploy-single-server.sh",
-      "sha256": "8b365427abe46f3d415ee42cfa4e6b5782753de863a7b860ca0e675e9965a42b",
+      "sha256": "d4790d2addc178bdf6ef26b69c8500a9b412c8d5549bf7f0c09c31d269701446",
       "size": 5996
     },
     {
@@ -1638,7 +1643,7 @@
     },
     {
       "path": "docker-compose.yml",
-      "sha256": "0acf29fe3727f4764ba049ba90e1cb6b5c93e6d1650ca36a0260cbece24481eb",
+      "sha256": "bb2c7fec774e0cce2c0e9068f0050135cc0112f4c99a32d027ba734fe11a6da0",
       "size": 3616
     },
     {
@@ -1912,6 +1917,11 @@
       "size": 909
     },
     {
+      "path": "docs/task-discovery-orchestration-1.0.109.md",
+      "sha256": "1f1a9803c8452a9a99fbf7cac1300f2d20089e266142f5c87e2d609f412fff60",
+      "size": 841
+    },
+    {
       "path": "docs/upgrade-rollback-1.0.2.md",
       "sha256": "76a32973ec98b3361c0b14b2a7e0e3661525e7dd1deeca4531f56dcbc002dedd",
       "size": 2221
@@ -1963,12 +1973,12 @@
     },
     {
       "path": "frontend/package-lock.json",
-      "sha256": "409121a2b92ad8ef002846f55547829e215c7b33f9f5c53ee18d8167be55807c",
+      "sha256": "58bb5a464cd063551a88a4e137ed02927e00fac04029bc026b729947b543f12b",
       "size": 69351
     },
     {
       "path": "frontend/package.json",
-      "sha256": "54a8fdfc3e491add1419d6798da4dfe69608b3dfb4eaaf570e06e1e622172470",
+      "sha256": "03d9118b0a1e0743322ec0f75dda78550bf2e2b07ad84ff925c8629fd408c18f",
       "size": 503
     },
     {
@@ -2003,8 +2013,8 @@
     },
     {
       "path": "frontend/src/api/taskSchedules.ts",
-      "sha256": "aad68631cde224fb80d3a0e6be680a263cd9b779cd1e043c8e5ca3f1d72efc92",
-      "size": 315
+      "sha256": "b0fddfe376a1c582e79b9511fc45da30bd8bd06ae1600af80daa068c2f6d9e46",
+      "size": 295
     },
     {
       "path": "frontend/src/components/ConfigAssistantDrawer.vue",
@@ -2058,8 +2068,8 @@
     },
     {
       "path": "frontend/src/types/api.ts",
-      "sha256": "8f9c77c222d438704a9e2514a25928eadf08dc57a1a6c522881959ac03a7f3ab",
-      "size": 28458
+      "sha256": "5b75ab768ba069cf6d528abbb6fd2124da37f50ab561671a38e9e10609dc3368",
+      "size": 29198
     },
     {
       "path": "frontend/src/utils/dictionaries.ts",
@@ -2133,8 +2143,8 @@
     },
     {
       "path": "frontend/src/views/TasksPage.vue",
-      "sha256": "7b1fdc8f0127d2ae7f1361e5f994eaddb40f96eb86ff859d76a1b13a96fa2aba",
-      "size": 51166
+      "sha256": "8a566038aef116dae84647e66f146320026582424566a7934904700c9517ba87",
+      "size": 59502
     },
     {
       "path": "frontend/src/views/UsersPage.vue",

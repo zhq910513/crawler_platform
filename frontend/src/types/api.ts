@@ -296,6 +296,34 @@ export interface TaskSchedulePanelQuery {
   pageSize?: number
 }
 
+export interface PendingTaskDefinitionItem {
+  definitionId: number
+  companyId: number
+  companyName: string
+  projectId: number
+  projectName: string
+  definitionKey: string
+  taskName: string
+  entryModule: string
+  entryFunction: string
+  entryPath: string
+  platformCode: string
+  taskGroup: string
+  suggestedCron: string
+  requiredConfigs: Array<Record<string, unknown>>
+  requiredCredentials: Array<Record<string, unknown>>
+  contractStatus: string
+  contractWarnings: Array<unknown>
+  definitionStatus: string
+  bindingRequired: boolean
+  updatedAt: string
+}
+
+export interface TaskSchedulePanelResult extends PageResult<TaskSchedulePanelItem> {
+  pendingDefinitions: PendingTaskDefinitionItem[]
+  pendingDefinitionTotal: number
+}
+
 export interface TaskSchedulePanelItem {
   taskId: number
   companyId: number
