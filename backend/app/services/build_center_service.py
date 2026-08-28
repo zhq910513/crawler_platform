@@ -87,7 +87,7 @@ def start_project_release_build_thread(build_job_id: int, user_id: int | None) -
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.104 adds local source bundle/source cache fallbacks and deployment runtime-directory hygiene. v1.0.101 adds GitHub source archive fallback after git clone failures.
+    v1.0.106 reconciles Docker build diagnostics and remote-deploy runtime bootstrap contracts. v1.0.104 adds local source bundle/source cache fallbacks and deployment runtime-directory hygiene. v1.0.101 adds GitHub source archive fallback after git clone failures.
     v1.0.98 adds recovery/cancel/retry lifecycle controls for async build jobs. v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
@@ -882,7 +882,53 @@ class BuildCenterService:
             "sourceBundleDirExists": Path(settings.crawler_project_source_bundle_dir).expanduser().exists(),
             "sourceCacheEnabled": bool(settings.crawler_project_source_cache_enabled),
             "sourceCacheRoot": str(Path(settings.crawler_project_source_cache_root).expanduser()),
+            "dockerContextDiagnosticsEnabled": bool(settings.crawler_project_docker_context_diagnostics_enabled),
         }
+
+    def _dockerfile_base_images(self, dockerfile: Path) -> list[str]:
+        if not dockerfile.is_file():
+            return []
+        images: list[str] = []
+        for raw_line in dockerfile.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            match = re.match(r"^FROM\s+(?:(?:--platform=\S+)\s+)?(\S+)(?:\s+AS\s+\S+)?\s*$", line, flags=re.IGNORECASE)
+            if not match:
+                continue
+            image = match.group(1)
+            if image.lower() != "scratch" and image not in images:
+                images.append(image)
+        return images
+
+    def _docker_context_diagnostics(self, source: Path) -> dict[str, Any]:
+        dockerfile = source / "Dockerfile"
+        ignored_dirs = {".git", "__pycache__", ".pytest_cache", "node_modules", "dist", ".venv", "venv"}
+        file_count = 0
+        total_bytes = 0
+        try:
+            for path in source.rglob("*"):
+                rel = path.relative_to(source)
+                if any(part in ignored_dirs for part in rel.parts) or not path.is_file():
+                    continue
+                file_count += 1
+                total_bytes += path.stat().st_size
+        except OSError:
+            pass
+        return {
+            "dockerfile": str(dockerfile),
+            "dockerfileExists": dockerfile.is_file(),
+            "baseImages": self._dockerfile_base_images(dockerfile),
+            "contextFiles": file_count,
+            "contextBytes": total_bytes,
+        }
+
+    def _log_docker_context(self, job: CrawlerProjectBuildJob, source: Path) -> None:
+        if not settings.crawler_project_docker_context_diagnostics_enabled:
+            return
+        diagnostics = self._docker_context_diagnostics(source)
+        self._append_log(job, "DOCKER_CONTEXT", json.dumps(diagnostics, ensure_ascii=False, sort_keys=True))
+        self.db.commit()
 
     def _docker_executor_available(self) -> bool:
         diagnostics = self._executor_diagnostics()
@@ -922,6 +968,7 @@ class BuildCenterService:
         return parsed.port == settings.crawler_agent_registry_port and (parsed.path or "").lstrip("/").startswith("crawler_projects/")
 
     def _docker_build(self, job: CrawlerProjectBuildJob, source: Path, tag: str, release_version: str, git_commit: str) -> None:
+        self._log_docker_context(job, source)
         build_args = {
             "CRAWLER_RELEASE_VERSION": release_version,
             "CRAWLER_BUILD_SHA": git_commit,

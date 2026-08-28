@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     crawler_project_image_repository_prefix: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_IMAGE_REPOSITORY_PREFIX", ""))
     crawler_project_build_platform: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_PLATFORM", "linux/amd64"))
     crawler_project_build_pip_index_url: str = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_BUILD_PIP_INDEX_URL", os.getenv("PIP_INDEX_URL", "https://pypi.tuna.tsinghua.edu.cn/simple")))
+    crawler_project_docker_context_diagnostics_enabled: bool = Field(default_factory=lambda: os.getenv("CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"})
     crawler_project_git_clone_attempts: int = int(os.getenv("CRAWLER_PROJECT_GIT_CLONE_ATTEMPTS", "3"))
     crawler_project_git_clone_retry_seconds: int = int(os.getenv("CRAWLER_PROJECT_GIT_CLONE_RETRY_SECONDS", "5"))
     crawler_project_git_clone_timeout_seconds: int = int(os.getenv("CRAWLER_PROJECT_GIT_CLONE_TIMEOUT_SECONDS", "300"))

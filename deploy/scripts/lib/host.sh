@@ -184,7 +184,42 @@ cp_git_ignored_untracked_patterns() {
   # platform build center under the deployment working tree. They are not part
   # of the source release and must not block remote-auto-deploy, but arbitrary
   # untracked files still block deployment.
-  printf '%s\n' ${CP_DEPLOY_IGNORED_UNTRACKED_PATHS:-data/ .release/ logs/ tmp/}
+  printf '%s\n' ${CP_DEPLOY_IGNORED_UNTRACKED_PATHS:-data/ .release/ logs/ tmp/ frontend/node_modules/ frontend/dist/ agent/state.json agent/.env.local crawler_agent.env}
+}
+
+cp_runtime_data_git_exclude_block() {
+  # Keep this block self-contained because GitHub Actions must be able to write
+  # the same rules before an old remote-auto-deploy.sh has been upgraded.
+  cat <<'EOF'
+# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
+/data/
+/.release/
+/logs/
+/tmp/
+/frontend/node_modules/
+/frontend/dist/
+/agent/state.json
+/agent/.env.local
+/crawler_agent.env
+# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
+EOF
+}
+
+cp_ensure_runtime_data_git_excludes() {
+  [ -d .git ] || return 0
+  mkdir -p .git/info
+  local exclude='.git/info/exclude' tmp=".git/info/exclude.tmp.$$"
+  touch "$exclude"
+  awk '
+    $0 == "# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" {skip=1; next}
+    $0 == "# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" {skip=0; next}
+    !skip {print}
+  ' "$exclude" > "$tmp"
+  cp_runtime_data_git_exclude_block >> "$tmp"
+  mv "$tmp" "$exclude"
+  # Legacy repository rules such as data/mysql/*, data/redis/*,
+  # data/task-logs/* and data/project-builds/* are superseded by the canonical
+  # data/* block in .gitignore; runtime state itself is protected by info/exclude.
 }
 
 cp_git_is_ignored_untracked_path() {
@@ -201,12 +236,11 @@ EOF
   return 1
 }
 
-cp_git_relevant_status() {
-  # Print only status rows that should block deployment. Known runtime-local
-  # untracked directories are filtered out; tracked content changes, deletions,
-  # staged changes and arbitrary untracked files remain visible.
+cp_git_status_filtered() {
+  # Print only status rows that should block deployment. Only untracked
+  # runtime-local paths are filtered; tracked modifications/deletions remain.
   local line status path
-  git status --porcelain 2>/dev/null | while IFS= read -r line; do
+  git status --porcelain -uall 2>/dev/null | while IFS= read -r line; do
     status="${line:0:2}"
     path="${line:3}"
     if [ "$status" = "??" ] && cp_git_is_ignored_untracked_path "$path"; then
@@ -216,12 +250,19 @@ cp_git_relevant_status() {
   done
 }
 
+cp_git_relevant_status() {
+  # Existing deployment scripts call this name; keep the established contract
+  # while routing all decisions through the canonical filtered status helper.
+  cp_git_status_filtered
+}
+
 cp_git_restore_mode_only_changes() {
   # 仅自动恢复“文件权限位变化”；真实内容改动、删除和未知未跟踪文件仍阻断部署。
   # 允许 data/、.release/ 等本地运行目录存在，避免平台运行数据导致远程自动部署停止。
   [ -d .git ] || return 0
+  cp_ensure_runtime_data_git_excludes
   local full_status relevant_status after_status
-  full_status="$(git status --porcelain 2>/dev/null || true)"
+  full_status="$(git status --porcelain -uall 2>/dev/null || true)"
   [ -n "$full_status" ] || return 0
 
   relevant_status="$(cp_git_relevant_status || true)"

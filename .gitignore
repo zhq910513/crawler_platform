@@ -3,11 +3,12 @@
 *.py[cod]
 frontend/node_modules/
 frontend/dist/
-data/mysql/*
-data/redis/*
-data/task-logs/*
-data/backups/*
+# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
+data/*
+data/**/*
+!data/**/
 !data/**/.gitkeep
+# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
 agent/state.json
 .env.*
 !.env.example

@@ -93,6 +93,11 @@ clone_timeout_seconds="${clone_timeout_seconds:-300}"
 case "$clone_timeout_seconds" in ''|*[!0-9]*) clone_timeout_seconds="300" ;; esac
 set_env_value CRAWLER_PROJECT_GIT_CLONE_TIMEOUT_SECONDS "$clone_timeout_seconds"
 
+docker_context_diagnostics="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED)"
+docker_context_diagnostics="${docker_context_diagnostics:-1}"
+case "$docker_context_diagnostics" in 1|true|TRUE|yes|YES|on|ON) docker_context_diagnostics="1" ;; *) docker_context_diagnostics="0" ;; esac
+set_env_value CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED "$docker_context_diagnostics"
+
 source_archive_fallback="$(cp_env_value "$ENV_FILE" CRAWLER_PROJECT_SOURCE_ARCHIVE_FALLBACK_ENABLED)"
 source_archive_fallback="${source_archive_fallback:-1}"
 case "$source_archive_fallback" in 1|true|TRUE|yes|YES|on|ON) source_archive_fallback="1" ;; *) source_archive_fallback="0" ;; esac

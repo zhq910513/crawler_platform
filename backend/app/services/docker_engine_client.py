@@ -118,6 +118,7 @@ class DockerEngineClient:
 
     @staticmethod
     def _raise_on_stream_error(text: str, stage: str) -> None:
+        stream_tail: list[str] = []
         for line in text.splitlines():
             line = line.strip()
             if not line:
@@ -126,10 +127,21 @@ class DockerEngineClient:
                 payload = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            stream = str(payload.get("stream") or "").strip()
+            status = str(payload.get("status") or "").strip()
+            if stream:
+                stream_tail.append(stream)
+            elif status:
+                progress = str(payload.get("progress") or "").strip()
+                stream_tail.append(f"{status} {progress}".strip())
+            if len(stream_tail) > 20:
+                stream_tail = stream_tail[-20:]
             if payload.get("error"):
                 detail = payload.get("errorDetail") or {}
                 message = detail.get("message") or payload.get("error")
-                raise DockerEngineError(f"{stage} failed: {message}")
+                context = "\n".join(stream_tail).strip()[-6000:]
+                suffix = f"\nDocker stream tail:\n{context}" if context else ""
+                raise DockerEngineError(f"{stage} failed: {message}{suffix}")
 
     @staticmethod
     def _tar_context(context_dir: Path) -> bytes:

@@ -28,8 +28,15 @@ def scan_host_helpers() -> None:
     text = read(host)
     if "cp_git_restore_mode_only_changes()" not in text:
         fail("host.sh 缺少 Git 权限位漂移自愈函数 cp_git_restore_mode_only_changes")
-    if "cp_git_relevant_status()" not in text or "CP_DEPLOY_IGNORED_UNTRACKED_PATHS" not in text:
-        fail("host.sh 缺少本地运行目录忽略契约，data/ 等运行数据会阻断远程自动部署")
+    for snippet in [
+        "cp_ensure_runtime_data_git_excludes()",
+        "cp_git_status_filtered()",
+        "cp_git_relevant_status()",
+        "CP_DEPLOY_IGNORED_UNTRACKED_PATHS",
+        "# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES",
+    ]:
+        if snippet not in text:
+            fail(f"host.sh 缺少本地运行目录忽略契约：{snippet}")
     for snippet in ["core.fileMode=false", "git reset -q HEAD -- .", "git checkout -q -- ."]:
         if snippet not in text:
             fail(f"Git 权限位漂移自愈函数缺少关键保护：{snippet}")
@@ -44,6 +51,10 @@ def scan_remote_entry() -> None:
     text = read(remote)
     if "cp_git_restore_mode_only_changes" not in text:
         fail("remote-auto-deploy.sh 未在部署前调用权限位漂移自愈")
+    if "cp_ensure_runtime_data_git_excludes" not in text or "cp_git_status_filtered" not in text:
+        fail("remote-auto-deploy.sh 未在脏工作区检查前建立运行目录忽略规则")
+    if text.index("cp_ensure_runtime_data_git_excludes") > text.index("cp_git_restore_mode_only_changes"):
+        fail("remote-auto-deploy.sh 必须先建立运行目录忽略规则，再检查工作区")
     if "git status --porcelain" in text and "工作区存在未提交改动" in text:
         fail("remote-auto-deploy.sh 仍使用旧的脏工作区一刀切阻断文案")
 
@@ -57,6 +68,9 @@ def scan_workflow_bootstrap() -> None:
         "git reset -q HEAD -- .",
         "git checkout -q -- .",
         "[ ! -f deploy/scripts/remote-auto-deploy.sh ]",
+        ".git/info/exclude",
+        "ensure_runtime_data_ignore",
+        "filtered_status",
         "CP_DEPLOY_PUBLIC_HOST",
         "STRICT_AGENT_IMAGE_PREPARE=\"1\"",
     ]:

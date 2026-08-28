@@ -45,16 +45,60 @@ jobs:
           script: |
             set -Eeuo pipefail
             cd "${{ secrets.SERVER_PROJECT_DIR }}"
-            if [ -d .git ] && [ -n "$(git status --porcelain)" ]; then
-              if ! git status --porcelain | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
+
+            ensure_runtime_data_ignore() {
+              [ -d .git ] || return 0
+              mkdir -p .git/info
+              exclude=".git/info/exclude"
+              tmp="${exclude}.tmp.$$"
+              touch "$exclude"
+              awk '
+                $0 == "# BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" {skip=1; next}
+                $0 == "# END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES" {skip=0; next}
+                !skip {print}
+              ' "$exclude" > "$tmp"
+              cat >> "$tmp" <<'EOF'
+            # BEGIN CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
+            /data/
+            /.release/
+            /logs/
+            /tmp/
+            /frontend/node_modules/
+            /frontend/dist/
+            /agent/state.json
+            /agent/.env.local
+            /crawler_agent.env
+            # END CRAWLER_PLATFORM_RUNTIME_DATA_EXCLUDES
+            EOF
+              mv "$tmp" "$exclude"
+            }
+
+            filtered_status() {
+              git status --porcelain -uall 2>/dev/null | while IFS= read -r line; do
+                status="${line:0:2}"
+                path="${line:3}"
+                if [ "$status" = "??" ]; then
+                  case "$path" in
+                    data/*|.release/*|logs/*|tmp/*|frontend/node_modules/*|frontend/dist/*|agent/state.json|agent/.env.local|crawler_agent.env) continue ;;
+                  esac
+                fi
+                printf '%s\n' "$line"
+              done
+            }
+
+            ensure_runtime_data_ignore
+            dirty_status="$(filtered_status || true)"
+            if [ -d .git ] && [ -n "$dirty_status" ]; then
+              if ! printf '%s\n' "$dirty_status" | awk 'substr($0,1,2)=="??" {found=1} END{exit found?0:1}' && git -c core.fileMode=false diff --quiet --ignore-submodules -- && git -c core.fileMode=false diff --cached --quiet --ignore-submodules --; then
                 echo "检测到仅 Git 文件权限位变化，已在远程部署入口前自动恢复。"
-                git status --short
+                printf '%s\n' "$dirty_status"
                 git reset -q HEAD -- .
                 git checkout -q -- .
               fi
             fi
             if [ ! -f deploy/scripts/remote-auto-deploy.sh ]; then
-              if [ -n "$(git status --porcelain)" ]; then git status --short; exit 1; fi
+              dirty_status="$(filtered_status || true)"
+              if [ -n "$dirty_status" ]; then printf '%s\n' "$dirty_status"; exit 1; fi
               git fetch origin main --tags
               git checkout main
               git pull --ff-only origin main

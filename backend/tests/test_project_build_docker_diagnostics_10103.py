@@ -35,6 +35,10 @@ def test_dockerfile_base_image_parser_handles_platform_and_alias(tmp_path: Path)
 def test_build_center_logs_docker_context_pull_and_error_details() -> None:
     service = (ROOT / 'backend' / 'app' / 'services' / 'build_center_service.py').read_text(encoding='utf-8')
     config = (ROOT / 'backend' / 'app' / 'config.py').read_text(encoding='utf-8')
+    env_example = (ROOT / '.env.example').read_text(encoding='utf-8')
+    configure = (ROOT / 'deploy' / 'scripts' / 'configure-project-build-center.sh').read_text(encoding='utf-8')
     assert 'DOCKER_CONTEXT' in service
     assert '_dockerfile_base_images' in service
     assert 'crawler_project_docker_context_diagnostics_enabled' in config
+    assert 'CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED=1' in env_example
+    assert 'set_env_value CRAWLER_PROJECT_DOCKER_CONTEXT_DIAGNOSTICS_ENABLED' in configure
