@@ -90,9 +90,24 @@
           </template>
         </el-table-column>
         <el-table-column label="契约" width="92" align="center"><template #default="s"><el-tag :type="s.row.contractStatus === 'OK' ? 'success' : 'warning'" effect="light">{{ s.row.contractStatus || 'UNKNOWN' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="94" align="center" fixed="right"><template #default="s"><el-button link type="primary" @click="openPendingDefinition(s.row)">开始编排</el-button></template></el-table-column>
+        <el-table-column label="操作" width="150" align="center" fixed="right"><template #default="s"><el-button link type="primary" @click="openPendingDefinition(s.row)">开始编排</el-button><el-button link type="info" @click="ignoreDefinitionRow(s.row)">忽略</el-button></template></el-table-column>
       </el-table>
     </div>
+
+    <el-collapse v-if="ignoredDefinitionTotal" class="ignored-definition-card">
+      <el-collapse-item name="ignored">
+        <template #title>已忽略任务定义 <el-tag type="info" effect="light" class="ml-8">{{ ignoredDefinitionTotal }}</el-tag></template>
+        <div class="cell-subtitle ignored-tip">已忽略定义仍会随 Release 更新，但不会再次进入待处理发现。可随时恢复。</div>
+        <el-table :data="ignoredDefinitions" size="small">
+          <el-table-column label="项目" prop="projectName" min-width="120" />
+          <el-table-column label="平台" prop="platformCode" min-width="88" />
+          <el-table-column label="任务名称" prop="taskName" min-width="150" />
+          <el-table-column label="任务标识" prop="definitionKey" min-width="160" />
+          <el-table-column label="忽略原因" prop="ignoreReason" min-width="180"><template #default="s">{{ s.row.ignoreReason || '-' }}</template></el-table-column>
+          <el-table-column label="操作" width="90" align="center"><template #default="s"><el-button link type="primary" @click="restoreDefinitionRow(s.row)">恢复</el-button></template></el-table-column>
+        </el-table>
+      </el-collapse-item>
+    </el-collapse>
 
     <div class="ops-toolbar">
       <div class="ops-toolbar-left">
@@ -140,16 +155,24 @@
           </el-tooltip>
         </template>
       </el-table-column>
+      <el-table-column label="可运行性" width="112" align="center">
+        <template #default="s">
+          <el-tooltip :content="readinessReason(s.row)">
+            <el-tag :type="readinessTagType(s.row.runtimeReadiness?.status || '')" effect="light">{{ readinessText(s.row.runtimeReadiness?.status || '') }}</el-tag>
+          </el-tooltip>
+        </template>
+      </el-table-column>
       <el-table-column label="最近结果" width="98" align="center">
         <template #default="s"><el-tag :type="runTagType(s.row.lastRunStatus)" effect="light">{{ statusText(s.row.lastRunStatus) }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="操作" width="152" align="center" fixed="right">
+      <el-table-column label="操作" width="190" align="center" fixed="right">
         <template #default="s">
           <el-tooltip content="编辑"><el-button link type="primary" :icon="Edit" @click="openEdit(s.row)" /></el-tooltip>
           <el-tooltip content="删除"><el-button link type="primary" :icon="Delete" @click="disableRow(s.row)" /></el-tooltip>
-          <el-tooltip content="立即执行"><el-button link type="primary" :icon="VideoPlay" @click="manualRun(s.row)" /></el-tooltip>
+          <el-tooltip :content="s.row.runtimeReadiness?.ready ? '立即执行' : readinessReason(s.row)"><span><el-button link type="primary" :icon="VideoPlay" :disabled="!s.row.runtimeReadiness?.ready" @click="manualRun(s.row)" /></span></el-tooltip>
           <el-tooltip content="查看"><el-button link type="primary" :icon="View" @click="openDetail(s.row)" /></el-tooltip>
           <el-tooltip content="计划设置"><el-button link type="primary" :icon="Operation" @click="openSchedule(s.row)" /></el-tooltip>
+          <el-button v-if="s.row.runtimeReadiness?.definitionChanged" link type="warning" @click="reconcileDefinitionRow(s.row)">同步定义</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -163,7 +186,7 @@
         <el-row :gutter="16">
           <el-col :span="12" v-if="sessionState.user?.isSuperAdmin"><el-form-item label="所属公司" required><el-select v-model="createContext.companyId" filterable @change="loadCreateProjects"><el-option v-for="company in companies" :key="company.companyId" :label="company.companyName" :value="company.companyId" /></el-select></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="所属项目" required><el-select v-model="createContext.projectId" filterable @change="loadCreateResources"><el-option v-for="project in createProjects" :key="project.projectId" :label="project.projectName" :value="project.projectId" /></el-select></el-form-item></el-col>
-          <el-col :span="12"><el-form-item label="平台任务" required><el-select v-model="createForm.definitionId" filterable @change="applyDefinition"><el-option v-for="definition in definitions" :key="definition.definitionId" :label="definition.taskName" :value="definition.definitionId" :disabled="definition.definitionStatus !== 'AVAILABLE'" /></el-select></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="平台任务" required><el-select v-model="createForm.definitionId" filterable @change="applyDefinition"><el-option v-for="definition in definitions" :key="definition.definitionId" :label="definition.taskName" :value="definition.definitionId" :disabled="definition.discoveryStatus !== 'ACTIVE' || definition.orchestrationStatus !== 'PENDING'" /></el-select></el-form-item></el-col>
         </el-row>
         <el-row :gutter="16">
           <el-col :span="12"><el-form-item label="任务标识" required><el-input v-model="createForm.taskCode" /></el-form-item></el-col>
@@ -187,7 +210,20 @@
           </el-form-item>
           <div v-if="createConfigRequirements.some((item) => resourcesForRequirement(item).length === 0)" class="cell-subtitle">没有匹配且已验证的数据资源时，请先到“数据资源配置”完成资源新增和校验。</div>
         </div>
-        <el-alert v-if="createCredentialRequirements.length" type="warning" :closable="false" show-icon title="该任务声明了平台账号绑定要求；请先确认平台账号资源已准备。" />
+        <div v-if="createCredentialRequirements.length" class="binding-box">
+          <div class="binding-title">平台账号绑定</div>
+          <div v-for="requirement in createCredentialRequirements" :key="String(requirement.slot)" class="credential-binding-row">
+            <el-form-item :label="credentialRequirementLabel(requirement)" :required="Boolean(requirement.required)">
+              <el-row :gutter="12" style="width:100%">
+                <el-col :span="8"><el-select v-model="createCredentialModes[String(requirement.slot)]" @change="resetCredentialSelection(String(requirement.slot))"><el-option v-for="mode in supportedCredentialModes(requirement)" :key="mode" :label="credentialModeText(mode)" :value="mode" /></el-select></el-col>
+                <el-col :span="16" v-if="createCredentialModes[String(requirement.slot)] === 'fixed'"><el-select v-model="createCredentialSelections[String(requirement.slot)]" clearable filterable placeholder="选择可用账号"><el-option v-for="account in accountsForRequirement(requirement)" :key="account.credentialId" :label="`${account.credentialName || account.credentialKey}（${account.credentialKey}）`" :value="account.credentialKey" /></el-select></el-col>
+                <el-col :span="16" v-else-if="createCredentialModes[String(requirement.slot)] === 'fixed_list'"><el-select v-model="createCredentialSelections[String(requirement.slot)]" multiple clearable filterable placeholder="选择一个或多个可用账号"><el-option v-for="account in accountsForRequirement(requirement)" :key="account.credentialId" :label="`${account.credentialName || account.credentialKey}（${account.credentialKey}）`" :value="account.credentialKey" /></el-select></el-col>
+                <el-col :span="16" v-else><el-alert type="info" :closable="false" :title="`使用 ${credentialModeText(createCredentialModes[String(requirement.slot)])}，运行时由平台从 ${credentialPlatform(requirement) || '指定平台'} 可用账号中选择。`" /></el-col>
+              </el-row>
+            </el-form-item>
+          </div>
+          <div v-if="createCredentialRequirements.some((item) => !supportedCredentialModes(item).length)" class="cell-subtitle">存在当前页面无法安全表达的高级账号策略；可先保存为草稿，再由支持该策略的管理接口完成绑定。</div>
+        </div>
         <el-collapse>
           <el-collapse-item title="高级执行配置" name="advanced">
             <el-row :gutter="16">
@@ -214,6 +250,25 @@
           <el-col :span="12"><el-form-item label="超时时间（秒）"><el-input-number v-model="editForm.timeoutSeconds" :min="1" :max="604800" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="最大重试次数"><el-input-number v-model="editForm.maxRetryCount" :min="0" :max="20" /></el-form-item></el-col>
         </el-row>
+        <div v-if="editConfigRequirements.length" class="binding-box">
+          <div class="binding-title">运行配置绑定</div>
+          <el-form-item v-for="requirement in editConfigRequirements" :key="String(requirement.slot)" :label="configRequirementLabel(requirement)" :required="Boolean(requirement.required)">
+            <el-select v-model="editConfigBindings[String(requirement.slot)]" clearable filterable placeholder="选择已验证的公司数据资源">
+              <el-option v-for="resource in resourcesForEditRequirement(requirement)" :key="resource.resourceId" :label="`${resource.resourceName}（${resource.resourceCode} / ${resource.resourceEngine}）`" :value="resource.resourceId" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <div v-if="editCredentialRequirements.length" class="binding-box">
+          <div class="binding-title">平台账号绑定</div>
+          <el-form-item v-for="requirement in editCredentialRequirements" :key="String(requirement.slot)" :label="credentialRequirementLabel(requirement)" :required="Boolean(requirement.required)">
+            <el-row :gutter="12" style="width:100%">
+              <el-col :span="8"><el-select v-model="editCredentialModes[String(requirement.slot)]" @change="resetEditCredentialSelection(String(requirement.slot))"><el-option v-for="mode in supportedCredentialModes(requirement)" :key="mode" :label="credentialModeText(mode)" :value="mode" /></el-select></el-col>
+              <el-col :span="16" v-if="editCredentialModes[String(requirement.slot)] === 'fixed'"><el-select v-model="editCredentialSelections[String(requirement.slot)]" clearable filterable><el-option v-for="account in accountsForEditRequirement(requirement)" :key="account.credentialId" :label="`${account.credentialName || account.credentialKey}（${account.credentialKey}）`" :value="account.credentialKey" /></el-select></el-col>
+              <el-col :span="16" v-else-if="editCredentialModes[String(requirement.slot)] === 'fixed_list'"><el-select v-model="editCredentialSelections[String(requirement.slot)]" multiple clearable filterable><el-option v-for="account in accountsForEditRequirement(requirement)" :key="account.credentialId" :label="`${account.credentialName || account.credentialKey}（${account.credentialKey}）`" :value="account.credentialKey" /></el-select></el-col>
+              <el-col :span="16" v-else><el-alert type="info" :closable="false" :title="`使用 ${credentialModeText(editCredentialModes[String(requirement.slot)])}。`" /></el-col>
+            </el-row>
+          </el-form-item>
+        </div>
         <el-form-item label="描述"><el-input v-model="editForm.description" type="textarea" :rows="4" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="editVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveEdit">保存</el-button></template>
@@ -266,6 +321,7 @@
         <el-descriptions-item label="最近结果">{{ statusText(detailRow.lastRunStatus) }}</el-descriptions-item>
         <el-descriptions-item label="分配状态">{{ statusText(detailRow.routingStatus) }}</el-descriptions-item>
         <el-descriptions-item label="最近完成">{{ formatTime(detailRow.lastFinishedAt) }}</el-descriptions-item>
+        <el-descriptions-item label="可运行性">{{ readinessText(detailRow.runtimeReadiness?.status || '') }}<div class="cell-subtitle">{{ readinessReason(detailRow) }}</div></el-descriptions-item>
         <el-descriptions-item label="最近错误">{{ detailRow.lastErrorSummary || '-' }}</el-descriptions-item>
       </el-descriptions>
     </el-drawer>
@@ -277,10 +333,10 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, Edit, Operation, Plus, Refresh, Search, Tickets, VideoPlay, View } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { createRun, createTask, deleteTask, listCompanies, listCompanyResourceConfigs, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, updateTask, updateTaskSchedule } from '../api/platform'
+import { createRun, createTask, deleteTask, ignoreTaskDefinition, listAccountCredentials, listCompanies, listCompanyResourceConfigs, listProjectServers, listProjects, listServers, listTaskDefinitions, listTasks, listUsers, previewCronExpression, reconcileTaskDefinition, restoreTaskDefinition, updateTask, updateTaskSchedule } from '../api/platform'
 import { listTaskSchedulePanels } from '../api/taskSchedules'
 import { sessionState } from '../stores/session'
-import type { Company, CompanyResourceConfig, PendingTaskDefinitionItem, Project, ProjectServer, ScheduleUpdateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskSchedulePanelItem, TaskUpdateRequest, UserAccount } from '../types/api'
+import type { AccountCredential, Company, CompanyResourceConfig, PendingTaskDefinitionItem, Project, ProjectServer, ScheduleUpdateRequest, ServerNode, Task, TaskCreateRequest, TaskDefinition, TaskSchedulePanelItem, TaskUpdateRequest, UserAccount } from '../types/api'
 import { formatTime } from '../utils/dictionaries'
 
 const router = useRouter()
@@ -290,6 +346,8 @@ const saving = ref(false)
 const rows = ref<TaskSchedulePanelItem[]>([])
 const pendingDefinitions = ref<PendingTaskDefinitionItem[]>([])
 const pendingDefinitionTotal = ref(0)
+const ignoredDefinitions = ref<PendingTaskDefinitionItem[]>([])
+const ignoredDefinitionTotal = ref(0)
 const selectedRows = ref<TaskSchedulePanelItem[]>([])
 const total = ref(0)
 const advancedFilterNames = ref<string[]>([])
@@ -313,10 +371,13 @@ const createProjects = ref<Project[]>([])
 const definitions = ref<TaskDefinition[]>([])
 const createProjectServers = ref<ProjectServer[]>([])
 const createResources = ref<CompanyResourceConfig[]>([])
+const createAccounts = ref<AccountCredential[]>([])
 const createConfigBindings = reactive<Record<string, number | undefined>>({})
+const createCredentialModes = reactive<Record<string, string>>({})
+const createCredentialSelections = reactive<Record<string, string | string[] | undefined>>({})
 const createParamsText = ref('{}')
 const createLocksText = ref('')
-const createForm = reactive<TaskCreateRequest>({ definitionId: 0, ownerUserId: null, taskCode: '', taskName: '', parameters: {}, status: 'ENABLED', imagePolicy: 'RELEASE_CHANNEL', releaseChannel: 'stable', scheduleStatus: 'PAUSED', scheduleType: 'MANUAL', cronExpression: '', scheduleTimezone: 'Asia/Shanghai', overlapPolicy: 'QUEUE', scheduleConfig: {}, scheduleLabel: '', serverIds: [], runtimeMode: 'SHARED_ENV_ISOLATED', taskGroup: 'default', taskMaxConcurrency: 1, groupMaxConcurrency: 4, exclusiveMode: false, ioClass: 'NORMAL', shmSizeMb: 64, logLimitMb: 50, resourceLocks: [] })
+const createForm = reactive<TaskCreateRequest>({ definitionId: 0, ownerUserId: null, taskCode: '', taskName: '', parameters: {}, status: 'DRAFT', imagePolicy: 'RELEASE_CHANNEL', releaseChannel: 'stable', scheduleStatus: 'PAUSED', scheduleType: 'MANUAL', cronExpression: '', scheduleTimezone: 'Asia/Shanghai', overlapPolicy: 'QUEUE', scheduleConfig: {}, scheduleLabel: '', serverIds: [], runtimeMode: 'SHARED_ENV_ISOLATED', taskGroup: 'default', taskMaxConcurrency: 1, groupMaxConcurrency: 4, exclusiveMode: false, ioClass: 'NORMAL', shmSizeMb: 64, logLimitMb: 50, resourceLocks: [] })
 const createOwnerUsers = computed(() => ownerUsers.value.filter((item) => item.companyId === createContext.companyId && item.status === 'ENABLED'))
 const selectedCreateDefinition = computed(() => definitions.value.find((item) => item.definitionId === createForm.definitionId) || null)
 const createConfigRequirements = computed(() => (selectedCreateDefinition.value?.requiredConfigs || []).filter((item) => String(item.slot || '').trim()))
@@ -324,7 +385,15 @@ const createCredentialRequirements = computed(() => (selectedCreateDefinition.va
 
 const editVisible = ref(false)
 const editTask = ref<Task | null>(null)
+const editDefinition = ref<TaskDefinition | null>(null)
+const editResources = ref<CompanyResourceConfig[]>([])
+const editAccounts = ref<AccountCredential[]>([])
+const editConfigBindings = reactive<Record<string, number | undefined>>({})
+const editCredentialModes = reactive<Record<string, string>>({})
+const editCredentialSelections = reactive<Record<string, string | string[] | undefined>>({})
 const editForm = reactive<TaskUpdateRequest>({ ownerUserId: null, taskName: '', status: 'ENABLED', taskGroup: 'default', timeoutSeconds: 3600, maxRetryCount: 0, description: '' })
+const editConfigRequirements = computed(() => (editDefinition.value?.requiredConfigs || []).filter((item) => String(item.slot || '').trim()))
+const editCredentialRequirements = computed(() => (editDefinition.value?.requiredCredentials || []).filter((item) => String(item.slot || '').trim()))
 const editOwnerUsers = computed(() => ownerUsers.value.filter((item) => item.companyId === editTask.value?.companyId && item.status === 'ENABLED'))
 
 const scheduleVisible = ref(false)
@@ -355,6 +424,9 @@ function statusText(value?: string | null) {
 type TagType = '' | 'primary' | 'success' | 'warning' | 'info' | 'danger'
 function taskTagType(status: string): TagType { if (status === 'ENABLED') return 'success'; if (status === 'DISABLED' || status === 'ARCHIVED') return 'info'; if (status === 'PAUSED') return 'warning'; return '' }
 function runTagType(status: string): TagType { if (status === 'SUCCEEDED') return 'success'; if (['FAILED', 'TIMED_OUT', 'TIMEOUT', 'LOST', 'CANCELED', 'CANCELLED'].includes(status)) return 'danger'; if (['RUNNING', 'STARTING', 'ASSIGNED', 'ROUTED'].includes(status)) return 'primary'; if (['QUEUED', 'WAITING_RESOURCE'].includes(status)) return 'warning'; return 'info' }
+function readinessText(status: string) { return ({ READY: '可运行', NEEDS_REVIEW: '需确认', BLOCKED: '阻断' } as Record<string, string>)[status] || '待检查' }
+function readinessTagType(status: string): TagType { if (status === 'READY') return 'success'; if (status === 'NEEDS_REVIEW') return 'warning'; if (status === 'BLOCKED') return 'danger'; return 'info' }
+function readinessReason(row: TaskSchedulePanelItem) { const reasons = row.runtimeReadiness?.reasons || []; return reasons.length ? reasons.join('；') : (row.runtimeReadiness?.ready ? '当前 Release、任务定义、依赖与执行节点均满足运行条件' : '尚未完成运行条件检查') }
 function scheduleText(row: TaskSchedulePanelItem) { if (row.scheduleType !== 'CRON') return '手动执行'; return row.scheduleLabel || row.cronExpression || '-' }
 function cronText(row: TaskSchedulePanelItem) { return row.cronExpression || row.scheduleLabel || '-' }
 function handleSelectionChange(selection: TaskSchedulePanelItem[]) { selectedRows.value = selection }
@@ -377,6 +449,8 @@ async function loadPanel() {
     rows.value = result.items
     pendingDefinitions.value = result.pendingDefinitions || []
     pendingDefinitionTotal.value = result.pendingDefinitionTotal || 0
+    ignoredDefinitions.value = result.ignoredDefinitions || []
+    ignoredDefinitionTotal.value = result.ignoredDefinitionTotal || 0
     total.value = result.total
     query.page = result.page
     query.pageSize = result.pageSize
@@ -396,10 +470,12 @@ async function resetFilters() {
 async function handlePageSizeChange() { query.page = 1; await loadPanel() }
 
 function resetCreateForm() {
-  Object.assign(createForm, { definitionId: 0, ownerUserId: sessionState.user?.isSuperAdmin ? null : sessionState.user?.userId || null, taskCode: '', taskName: '', parameters: {}, status: 'ENABLED', imagePolicy: 'RELEASE_CHANNEL', releaseChannel: 'stable', scheduleStatus: 'PAUSED', scheduleType: 'MANUAL', cronExpression: '', scheduleTimezone: 'Asia/Shanghai', overlapPolicy: 'QUEUE', scheduleConfig: {}, scheduleLabel: '', serverIds: [], runtimeMode: 'SHARED_ENV_ISOLATED', taskGroup: 'default', taskMaxConcurrency: 1, groupMaxConcurrency: 4, exclusiveMode: false, ioClass: 'NORMAL', shmSizeMb: 64, logLimitMb: 50, resourceLocks: [] })
+  Object.assign(createForm, { definitionId: 0, ownerUserId: sessionState.user?.isSuperAdmin ? null : sessionState.user?.userId || null, taskCode: '', taskName: '', parameters: {}, status: 'DRAFT', imagePolicy: 'RELEASE_CHANNEL', releaseChannel: 'stable', scheduleStatus: 'PAUSED', scheduleType: 'MANUAL', cronExpression: '', scheduleTimezone: 'Asia/Shanghai', overlapPolicy: 'QUEUE', scheduleConfig: {}, scheduleLabel: '', serverIds: [], runtimeMode: 'SHARED_ENV_ISOLATED', taskGroup: 'default', taskMaxConcurrency: 1, groupMaxConcurrency: 4, exclusiveMode: false, ioClass: 'NORMAL', shmSizeMb: 64, logLimitMb: 50, resourceLocks: [] })
   createParamsText.value = '{}'
   createLocksText.value = ''
   for (const key of Object.keys(createConfigBindings)) delete createConfigBindings[key]
+  for (const key of Object.keys(createCredentialModes)) delete createCredentialModes[key]
+  for (const key of Object.keys(createCredentialSelections)) delete createCredentialSelections[key]
 }
 async function openCreate() {
   resetCreateForm()
@@ -415,7 +491,7 @@ async function openPendingDefinition(row: PendingTaskDefinitionItem) {
   createProjects.value = all.filter((item) => item.companyId === row.companyId)
   createContext.projectId = row.projectId
   await loadCreateResources()
-  const discovered = definitions.value.find((item) => item.definitionId === row.definitionId && item.definitionStatus === 'AVAILABLE')
+  const discovered = definitions.value.find((item) => item.definitionId === row.definitionId && item.discoveryStatus === 'ACTIVE' && item.orchestrationStatus === 'PENDING')
   if (!discovered) {
     ElMessage.warning('该任务定义已变化，请刷新任务编排页面后重试')
     return
@@ -437,11 +513,12 @@ async function loadCreateResources() {
   createProjectServers.value = []
   createForm.definitionId = 0
   if (!createContext.projectId) return
-  const [definitionRows, serverRows, resourceRows] = await Promise.all([listTaskDefinitions(createContext.projectId), listProjectServers(createContext.projectId), listCompanyResourceConfigs({ companyId: createContext.companyId })])
+  const [definitionRows, serverRows, resourceRows, accountRows] = await Promise.all([listTaskDefinitions(createContext.projectId), listProjectServers(createContext.projectId), listCompanyResourceConfigs({ companyId: createContext.companyId }), listAccountCredentials({ companyId: createContext.companyId })])
   definitions.value = definitionRows
   createProjectServers.value = serverRows.filter((item) => item.deploymentStatus === 'DEPLOYED' && item.schedulingStatus !== 'DISABLED')
   createResources.value = resourceRows.filter((item) => !item.projectId || item.projectId === createContext.projectId)
-  const available = definitions.value.find((item) => item.definitionStatus === 'AVAILABLE')
+  createAccounts.value = accountRows
+  const available = definitions.value.find((item) => item.discoveryStatus === 'ACTIVE' && item.orchestrationStatus === 'PENDING')
   if (available) { createForm.definitionId = available.definitionId; applyDefinition() }
 }
 function applyDefinition() {
@@ -463,6 +540,15 @@ function applyDefinition() {
   createParamsText.value = JSON.stringify(row.defaultParams || {}, null, 2)
   createLocksText.value = (row.resourceLocks || []).join(',')
   for (const key of Object.keys(createConfigBindings)) delete createConfigBindings[key]
+  for (const key of Object.keys(createCredentialModes)) delete createCredentialModes[key]
+  for (const key of Object.keys(createCredentialSelections)) delete createCredentialSelections[key]
+  for (const requirement of row.requiredCredentials || []) {
+    const slot = String(requirement.slot || '').trim()
+    if (!slot) continue
+    const modes = supportedCredentialModes(requirement)
+    createCredentialModes[slot] = modes[0] || ''
+    resetCredentialSelection(slot)
+  }
   for (const requirement of row.requiredConfigs || []) {
     const slot = String(requirement.slot || '').trim()
     if (!slot) continue
@@ -484,6 +570,33 @@ function configRequirementLabel(requirement: Record<string, unknown>) {
   const description = String(requirement.description || '')
   return description ? `${slot} · ${description}` : slot
 }
+function credentialPlatform(requirement: Record<string, unknown>) { return String(requirement.platformCode || requirement.platform_code || selectedCreateDefinition.value?.platformCode || '').trim().toLowerCase() }
+function supportedCredentialModes(requirement: Record<string, unknown>) {
+  const declared = (requirement.supportedModes || requirement.supported_modes || ['fixed']) as unknown
+  const values = Array.isArray(declared) ? declared.map((item) => String(item)) : ['fixed']
+  return values.filter((item) => ['fixed', 'fixed_list', 'pool'].includes(item))
+}
+function credentialModeText(mode: string) { return ({ fixed: '固定账号', fixed_list: '固定账号列表', pool: '账号池' } as Record<string, string>)[mode] || mode || '未配置' }
+function credentialRequirementLabel(requirement: Record<string, unknown>) { const slot = String(requirement.slot || ''); const description = String(requirement.description || ''); return description ? `${slot} · ${description}` : slot }
+function accountUsable(account: AccountCredential) { return account.enabled && !['UNHEALTHY', 'EXPIRED', 'INVALID', 'LOCKED'].includes(String(account.healthStatus || '').toUpperCase()) && !['LOCKED', 'DISABLED'].includes(String(account.usageStatus || '').toUpperCase()) }
+function accountsForRequirement(requirement: Record<string, unknown>) { const platform = credentialPlatform(requirement); return createAccounts.value.filter((item) => accountUsable(item) && (!platform || item.platformCode.toLowerCase() === platform)) }
+function resetCredentialSelection(slot: string) { createCredentialSelections[slot] = createCredentialModes[slot] === 'fixed_list' ? [] : undefined }
+function buildCredentialBindings() {
+  const result: Record<string, unknown> = {}
+  for (const requirement of createCredentialRequirements.value) {
+    const slot = String(requirement.slot || '').trim()
+    if (!slot) continue
+    const mode = createCredentialModes[slot] || ''
+    const selection = createCredentialSelections[slot]
+    const platformCode = credentialPlatform(requirement)
+    const credentialType = String(requirement.credentialType || requirement.credential_type || '')
+    if (mode === 'fixed' && typeof selection === 'string' && selection) result[slot] = { mode, credentialKey: selection, platformCode, credentialType }
+    else if (mode === 'fixed_list' && Array.isArray(selection) && selection.length) result[slot] = { mode, credentialKeys: selection, platformCode, credentialType }
+    else if (mode === 'pool') result[slot] = { mode, platformCode, credentialType }
+  }
+  return result
+}
+
 async function saveTask() {
   if (!createContext.projectId || !createForm.definitionId) { ElMessage.warning('请选择项目和可创建的平台任务'); return }
   let parameters: Record<string, unknown>
@@ -496,14 +609,22 @@ async function saveTask() {
     for (const requirement of createConfigRequirements.value) {
       const slot = String(requirement.slot || '').trim()
       const resourceId = createConfigBindings[slot]
-      if (Boolean(requirement.required) && !resourceId) { ElMessage.warning(`请绑定必需配置：${slot}`); return }
+      if (createForm.status === 'ENABLED' && Boolean(requirement.required) && !resourceId) { ElMessage.warning(`启用任务前请绑定必需配置：${slot}`); return }
       if (!resourceId) continue
       const resource = createResources.value.find((item) => item.resourceId === resourceId)
       if (!resource) { ElMessage.warning(`配置绑定已失效：${slot}`); return }
       configBindings[slot] = { resourceId: resource.resourceId, resourceCode: resource.resourceCode }
     }
     createForm.configBindings = configBindings
-    if (createCredentialRequirements.value.length) { ElMessage.warning('当前任务声明了账号绑定要求，请先在平台账号中完成账号准备后再创建；账号绑定编排将在后续版本继续完善。'); return }
+    const credentialBindings = buildCredentialBindings()
+    if (createForm.status === 'ENABLED') {
+      for (const requirement of createCredentialRequirements.value) {
+        const slot = String(requirement.slot || '').trim()
+        if (Boolean(requirement.required) && !credentialBindings[slot]) { ElMessage.warning(`启用任务前请绑定必需账号：${slot}`); return }
+      }
+    }
+    if (createForm.scheduleStatus === 'ENABLED' && createForm.status !== 'ENABLED') { ElMessage.warning('启用自动计划前必须先启用任务'); return }
+    createForm.credentialBindings = credentialBindings
     await createTask(createForm)
     createVisible.value = false
     ElMessage.success('正式任务已创建')
@@ -511,20 +632,99 @@ async function saveTask() {
   } finally { saving.value = false }
 }
 
+async function ignoreDefinitionRow(row: PendingTaskDefinitionItem) {
+  try {
+    const result = await ElMessageBox.prompt(`忽略“${row.taskName}”后，后续 Release 仍会更新该定义，但不会再次出现在待处理发现中。可在“已忽略任务定义”中恢复。`, '忽略任务定义', { confirmButtonText: '确认忽略', cancelButtonText: '取消', inputPlaceholder: '忽略原因（可选）', inputValue: '' })
+    await ignoreTaskDefinition(row.definitionId, result.value || '')
+    ElMessage.success('任务定义已忽略')
+    await loadPanel()
+  } catch (error) { if (error !== 'cancel' && error !== 'close') throw error }
+}
+async function restoreDefinitionRow(row: PendingTaskDefinitionItem) {
+  await restoreTaskDefinition(row.definitionId)
+  ElMessage.success('任务定义已恢复到待处理发现')
+  await loadPanel()
+}
+async function reconcileDefinitionRow(row: TaskSchedulePanelItem) {
+  try {
+    await ElMessageBox.confirm(`确认让任务“${row.taskName}”吸收当前激活 Release 的最新任务定义？任务历史、任务标识和调度设置会保留；如新增必需资源，请先编辑绑定后再启用。`, '同步最新任务定义', { type: 'warning' })
+    await reconcileTaskDefinition(row.taskId)
+    ElMessage.success('已同步最新任务定义')
+    await loadPanel()
+  } catch (error) { if (error !== 'cancel' && error !== 'close') throw error }
+}
+
 async function openEdit(row: TaskSchedulePanelItem) {
   const taskRows = await listTasks({ projectId: row.projectId })
   const task = taskRows.find((item) => item.taskId === row.taskId)
   if (!task) { ElMessage.error('未找到任务详情'); return }
   editTask.value = task
+  const [definitionRows, resourceRows, accountRows] = await Promise.all([listTaskDefinitions(task.projectId), listCompanyResourceConfigs({ companyId: task.companyId }), listAccountCredentials({ companyId: task.companyId })])
+  editDefinition.value = definitionRows.find((item) => item.definitionId === task.definitionId) || null
+  editResources.value = resourceRows.filter((item) => !item.projectId || item.projectId === task.projectId)
+  editAccounts.value = accountRows
+  for (const key of Object.keys(editConfigBindings)) delete editConfigBindings[key]
+  for (const key of Object.keys(editCredentialModes)) delete editCredentialModes[key]
+  for (const key of Object.keys(editCredentialSelections)) delete editCredentialSelections[key]
+  for (const requirement of editConfigRequirements.value) {
+    const slot = String(requirement.slot || '').trim()
+    const binding = task.configBindings?.[slot] as Record<string, unknown> | number | undefined
+    const resourceId = typeof binding === 'number' ? binding : Number(binding?.resourceId || binding?.resource_id || 0) || undefined
+    editConfigBindings[slot] = resourceId
+  }
+  for (const requirement of editCredentialRequirements.value) {
+    const slot = String(requirement.slot || '').trim()
+    const binding = task.credentialBindings?.[slot]
+    const mode = typeof binding === 'string' ? 'fixed' : Array.isArray(binding) ? 'fixed_list' : String((binding as Record<string, unknown> | undefined)?.mode || supportedCredentialModes(requirement)[0] || '')
+    editCredentialModes[slot] = mode
+    if (typeof binding === 'string') editCredentialSelections[slot] = binding
+    else if (Array.isArray(binding)) editCredentialSelections[slot] = binding.map(String)
+    else if (binding && typeof binding === 'object') {
+      const obj = binding as Record<string, unknown>
+      if (mode === 'fixed') editCredentialSelections[slot] = String(obj.credentialKey || obj.credential_key || '') || undefined
+      else if (mode === 'fixed_list') editCredentialSelections[slot] = ((obj.credentialKeys || obj.credential_keys || []) as unknown[]).map(String)
+    }
+  }
   Object.assign(editForm, { ownerUserId: task.ownerUserId ?? null, taskName: task.taskName, status: task.status, taskGroup: task.taskGroup || 'default', timeoutSeconds: task.timeoutSeconds, maxRetryCount: task.maxRetryCount, description: task.description || '' })
   editVisible.value = true
+}
+function resourcesForEditRequirement(requirement: Record<string, unknown>) { const engine = normalizedRequirementEngine(requirement); return editResources.value.filter((item) => item.enabled && ['CONFIG_VALID', 'CONNECTION_PASSED', 'MANUAL_CONFIRMED'].includes(item.testStatus) && (!engine || item.resourceEngine === engine)) }
+function accountsForEditRequirement(requirement: Record<string, unknown>) { const platform = String(requirement.platformCode || requirement.platform_code || editDefinition.value?.platformCode || '').trim().toLowerCase(); return editAccounts.value.filter((item) => accountUsable(item) && (!platform || item.platformCode.toLowerCase() === platform)) }
+function resetEditCredentialSelection(slot: string) { editCredentialSelections[slot] = editCredentialModes[slot] === 'fixed_list' ? [] : undefined }
+function buildEditConfigBindings() {
+  const result: Record<string, unknown> = {}
+  for (const requirement of editConfigRequirements.value) {
+    const slot = String(requirement.slot || '').trim(); const resourceId = editConfigBindings[slot]
+    if (!resourceId) continue
+    const resource = editResources.value.find((item) => item.resourceId === resourceId)
+    if (resource) result[slot] = { resourceId: resource.resourceId, resourceCode: resource.resourceCode }
+  }
+  return result
+}
+function buildEditCredentialBindings() {
+  const result: Record<string, unknown> = {}
+  for (const requirement of editCredentialRequirements.value) {
+    const slot = String(requirement.slot || '').trim(); const mode = editCredentialModes[slot] || ''; const selection = editCredentialSelections[slot]
+    const platformCode = String(requirement.platformCode || requirement.platform_code || editDefinition.value?.platformCode || '').trim().toLowerCase(); const credentialType = String(requirement.credentialType || requirement.credential_type || '')
+    if (mode === 'fixed' && typeof selection === 'string' && selection) result[slot] = { mode, credentialKey: selection, platformCode, credentialType }
+    else if (mode === 'fixed_list' && Array.isArray(selection) && selection.length) result[slot] = { mode, credentialKeys: selection, platformCode, credentialType }
+    else if (mode === 'pool') result[slot] = { mode, platformCode, credentialType }
+  }
+  return result
 }
 async function saveEdit() {
   if (!editTask.value) return
   saving.value = true
-  try { await updateTask(editTask.value.taskId, editForm); editVisible.value = false; ElMessage.success('任务已更新'); await loadPanel() } finally { saving.value = false }
+  try {
+    const payload: TaskUpdateRequest = { ...editForm, configBindings: buildEditConfigBindings(), credentialBindings: buildEditCredentialBindings() }
+    await updateTask(editTask.value.taskId, payload)
+    editVisible.value = false
+    ElMessage.success('任务已更新')
+    await loadPanel()
+  } finally { saving.value = false }
 }
 async function manualRun(row: TaskSchedulePanelItem) {
+  if (!row.runtimeReadiness?.ready) { ElMessage.warning(readinessReason(row)); return }
   await ElMessageBox.confirm(`确认立即执行任务“${row.taskName}”？`, '立即执行确认', { type: 'warning' })
   const run = await createRun(row.taskId)
   ElMessage.success(`已创建运行实例 #${run.runId}`)

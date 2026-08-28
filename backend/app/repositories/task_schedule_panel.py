@@ -27,9 +27,24 @@ class TaskSchedulePanelRepository:
 
 
     def list_pending_definitions(self, query: TaskSchedulePanelQuery, *, member_user_id: int | None = None) -> tuple[list[dict[str, Any]], int]:
+        return self._list_definition_inbox(query, "PENDING", member_user_id=member_user_id)
+
+    def list_ignored_definitions(self, query: TaskSchedulePanelQuery, *, member_user_id: int | None = None) -> tuple[list[dict[str, Any]], int]:
+        return self._list_definition_inbox(query, "IGNORED", member_user_id=member_user_id)
+
+    def _list_definition_inbox(self, query: TaskSchedulePanelQuery, orchestration_status: str, *, member_user_id: int | None = None) -> tuple[list[dict[str, Any]], int]:
         if query.task_status:
             return [], 0
-        filters = [CrawlerProjectTaskDefinition.definition_status == "AVAILABLE"]
+        filters = [
+            CrawlerProjectTaskDefinition.discovery_status == "ACTIVE",
+            CrawlerProjectTaskDefinition.orchestration_status == orchestration_status,
+            ~exists(
+                select(1).where(
+                    CrawlerTask.project_id == CrawlerProjectTaskDefinition.project_id,
+                    CrawlerTask.definition_id == CrawlerProjectTaskDefinition.definition_id,
+                )
+            ),
+        ]
         if query.company_id is not None:
             filters.append(CrawlerProjectTaskDefinition.company_id == query.company_id)
         if query.project_id is not None:
@@ -89,14 +104,31 @@ class TaskSchedulePanelRepository:
             CrawlerProjectTaskDefinition.platform_code.label("platform_code"),
             CrawlerProjectTaskDefinition.task_group.label("task_group"),
             CrawlerProjectTaskDefinition.suggested_cron.label("suggested_cron"),
+            CrawlerProjectTaskDefinition.default_params.label("default_params"),
+            CrawlerProjectTaskDefinition.execution_mode.label("execution_mode"),
+            CrawlerProjectTaskDefinition.runtime_mode.label("runtime_mode"),
+            CrawlerProjectTaskDefinition.task_max_concurrency.label("task_max_concurrency"),
+            CrawlerProjectTaskDefinition.group_max_concurrency.label("group_max_concurrency"),
+            CrawlerProjectTaskDefinition.exclusive_mode.label("exclusive_mode"),
+            CrawlerProjectTaskDefinition.io_class.label("io_class"),
+            CrawlerProjectTaskDefinition.shm_size_mb.label("shm_size_mb"),
+            CrawlerProjectTaskDefinition.log_limit_mb.label("log_limit_mb"),
+            CrawlerProjectTaskDefinition.resource_locks.label("resource_locks"),
             CrawlerProjectTaskDefinition.required_configs.label("required_configs"),
             CrawlerProjectTaskDefinition.required_credentials.label("required_credentials"),
             CrawlerProjectTaskDefinition.contract_status.label("contract_status"),
             CrawlerProjectTaskDefinition.contract_warnings.label("contract_warnings"),
-            CrawlerProjectTaskDefinition.definition_status.label("definition_status"),
+            CrawlerProjectTaskDefinition.discovery_status.label("discovery_status"),
+            CrawlerProjectTaskDefinition.orchestration_status.label("orchestration_status"),
+            CrawlerProjectTaskDefinition.first_seen_release_id.label("first_seen_release_id"),
+            CrawlerProjectTaskDefinition.latest_release_id.label("latest_release_id"),
+            CrawlerProjectTaskDefinition.last_seen_at.label("last_seen_at"),
+            CrawlerProjectTaskDefinition.ignored_at.label("ignored_at"),
+            CrawlerProjectTaskDefinition.ignored_by.label("ignored_by"),
+            CrawlerProjectTaskDefinition.ignore_reason.label("ignore_reason"),
             CrawlerProjectTaskDefinition.updated_at.label("updated_at"),
         ]
-        total = int(self.db.scalar(select(func.count()).select_from(CrawlerProjectTaskDefinition.__table__.join(CrawlerProject.__table__, CrawlerProject.project_id == CrawlerProjectTaskDefinition.project_id).join(CrawlerCompany.__table__, CrawlerCompany.company_id == CrawlerProjectTaskDefinition.company_id)).where(*filters)) or 0)
+        total = int(self.db.scalar(select(func.count()).select_from(from_clause).where(*filters)) or 0)
         stmt = (
             select(*columns)
             .select_from(from_clause)

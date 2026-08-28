@@ -28,6 +28,9 @@ def login(client: TestClient) -> dict[str, str]:
 
 def _prepare_project(client: TestClient, headers: dict[str, str]) -> tuple[dict, dict]:
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'gateco', 'companyName': 'Gate Co'}).json()['data']
+    server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'gate-node', 'serverName': 'Gate Node', 'serverIp': '10.19.0.10'}).json()['data']
+    agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'gate-node', 'serverName': 'Gate Node', 'agentCode': 'gate-agent', 'agentName': 'Gate Agent'}).json()['data']
+    agent_headers = {'Authorization': 'Agent ' + agent['agentToken']}
     token = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']['discoveryToken']
     manifest = {
         'manifestVersion': '1', 'projectKey': 'gate-project', 'projectName': '契约门禁项目', 'projectCode': 'gate_project',
@@ -42,6 +45,13 @@ def _prepare_project(client: TestClient, headers: dict[str, str]) -> tuple[dict,
     }
     discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + token}, json={'companyId': company['companyId'], 'manifest': manifest}).json()['data']
     project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId']}).json()['data']
+    client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json={'servers': [{'serverId': server['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 100, 'weight': 100, 'maxConcurrency': 4}]})
+    client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'gate-instance', 'dockerStatus': 'OK', 'availableSlots': 2})
+    deployment = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={'serverIds': [server['serverId']]}).json()['data']
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'gate-instance', 'dockerStatus': 'OK', 'availableSlots': 2}).json()['data']
+    command = next(item for item in heartbeat['pendingAgentCommands'] if item['deploymentId'] == deployment['deploymentId'])
+    ack = client.post('/api/v1/agent-command-results', headers=agent_headers, json={'commandId': command['commandId'], 'commandType': command['commandType'], 'projectId': project['projectId'], 'releaseId': command['releaseId'], 'deploymentId': command['deploymentId'], 'targetId': command['targetId'], 'success': True, 'message': 'smoke ok', 'result': {}})
+    assert ack.status_code == 200, ack.text
     definition = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'][0]
     return company, definition
 
@@ -51,22 +61,22 @@ def test_task_creation_requires_config_and_credential_bindings() -> None:
     client = TestClient(app)
     headers = login(client)
     _company, definition = _prepare_project(client, headers)
-    response = client.post('/api/v1/tasks', headers=headers, json={
-        'definitionId': definition['definitionId'], 'taskCode': 'bad_task', 'taskName': '缺少绑定任务'
+
+    # Orchestration is progressive: an incomplete definition can be accepted as DRAFT.
+    draft = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition['definitionId'], 'taskCode': 'draft_task', 'taskName': '待补绑定任务', 'status': 'DRAFT'
     })
-    assert response.status_code == 400
-    body = response.json()
+    assert draft.status_code == 200, draft.text
+    task = draft.json()['data']
+    assert task['status'] == 'DRAFT'
+
+    # Runtime activation remains strict: the same task cannot be enabled without required bindings.
+    enabled = client.patch(f"/api/v1/tasks/{task['taskId']}", headers=headers, json={'status': 'ENABLED'})
+    assert enabled.status_code == 400
+    body = enabled.json()
     assert body['code'] == 40090
     assert any('mysql_main' in item for item in body['data']['errors'])
     assert any('queryAccount' in item for item in body['data']['errors'])
-
-    good = client.post('/api/v1/tasks', headers=headers, json={
-        'definitionId': definition['definitionId'], 'taskCode': 'good_task', 'taskName': '绑定完整任务',
-        'configBindings': {'mysql_main': 'config:mysql_main'},
-        'credentialBindings': {'queryAccount': {'mode': 'affinity_pool', 'platformCode': 'a_platform', 'credentialType': 'WEB_COOKIE', 'subjectType': 'company'}},
-    })
-    assert good.status_code == 200
-    assert good.json()['data']['credentialBindings']['queryAccount']['mode'] == 'affinity_pool'
 
 
 def test_non_credential_event_does_not_refresh_verified_status_and_lease_lifecycle() -> None:

@@ -50,7 +50,7 @@ def _base_graph(db, suffix: str):
         project_key=f'runtime_resource_project_{suffix}',
         image_repository='registry/runtime-resource-project',
         status='ENABLED',
-        online_status='READY',
+        online_status='ONLINE',
     )
     db.add(project)
     db.flush()
@@ -63,6 +63,7 @@ def _base_graph(db, suffix: str):
         image_digest='sha256:' + ('b' * 64),
         release_status='PUBLISHED',
         parse_status='SUCCESS',
+        manifest={'taskDefinitions': [{'definitionKey': 'jdd_items_sync', 'entryModule': 'spiders.jdd.items', 'entryFunction': 'run', 'requiredConfigs': [{'slot': 'mongo_jdd', 'type': 'MONGO', 'required': True}]}]},
     )
     db.add(release)
     db.flush()

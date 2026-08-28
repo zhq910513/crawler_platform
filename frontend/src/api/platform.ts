@@ -70,10 +70,13 @@ export function cancelProjectBuildJob(buildJobId: number, reason = '用户取消
 export function retryProjectBuildJob(buildJobId: number) { return request<{ buildJob: Record<string, unknown>; message: string }>(http.post(`/project-builds/${buildJobId}/retries`)) }
 export function listProjectReleaseDeployments(projectId: number) { return request<Record<string, unknown>[]>(http.get(`/projects/${projectId}/release-deployments`)) }
 export function listTaskDefinitions(projectId: number) { return request<TaskDefinition[]>(http.get(`/projects/${projectId}/task-definitions`)) }
+export function ignoreTaskDefinition(definitionId: number, reason = '') { return request<TaskDefinition>(http.post(`/task-definitions/${definitionId}/ignore`, { reason })) }
+export function restoreTaskDefinition(definitionId: number) { return request<TaskDefinition>(http.post(`/task-definitions/${definitionId}/restore`)) }
 
 export function listTasks(params?: { companyId?: number; projectId?: number }) { return request<Task[]>(http.get('/tasks', { params })) }
 export function createTask(payload: TaskCreateRequest) { return request<Task>(http.post('/tasks', payload)) }
 export function updateTask(taskId: number, payload: TaskUpdateRequest) { return request<Task>(http.patch(`/tasks/${taskId}`, payload)) }
+export function reconcileTaskDefinition(taskId: number, payload: { configBindings?: Record<string, unknown>; credentialBindings?: Record<string, unknown> } = {}) { return request<Task>(http.post(`/tasks/${taskId}/definition-reconciliations`, payload)) }
 export function deleteTask(taskId: number) { return request<{ taskId: number; deleted: boolean; archived: boolean; runCount: number; containerCleanupCommands?: Array<Record<string, unknown>> }>(http.delete(`/tasks/${taskId}`)) }
 export function updateTaskSchedule(taskId: number, payload: ScheduleUpdateRequest) { return request<Record<string, unknown>>(http.patch(`/tasks/${taskId}/schedules`, payload)) }
 export function previewCronExpression(payload: CronPreviewRequest) { return request<CronPreviewResult>(http.post('/cron-previews', payload)) }

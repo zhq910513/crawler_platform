@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 from app.errors import AppError
 from app.models import CrawlerProjectRelease, CrawlerProjectServer, CrawlerProjectTaskDefinition, CrawlerTask, CrawlerTaskRun, CrawlerTaskSchedule, CrawlerTaskServerTarget, SysUser
 from app.repositories.platform import ProjectRepository, TaskDefinitionRepository, TaskRepository
-from app.schemas import ScheduleUpdate, TaskFromDefinitionCreate, TaskUpdate
+from app.schemas import ScheduleUpdate, TaskDefinitionReconcile, TaskFromDefinitionCreate, TaskUpdate
 from app.services.audit import write_operation_log
 from app.services.cron_service import CronService
 from app.services.container_cleanup_service import ContainerCleanupService
 from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
 from app.services.runtime_resource_service import RuntimeResourceResolver
+from app.services.task_runtime_readiness_service import TaskRuntimeReadinessService
+from app.services.task_definition_lifecycle_service import TaskDefinitionLifecycleService
 
 
 class TaskService:
@@ -28,6 +30,34 @@ class TaskService:
     def list_definitions(self, user: SysUser, project_id: int) -> list[CrawlerProjectTaskDefinition]:
         require_project_role(self.db, user, project_id, "VIEWER")
         return self.definitions.list_by_project(project_id)
+
+    def ignore_definition(self, user: SysUser, definition_id: int, reason: str = "") -> CrawlerProjectTaskDefinition:
+        definition = self.definitions.get(definition_id)
+        if not definition:
+            raise AppError("任务定义不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_project_role(self.db, user, definition.project_id, "OWNER")
+        before = {"discoveryStatus": definition.discovery_status, "orchestrationStatus": definition.orchestration_status}
+        try:
+            TaskDefinitionLifecycleService(self.db).ignore(definition, user_id=user.user_id, reason=reason)
+        except ValueError as exc:
+            raise AppError("该任务定义当前不能忽略", code=40092, data={"reason": str(exc)}) from exc
+        write_operation_log(self.db, user, None, operation_type="IGNORE_TASK_DEFINITION", resource_type="task_definition", resource_id=str(definition.definition_id), before_data=before, after_data={"orchestrationStatus": definition.orchestration_status, "reason": definition.ignore_reason})
+        self.db.commit()
+        return definition
+
+    def restore_definition(self, user: SysUser, definition_id: int) -> CrawlerProjectTaskDefinition:
+        definition = self.definitions.get(definition_id)
+        if not definition:
+            raise AppError("任务定义不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_project_role(self.db, user, definition.project_id, "OWNER")
+        before = {"discoveryStatus": definition.discovery_status, "orchestrationStatus": definition.orchestration_status}
+        try:
+            TaskDefinitionLifecycleService(self.db).restore(definition)
+        except ValueError as exc:
+            raise AppError("该任务定义当前不能恢复", code=40093, data={"reason": str(exc)}) from exc
+        write_operation_log(self.db, user, None, operation_type="RESTORE_TASK_DEFINITION", resource_type="task_definition", resource_id=str(definition.definition_id), before_data=before, after_data={"orchestrationStatus": definition.orchestration_status})
+        self.db.commit()
+        return definition
 
     def list_tasks(self, user: SysUser, company_id: int | None = None, project_id: int | None = None) -> list[dict]:
         if project_id:
@@ -114,20 +144,14 @@ class TaskService:
             if bool(item.get("required", False)) and not self._binding_value_exists(configs.get(slot)):
                 errors.append(f"数据库/配置绑定项 {slot} 必须绑定")
         if not errors:
-            object_bound_slots = {
-                str(item.get("slot") or "").strip()
-                for item in required_configs or []
-                if isinstance(item, dict) and isinstance(configs.get(str(item.get("slot") or "").strip()), dict)
-            }
-            if object_bound_slots:
-                errors.extend(
-                    RuntimeResourceResolver(self.db).validate_bindings(
-                        company_id=company_id,
-                        project_id=project_id,
-                        required_configs=[item for item in required_configs or [] if isinstance(item, dict) and str(item.get("slot") or "").strip() in object_bound_slots],
-                        config_bindings=configs,
-                    )
+            errors.extend(
+                RuntimeResourceResolver(self.db).validate_bindings(
+                    company_id=company_id,
+                    project_id=project_id,
+                    required_configs=required_configs or [],
+                    config_bindings=configs,
                 )
+            )
         for item in required_credentials or []:
             if not isinstance(item, dict):
                 continue
@@ -136,7 +160,7 @@ class TaskService:
                 errors.append("requiredCredentials 存在缺少 slot 的账号声明")
                 continue
             errors.extend(self._validate_credential_binding(slot, item, credentials.get(slot)))
-        if errors and target_status in {"DRAFT", "ENABLED", "PAUSED", "DISABLED"}:
+        if errors and target_status == "ENABLED":
             raise AppError("任务契约校验未通过", code=40090, http_status=status.HTTP_400_BAD_REQUEST, data={"errors": errors})
 
     def _validate_owner(self, company_id: int, owner_user_id: int | None) -> int | None:
@@ -185,10 +209,20 @@ class TaskService:
         if not definition:
             raise AppError("任务定义不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
         project = require_project_role(self.db, user, definition.project_id, "OPERATOR")
-        if definition.definition_status == "CREATED":
+        if definition.discovery_status != "ACTIVE":
+            raise AppError("该任务定义不在当前激活 Release 中", code=40051)
+        if definition.orchestration_status == "IGNORED":
+            raise AppError("该任务定义已忽略，请先恢复后再编排", code=40051)
+        if definition.orchestration_status == "ORCHESTRATED":
             raise AppError("该任务定义已经创建正式任务", code=40051)
+        existing_task = self.db.scalar(select(CrawlerTask).where(CrawlerTask.project_id == definition.project_id, CrawlerTask.definition_id == definition.definition_id))
+        if existing_task:
+            definition.orchestration_status = "ORCHESTRATED"
+            raise AppError("该任务定义已经存在正式任务", code=40051)
         if definition.contract_status not in {"OK", "WARNING"}:
             raise AppError("任务定义契约不可用，不能创建正式任务", code=40091, http_status=status.HTTP_400_BAD_REQUEST, data={"contractStatus": definition.contract_status, "contractWarnings": definition.contract_warnings or []})
+        if payload.schedule_status == "ENABLED" and payload.status != "ENABLED":
+            raise AppError("启用自动计划前必须先启用任务", code=40094, http_status=status.HTTP_400_BAD_REQUEST)
         self._validate_task_contract_bindings(
             company_id=project.company_id,
             project_id=project.project_id,
@@ -269,7 +303,11 @@ class TaskService:
             if not ps:
                 raise AppError("任务指定节点必须属于该项目已部署节点", code=40053)
             self.db.add(CrawlerTaskServerTarget(company_id=project.company_id, task_id=task.task_id, server_id=server_id))
-        definition.definition_status = "CREATED"
+        definition.orchestration_status = "ORCHESTRATED"
+        if task.status == "ENABLED" or schedule.schedule_status == "ENABLED":
+            readiness = TaskRuntimeReadinessService(self.db).evaluate(task, require_nodes=True)
+            if not readiness.ready:
+                raise AppError("任务尚未达到可运行条件", code=40091, data={"readiness": readiness.asdict(), "reasons": readiness.reasons})
         try:
             self.db.commit()
         except IntegrityError as exc:
@@ -302,8 +340,67 @@ class TaskService:
             )
         for key, value in updates.items():
             setattr(task, key, value)
+        schedule = self.db.scalar(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.task_id == task.task_id))
+        if task.status != "ENABLED" and schedule and schedule.schedule_status == "ENABLED":
+            schedule.schedule_status = "PAUSED"
+            schedule.next_run_at = None
+        if task.status == "ENABLED":
+            readiness = TaskRuntimeReadinessService(self.db).evaluate(task, require_nodes=True)
+            if not readiness.ready:
+                raise AppError("任务尚未达到可运行条件", code=40091, data={"readiness": readiness.asdict(), "reasons": readiness.reasons})
         after = {c.name: getattr(task, c.name) for c in task.__table__.columns}
         write_operation_log(self.db, user, None, operation_type="UPDATE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data=after)
+        self.db.commit()
+        return task
+
+    def reconcile_definition(self, user: SysUser, task_id: int, payload: TaskDefinitionReconcile) -> CrawlerTask:
+        task = self.tasks.get(task_id)
+        if not task:
+            raise AppError("资源不存在", code=40401, http_status=status.HTTP_404_NOT_FOUND)
+        require_project_role(self.db, user, task.project_id, "OPERATOR")
+        definition = self.db.get(CrawlerProjectTaskDefinition, task.definition_id) if task.definition_id else None
+        if not definition or definition.project_id != task.project_id:
+            raise AppError("任务未关联可同步的任务定义", code=40095, http_status=status.HTTP_400_BAD_REQUEST)
+        if definition.discovery_status != "ACTIVE" or definition.orchestration_status != "ORCHESTRATED":
+            raise AppError("任务定义当前不可同步", code=40095, data={"discoveryStatus": definition.discovery_status, "orchestrationStatus": definition.orchestration_status})
+
+        config_bindings = payload.config_bindings if payload.config_bindings is not None else (task.config_bindings or {})
+        credential_bindings = payload.credential_bindings if payload.credential_bindings is not None else (task.credential_bindings or {})
+        self._validate_task_contract_bindings(
+            company_id=task.company_id,
+            project_id=task.project_id,
+            required_configs=definition.required_configs or [],
+            required_credentials=definition.required_credentials or [],
+            config_bindings=config_bindings,
+            credential_bindings=credential_bindings,
+            target_status=task.status,
+        )
+        before = {c.name: getattr(task, c.name) for c in task.__table__.columns}
+        task.entry_module = definition.entry_module
+        task.entry_function = definition.entry_function
+        task.execution_mode = definition.execution_mode
+        task.idempotency_policy = definition.idempotency_policy
+        task.required_capabilities = definition.required_capabilities or {}
+        requirements = definition.resource_requirements or {}
+        task.shard_strategy = requirements.get("shardStrategy", {}) if isinstance(requirements, dict) else {}
+        task.required_node_count = max(1, int(requirements.get("requiredNodeCount", 1) or 1)) if definition.execution_mode == "SHARDED" else 1
+        task.max_parallel_nodes = max(1, int(requirements.get("maxParallelNodes", 1) or 1)) if definition.execution_mode == "SHARDED" else 1
+        task.config_bindings = config_bindings
+        task.credential_bindings = credential_bindings
+        task.contract_snapshot = {
+            "platformCode": definition.platform_code,
+            "requiredConfigs": definition.required_configs or [],
+            "requiredCredentials": definition.required_credentials or [],
+            "outputTables": definition.output_tables or [],
+            "contractVersion": definition.contract_version or "1",
+            "contractStatus": definition.contract_status or "UNKNOWN",
+            "contractWarnings": definition.contract_warnings or [],
+            "sourceFingerprint": definition.source_fingerprint or "",
+            "latestReleaseId": definition.latest_release_id,
+        }
+        self.db.flush()
+        after = {c.name: getattr(task, c.name) for c in task.__table__.columns}
+        write_operation_log(self.db, user, None, operation_type="RECONCILE_TASK_DEFINITION", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data=after)
         self.db.commit()
         return task
 
@@ -350,8 +447,8 @@ class TaskService:
             self.db.flush()
         if definition_id:
             definition = self.db.get(CrawlerProjectTaskDefinition, definition_id)
-            if definition and definition.definition_status == "CREATED":
-                definition.definition_status = "AVAILABLE"
+            if definition and definition.orchestration_status == "ORCHESTRATED":
+                definition.orchestration_status = "PENDING"
         write_operation_log(self.db, user, None, operation_type="DELETE_TASK", resource_type="task", resource_id=str(task.task_id), before_data=before, after_data={"deleted": True, "containerCleanupCommands": cleanup_commands})
         self.db.delete(task)
         self.db.commit()
@@ -388,6 +485,12 @@ class TaskService:
             schedule.next_run_at = None
             schedule.cron_expression = ""
             schedule.schedule_label = schedule.schedule_label or "手动执行"
+        if schedule.schedule_status == "ENABLED" and task.status != "ENABLED":
+            raise AppError("启用自动计划前必须先启用任务", code=40094, http_status=status.HTTP_400_BAD_REQUEST)
+        if schedule.schedule_status == "ENABLED":
+            readiness = TaskRuntimeReadinessService(self.db).evaluate(task, require_nodes=True)
+            if not readiness.ready:
+                raise AppError("计划不能启用：任务尚未达到可运行条件", code=40091, data={"readiness": readiness.asdict(), "reasons": readiness.reasons})
         if schedule.schedule_status == "ENABLED" and schedule.schedule_type == "CRON" and schedule.cron_expression:
             schedule.next_run_at = CronService.next_time(schedule.cron_expression, schedule.schedule_timezone, is_super_admin=is_super_admin(user))
         elif schedule.schedule_status != "ENABLED":
@@ -400,6 +503,8 @@ class TaskService:
     def _task_payload(self, task: CrawlerTask) -> dict:
         schedule = self.db.scalar(select(CrawlerTaskSchedule).where(CrawlerTaskSchedule.task_id == task.task_id))
         data = {c.name: getattr(task, c.name) for c in task.__table__.columns}
+        readiness = TaskRuntimeReadinessService(self.db).evaluate(task, require_nodes=True)
+        data["runtime_readiness"] = readiness.asdict()
         if schedule:
             data.update({
                 "schedule_id": schedule.schedule_id,

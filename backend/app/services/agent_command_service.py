@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import CrawlerProjectDeployment, CrawlerProjectDeploymentTarget, CrawlerProjectServer, CrawlerServer
+from app.models import CrawlerProject, CrawlerProjectDeployment, CrawlerProjectDeploymentTarget, CrawlerProjectRelease, CrawlerProjectServer, CrawlerServer
 from app.utils import utcnow
 
 PENDING_KEY = "pendingAgentCommands"
@@ -74,6 +74,69 @@ class AgentCommandService:
         metrics[PENDING_KEY] = pending[-100:]
         server.metrics = metrics
         return command
+
+    def dispatch_project_deployment_targets(self, deployment: CrawlerProjectDeployment) -> list[dict[str, Any]]:
+        """Dispatch pending deployment targets without exceeding maxParallelPulls.
+
+        DeploymentTarget owns candidate readiness. ProjectServer is intentionally
+        untouched until ReleaseActivationService atomically promotes the release.
+        """
+        project = self.db.get(CrawlerProject, deployment.project_id)
+        release = self.db.get(CrawlerProjectRelease, deployment.release_id)
+        if not project or not release:
+            return []
+        strategy = dict(deployment.strategy or {})
+        max_parallel = max(1, int(strategy.get("maxParallelPulls") or 2))
+        targets = list(self.db.scalars(
+            select(CrawlerProjectDeploymentTarget)
+            .where(CrawlerProjectDeploymentTarget.deployment_id == deployment.deployment_id)
+            .order_by(CrawlerProjectDeploymentTarget.target_id.asc())
+        ).all())
+        active = sum(1 for item in targets if item.target_status in {"DISPATCHED", "DEPLOYING"})
+        slots = max(0, max_parallel - active)
+        if not slots:
+            return []
+        strategy_targets = strategy.get("targets") if isinstance(strategy.get("targets"), list) else []
+        meta_by_target = {int(item.get("targetId") or 0): item for item in strategy_targets if isinstance(item, dict)}
+        dispatched: list[dict[str, Any]] = []
+        for target in targets:
+            if slots <= 0:
+                break
+            if target.target_status != "PENDING_AGENT":
+                continue
+            server = self.db.get(CrawlerServer, target.server_id)
+            if not server:
+                target.target_status = "FAILED"
+                target.image_readiness_status = "FAILED"
+                target.last_error = "部署目标节点不存在"
+                continue
+            meta = meta_by_target.get(target.target_id, {})
+            desired = str(meta.get("desiredSchedulingStatus") or "ENABLED")
+            command = self.enqueue_project_deploy_prepare(
+                server=server,
+                project_id=project.project_id,
+                project_code=project.project_code,
+                release_id=release.release_id,
+                release_version=release.version,
+                image_repository=release.image_repository,
+                image_digest=release.image_digest,
+                deployment_id=deployment.deployment_id,
+                target_id=target.target_id,
+                desired_scheduling_status=desired,
+                reason=strategy.get("reason") or "项目一键部署",
+            )
+            target.target_status = "DISPATCHED"
+            target.image_readiness_status = "DEPLOYING"
+            if meta:
+                meta["commandId"] = command["commandId"]
+                meta["status"] = "DISPATCHED"
+                meta["message"] = "已下发 Agent 部署指令，等待心跳执行"
+            dispatched.append(command)
+            slots -= 1
+        strategy["targets"] = strategy_targets
+        strategy["updatedAt"] = utcnow().isoformat()
+        deployment.strategy = strategy
+        return dispatched
 
     def enqueue_agent_upgrade(self, *, server: CrawlerServer, agent_id: int, target_version: str, target_image: str, target_digest: str = "") -> dict[str, Any]:
         command_id = f"agent-upgrade-{server.server_id}-{target_version}"
@@ -192,20 +255,18 @@ class AgentCommandService:
         target = self.db.get(CrawlerProjectDeploymentTarget, target_id) if target_id else None
         deployment = self.db.get(CrawlerProjectDeployment, deployment_id) if deployment_id else None
         now = utcnow()
-        if ps:
-            ps.latest_release_id = release_id or ps.latest_release_id
-            if success:
-                ps.deployment_status = "DEPLOYED"
-                ps.image_readiness_status = "READY"
-                desired = str(command.get("desiredSchedulingStatus") or "ENABLED")
-                ps.scheduling_status = desired if desired in {"ENABLED", "RECOVERING", "PAUSED", "DRAINING", "DISABLED"} else "ENABLED"
-                ps.disabled_reason = ""
-            else:
-                ps.deployment_status = "FAILED"
-                ps.image_readiness_status = "FAILED"
-                ps.scheduling_status = "PAUSED"
-                ps.disabled_reason = (message or "Agent 项目部署预检失败")[:500]
-            ps.last_deployed_at = now
+        if ps and not success and not ps.latest_release_id:
+            # First deployment failed and there is no proven runtime yet. Candidate
+            # success never mutates ProjectServer before activation; failure may
+            # still describe the absence of a runnable runtime.
+            ps.deployment_status = "FAILED"
+            ps.image_readiness_status = "FAILED"
+            ps.scheduling_status = "PAUSED"
+            ps.disabled_reason = (message or "Agent 项目部署预检失败")[:500]
+        elif ps and not success:
+            # Upgrade failure is isolated to DeploymentTarget. Keep the proven
+            # stable runtime untouched.
+            ps.disabled_reason = (message or "候选 Release 部署失败，当前已激活版本继续运行")[:500]
         if target:
             target.target_status = "DEPLOYED" if success else "FAILED"
             target.image_readiness_status = "READY" if success else "FAILED"
@@ -213,10 +274,19 @@ class AgentCommandService:
             target.last_deployed_at = now
         if deployment:
             self._update_deployment_strategy(deployment, target_id, stored)
+            # A completed ACK frees one rollout slot. Dispatch the next pending
+            # candidate, honoring maxParallelPulls from the deployment strategy.
+            self.dispatch_project_deployment_targets(deployment)
+            self.db.flush()
             targets = list(self.db.scalars(select(CrawlerProjectDeploymentTarget).where(CrawlerProjectDeploymentTarget.deployment_id == deployment.deployment_id)).all())
             statuses = {item.target_status for item in targets}
             if targets and statuses <= {"DEPLOYED"}:
                 deployment.deployment_status = "DEPLOYED"
+                from app.services.release_activation_service import ReleaseActivationService
+
+                activation = ReleaseActivationService(self.db).activate_deployment(deployment)
+                if not activation.get("activated"):
+                    deployment.deployment_status = "BLOCKED"
             elif "FAILED" in statuses and not (statuses & {"PENDING_AGENT", "DISPATCHED", "DEPLOYING"}):
                 deployment.deployment_status = "FAILED"
             else:

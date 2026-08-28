@@ -133,7 +133,7 @@ class AgentService:
             set_routing_status(run, "ROUTE_CANCELLED", reason="任务或项目状态已不可运行")
             self.db.commit()
             return None
-        if not self._can_server_claim(project, run.server_id):
+        if not self._can_server_claim(project, run.server_id, run.release_id):
             run.server_id = None
             set_routing_status(run, "PENDING", reason="节点已暂停接收该项目任务，等待重新分配")
             self.db.commit()
@@ -462,13 +462,13 @@ class AgentService:
             command_service.enqueue_agent_upgrade(server=server, agent_id=agent.agent_id, target_version=target_version, target_image=target_image, target_digest=settings.crawler_agent_image_digest)
         return False
 
-    def _can_server_claim(self, project: CrawlerProject, server_id: int | None) -> bool:
+    def _can_server_claim(self, project: CrawlerProject, server_id: int | None, release_id: int | None) -> bool:
         if not server_id:
             return False
         ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.server_id == server_id))
         if not ps:
             return bool(project.allow_company_pool_fallback)
-        return ps.deployment_status == "DEPLOYED" and ps.scheduling_status in {"ENABLED", "RECOVERING"} and ps.image_readiness_status in {"READY", "OUTDATED", "WARMING"}
+        return ps.deployment_status == "DEPLOYED" and ps.latest_release_id == release_id and ps.scheduling_status in {"ENABLED", "RECOVERING"} and ps.image_readiness_status == "READY"
 
 
     @staticmethod

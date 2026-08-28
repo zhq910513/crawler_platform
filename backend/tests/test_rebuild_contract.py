@@ -35,47 +35,26 @@ def test_full_platform_flow() -> None:
     data, headers = login(client)
     assert data['user']['isSuperAdmin'] is True
 
-    company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'hc', 'companyName': 'H公司'}).json()['data']
-    assert company['companyName'] == 'H公司'
-
-    server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-b', 'serverName': 'B服务器'}).json()['data']
-    assert server['serverCode'] == 'srv-b'
-
-    agent_payload = {'companyId': company['companyId'], 'serverCode': 'srv-b', 'serverName': 'B服务器', 'agentCode': 'agent-b', 'agentName': 'B Agent'}
-    agent = client.post('/api/v1/agents', headers=headers, json=agent_payload).json()['data']
-    assert 'tokenHash' not in str(agent)
-    agent_headers = {'Authorization': 'Agent ' + agent['agentToken']}
-
-    discovery_token = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']['discoveryToken']
-    manifest = {
-        'manifestVersion': '1',
-        'projectKey': 'project-a',
-        'projectName': '项目A',
-        'projectCode': 'project_a',
-        'repositoryUrl': 'git@example/project-a',
-        'imageRepository': 'repo/project-a',
-        'imageDigest': 'sha256:' + 'a' * 64,
-        'releaseVersion': '1.0.1',
-        'releaseChannel': 'stable',
-        'taskDefinitions': [{'definitionKey': 'task_one', 'taskName': '任务一', 'entryModule': 'spiders.task_one', 'entryFunction': 'run'}],
-    }
-    discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery_token}, json={'companyId': company['companyId'], 'manifest': manifest}).json()['data']
-    assert discovered['discoveryStatus'] == 'READY_TO_IMPORT'
-
-    project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId']}).json()['data']
-    client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json={'servers': [{'serverId': server['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 100, 'weight': 100, 'maxConcurrency': 4, 'autoEjectEnabled': True, 'autoRecoverEnabled': True}]})
+    company, project, agents, meta = create_flow(client, headers, 'full')
     definitions = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
-    assert definitions[0]['definitionStatus'] == 'AVAILABLE'
+    assert len(definitions) == 1
+    assert definitions[0]['discoveryStatus'] == 'ACTIVE'
+    assert definitions[0]['orchestrationStatus'] == 'PENDING'
 
-    task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': definitions[0]['definitionId'], 'taskCode': 'task_one', 'taskName': '任务一', 'status': 'ENABLED'}).json()['data']
-    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId'], 'parameters': {}}).json()['data']
-    assert run['routingStatus'] == 'WAITING_RESOURCE'
+    task_response = client.post('/api/v1/tasks', headers=headers, json={'definitionId': definitions[0]['definitionId'], 'taskCode': 'task_one', 'taskName': '任务一', 'status': 'ENABLED'})
+    assert task_response.status_code == 200, task_response.text
+    task = task_response.json()['data']
+    run_response = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId'], 'parameters': {}})
+    assert run_response.status_code == 200, run_response.text
+    run = run_response.json()['data']
+    assert run['routingStatus'] == 'ROUTED'
 
-    heartbeat = {'agentInstanceId': 'inst-1', 'dockerStatus': 'OK', 'availableSlots': 2}
-    client.post('/api/v1/agent-heartbeats', headers=agent_headers, json=heartbeat)
+    agent_headers = agents[0]['headers']
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-full-run', 'dockerStatus': 'OK', 'availableSlots': 2}).json()['data']
+    assert heartbeat['pendingAgentCommands'] == []
     claim = client.post('/api/v1/agent-run-claims', headers=agent_headers).json()['data']
     assert claim['runId'] == run['runId']
-    assert claim['imageDigest'] == manifest['imageDigest']
+    assert claim['imageDigest'] == meta['manifest']['imageDigest']
 
 
 def test_single_session_conflict() -> None:
@@ -91,7 +70,41 @@ def test_single_session_conflict() -> None:
     assert 'forceLoginToken' in second.json()['data']
 
 
-def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: list[str] | None = None) -> tuple[dict, dict, list[dict], dict]:
+def activate_latest_release(client: TestClient, headers: dict, project: dict, agents: list[dict], manifest: dict, *, reason: str = '测试激活 Release') -> dict:
+    for idx, agent in enumerate(agents):
+        client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f"inst-activate-{project['projectId']}-{idx}",
+            'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []},
+        })
+    response = client.post(
+        f"/api/v1/projects/{project['projectId']}/release-deployments",
+        headers=headers,
+        json={'serverIds': [agent['serverId'] for agent in agents], 'reason': reason},
+    )
+    assert response.status_code == 200, response.text
+    deployment = response.json()['data']
+    for idx, agent in enumerate(agents):
+        heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f"inst-activate-{project['projectId']}-{idx}",
+            'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []},
+        }).json()['data']
+        pending = [item for item in heartbeat.get('pendingAgentCommands', []) if item.get('deploymentId') == deployment['deploymentId']]
+        assert len(pending) == 1, heartbeat
+        command = pending[0]
+        ack = client.post('/api/v1/agent-command-results', headers=agent['headers'], json={
+            'commandId': command['commandId'], 'commandType': command['commandType'],
+            'projectId': project['projectId'], 'releaseId': command['releaseId'],
+            'deploymentId': command['deploymentId'], 'targetId': command['targetId'],
+            'success': True, 'message': 'deploy + smoke ok',
+            'result': {'imageRef': manifest['imageRepository'] + '@' + manifest['imageDigest']},
+        })
+        assert ack.status_code == 200, ack.text
+    state = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data'][0]
+    assert state['deploymentStatus'] == 'DEPLOYED', state
+    return state
+
+
+def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: list[str] | None = None, *, activate: bool = True) -> tuple[dict, dict, list[dict], dict]:
     server_codes = server_codes or [f'srv-{suffix}']
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': f'hc_{suffix}', 'companyName': f'H公司{suffix}'}).json()['data']
     agent_tokens = []
@@ -100,7 +113,7 @@ def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: li
         server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器', 'serverIp': f'10.10.{len(server_items) + 1}.10'}).json()['data']
         server_items.append(server)
         agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': code, 'serverName': f'{code}服务器', 'agentCode': f'agent-{code}', 'agentName': f'{code} Agent'}).json()['data']
-        agent_tokens.append({'serverCode': code, 'headers': {'Authorization': 'Agent ' + agent['agentToken']}})
+        agent_tokens.append({'serverId': server['serverId'], 'serverCode': code, 'headers': {'Authorization': 'Agent ' + agent['agentToken']}})
     discovery_token = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']['discoveryToken']
     manifest = {
         'manifestVersion': '1', 'projectKey': f'project-{suffix}', 'projectName': f'项目{suffix}', 'projectCode': f'project_{suffix}',
@@ -114,6 +127,10 @@ def create_flow(client: TestClient, headers: dict, suffix: str, server_codes: li
     project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId'], 'dispatchMode': 'LOAD_BALANCE'}).json()['data']
     pool_payload = {'servers': [{'serverId': item['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE' if len(server_items) > 1 else 'ACTIVE', 'priority': 100 + idx, 'weight': 100, 'maxConcurrency': 4, 'autoEjectEnabled': True, 'autoRecoverEnabled': True} for idx, item in enumerate(server_items)]}
     client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json=pool_payload)
+    if activate:
+        activate_latest_release(client, headers, project, agent_tokens, manifest)
+        project = next(item for item in client.get('/api/v1/projects', headers=headers, params={'companyId': company['companyId']}).json()['data'] if item['projectId'] == project['projectId'])
+        assert project['onlineStatus'] == 'ONLINE'
     return company, project, agent_tokens, {'token': discovery_token, 'manifest': manifest}
 
 
@@ -138,7 +155,7 @@ def test_formal_project_release_sync_after_cicd_report() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, _, discovery = create_flow(client, headers, 'sync')
+    company, project, agents, discovery = create_flow(client, headers, 'sync')
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('c' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_one', 'taskName': '任务一新版', 'entryModule': 'spiders.task_one', 'entryFunction': 'run'},
         {'definitionKey': 'task_two', 'taskName': '任务二', 'entryModule': 'spiders.task_two', 'entryFunction': 'run'},
@@ -146,9 +163,14 @@ def test_formal_project_release_sync_after_cicd_report() -> None:
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     releases = client.get('/api/v1/releases', headers=headers, params={'projectId': project['projectId']}).json()['data']
     assert releases[0]['version'] == '1.1.0'
+    # Registering an immutable artifact must not change the active definitions.
+    defs_before = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    assert {item['definitionKey'] for item in defs_before} == {'task_one'}
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活 1.1.0')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     keys = {item['definitionKey']: item for item in defs}
-    assert keys['task_two']['definitionStatus'] == 'AVAILABLE'
+    assert keys['task_two']['discoveryStatus'] == 'ACTIVE'
+    assert keys['task_two']['orchestrationStatus'] == 'PENDING'
     run_task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': keys['task_two']['definitionId'], 'taskCode': 'task_two', 'taskName': '任务二', 'status': 'ENABLED'}).json()['data']
     run = client.post('/api/v1/runs', headers=headers, json={'taskId': run_task['taskId'], 'parameters': {'x': 1}}).json()['data']
     assert run['imageDigest'] == manifest['imageDigest']
@@ -180,10 +202,17 @@ def test_non_idempotent_lost_does_not_auto_retry_and_p0_created() -> None:
     company, project, agents, _ = create_flow(client, headers, 'lost')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     from app.db import SessionLocal
-    from app.models import CrawlerProjectTaskDefinition, CrawlerTaskRun, SysAlertEvent
+    from app.models import CrawlerProjectTaskDefinition, CrawlerTaskRun, SysAlertEvent, CrawlerReleaseChannel, CrawlerProjectRelease
     with SessionLocal() as db:
         definition = db.get(CrawlerProjectTaskDefinition, defs[0]['definitionId'])
         definition.idempotency_policy = 'NON_IDEMPOTENT'
+        channel = db.query(CrawlerReleaseChannel).filter(CrawlerReleaseChannel.project_id == project['projectId'], CrawlerReleaseChannel.channel_name == 'stable').one()
+        release = db.get(CrawlerProjectRelease, channel.release_id)
+        manifest = dict(release.manifest or {})
+        items = [dict(item) for item in (manifest.get('taskDefinitions') or [])]
+        items[0]['idempotencyPolicy'] = 'NON_IDEMPOTENT'
+        manifest['taskDefinitions'] = items
+        release.manifest = manifest
         db.commit()
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'task_one_lost', 'taskName': '任务一失联', 'status': 'ENABLED', 'maxRetryCount': 2}).json()['data']
     client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={'agentInstanceId': 'inst-lost', 'dockerStatus': 'OK', 'availableSlots': 2})
@@ -205,11 +234,12 @@ def test_sharded_task_creates_child_runs() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, agents, discovery = create_flow(client, headers, 'shard')
+    company, project, agents, discovery = create_flow(client, headers, 'shard', ['srv-shard-a', 'srv-shard-b'])
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('d' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_shard', 'taskName': '分片任务', 'entryModule': 'spiders.shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
     ]}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活测试 Release')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     shard_def = [item for item in defs if item['definitionKey'] == 'task_shard'][0]
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_shard', 'taskName': '分片任务', 'status': 'ENABLED'}).json()['data']
@@ -287,11 +317,12 @@ def test_scheduled_sharded_unique_key_and_parent_aggregation() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, agents, discovery = create_flow(client, headers, 'schedshard')
+    company, project, agents, discovery = create_flow(client, headers, 'schedshard', ['srv-schedshard-a', 'srv-schedshard-b'])
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('e' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_sched_shard', 'taskName': '定时分片任务', 'entryModule': 'spiders.shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
     ]}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活测试 Release')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     shard_def = [item for item in defs if item['definitionKey'] == 'task_sched_shard'][0]
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_sched_shard', 'taskName': '定时分片任务', 'status': 'ENABLED', 'scheduleStatus': 'ENABLED', 'scheduleType': 'CRON', 'cronExpression': '* * * * *'}).json()['data']
@@ -383,6 +414,7 @@ def test_shared_environment_task_runtime_policy_and_claim_payload() -> None:
         {'definitionKey': 'task_shared', 'taskName': '共享环境任务', 'entryModule': 'spiders.shared', 'entryFunction': 'run', 'runtimeMode': 'SHARED_ENV_ISOLATED', 'taskGroup': 'api', 'taskMaxConcurrency': 2, 'groupMaxConcurrency': 3, 'shmSizeMb': 128, 'logLimitMb': 20, 'resourceLocks': ['account:demo']},
     ]}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活测试 Release')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     definition = [item for item in defs if item['definitionKey'] == 'task_shared'][0]
     assert definition['runtimeMode'] == 'SHARED_ENV_ISOLATED'
@@ -411,6 +443,7 @@ def test_resource_lock_blocks_conflicting_runs() -> None:
         {'definitionKey': 'task_lock_b', 'taskName': '锁任务B', 'entryModule': 'spiders.b', 'entryFunction': 'run', 'taskMaxConcurrency': 10, 'groupMaxConcurrency': 10, 'resourceLocks': ['account:x']},
     ]}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活测试 Release')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     by_key = {item['definitionKey']: item for item in defs}
     a = client.post('/api/v1/tasks', headers=headers, json={'definitionId': by_key['task_lock_a']['definitionId'], 'taskCode': 'task_lock_a', 'taskName': '锁任务A', 'status': 'ENABLED'}).json()['data']
@@ -747,12 +780,13 @@ def test_scheduler_duplicate_trigger_does_not_rollback_previous_schedule() -> No
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, _, discovery = create_flow(client, headers, 'scheddup')
+    company, project, agents, discovery = create_flow(client, headers, 'scheddup')
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('f' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_dup_a', 'taskName': '重复A', 'entryModule': 'spiders.dup_a', 'entryFunction': 'run'},
         {'definitionKey': 'task_dup_b', 'taskName': '重复B', 'entryModule': 'spiders.dup_b', 'entryFunction': 'run'},
     ]}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活测试 Release')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     defs_by_key = {row['definitionKey']: row for row in defs}
     task_a = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs_by_key['task_dup_a']['definitionId'], 'taskCode': 'task_dup_a', 'taskName': '重复A', 'status': 'ENABLED', 'scheduleStatus': 'ENABLED', 'scheduleType': 'CRON', 'cronExpression': '* * * * *'}).json()['data']
@@ -796,11 +830,12 @@ def test_task_schedule_panel_uses_sharded_parent_as_latest_run() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, _, discovery = create_flow(client, headers, 'panelshard')
+    company, project, agents, discovery = create_flow(client, headers, 'panelshard', ['srv-panelshard-a', 'srv-panelshard-b'])
     manifest = {**discovery['manifest'], 'releaseVersion': '1.1.0', 'imageDigest': 'sha256:' + ('1' * 64), 'taskDefinitions': [
         {'definitionKey': 'task_panel_shard', 'taskName': '面板分片任务', 'entryModule': 'spiders.panel_shard', 'entryFunction': 'run', 'executionMode': 'SHARDED', 'resourceRequirements': {'requiredNodeCount': 2, 'maxParallelNodes': 2}},
     ]}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='激活测试 Release')
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     shard_def = [item for item in defs if item['definitionKey'] == 'task_panel_shard'][0]
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': shard_def['definitionId'], 'taskCode': 'task_panel_shard', 'taskName': '面板分片任务', 'status': 'ENABLED'}).json()['data']
@@ -844,7 +879,8 @@ def test_task_delete_physical_or_archive_and_panel_hides_archived() -> None:
     assert deleted['archived'] is False
 
     defs_after_delete = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
-    assert defs_after_delete[0]['definitionStatus'] == 'AVAILABLE'
+    assert defs_after_delete[0]['discoveryStatus'] == 'ACTIVE'
+    assert defs_after_delete[0]['orchestrationStatus'] == 'PENDING'
 
     task_with_run = client.post('/api/v1/tasks', headers=headers, json={
         'definitionId': definition_id,
@@ -881,8 +917,8 @@ def test_cicd_release_registration_without_server_and_multi_agent_pool() -> None
     client = TestClient(app)
     _, headers = login(client)
     company = client.post('/api/v1/companies', headers=headers, json={'companyCode': 'hc_cicd_multi', 'companyName': 'H公司多节点CI'}).json()['data']
-    server_a = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-a', 'serverName': 'CI A服务器'}).json()['data']
-    server_b = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-b', 'serverName': 'CI B服务器'}).json()['data']
+    server_a = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-a', 'serverName': 'CI A服务器', 'serverIp': '10.20.0.11'}).json()['data']
+    server_b = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-b', 'serverName': 'CI B服务器', 'serverIp': '10.20.0.12'}).json()['data']
     agent_a = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-a', 'serverName': 'CI A服务器', 'agentCode': 'agent-cicd-a', 'agentName': 'CI A Agent'}).json()['data']
     agent_b = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'srv-cicd-b', 'serverName': 'CI B服务器', 'agentCode': 'agent-cicd-b', 'agentName': 'CI B Agent'}).json()['data']
     token = client.post(f"/api/v1/companies/{company['companyId']}/discovery-tokens", headers=headers).json()['data']['discoveryToken']
@@ -915,8 +951,17 @@ def test_cicd_release_registration_without_server_and_multi_agent_pool() -> None
         {'serverId': server_b['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 20, 'weight': 100, 'maxConcurrency': 2},
     ]}).json()['data']
     assert {item['serverId'] for item in pool} == {server_a['serverId'], server_b['serverId']}
-    assert {item['latestImageDigest'] for item in pool} == {manifest['imageDigest']}
-    assert {item['imageReadinessStatus'] for item in pool} == {'OUTDATED'}
+    # Server-pool selection is orchestration intent only. It must not pretend the
+    # candidate image has already been deployed or verified.
+    assert {item['latestImageDigest'] for item in pool} == {''}
+    assert {item['deploymentStatus'] for item in pool} == {'PENDING'}
+    assert {item['imageReadinessStatus'] for item in pool} == {'UNKNOWN'}
+
+    agent_targets = [
+        {'serverId': server_a['serverId'], 'headers': {'Authorization': 'Agent ' + agent_a['agentToken']}},
+        {'serverId': server_b['serverId'], 'headers': {'Authorization': 'Agent ' + agent_b['agentToken']}},
+    ]
+    activate_latest_release(client, headers, project, agent_targets, manifest, reason='首次显式激活')
 
     defs = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
     task = client.post('/api/v1/tasks', headers=headers, json={'definitionId': defs[0]['definitionId'], 'taskCode': 'oilchem_login_check_cicd', 'taskName': 'Oilchem登录校验CI', 'status': 'ENABLED'}).json()['data']
@@ -935,54 +980,60 @@ def test_cicd_release_registration_without_server_and_multi_agent_pool() -> None
     assert claim['imageDigest'] == manifest['imageDigest']
 
 
-def test_cicd_release_registration_marks_existing_pool_outdated() -> None:
+def test_cicd_release_registration_does_not_disturb_active_pool_until_activation() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, _, discovery = create_flow(client, headers, 'cicdout', ['srv-cicdout-a'])
+    company, project, agents, discovery = create_flow(client, headers, 'cicdout', ['srv-cicdout-a'])
     pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
     assert pool[0]['latestImageDigest'] == discovery['manifest']['imageDigest']
     manifest = {**discovery['manifest'], 'releaseVersion': '1.0.6', 'imageDigest': 'sha256:' + ('3' * 64)}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     updated_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
-    assert updated_pool[0]['latestImageDigest'] == manifest['imageDigest']
-    assert updated_pool[0]['imageReadinessStatus'] == 'OUTDATED'
+    assert updated_pool[0]['latestImageDigest'] == discovery['manifest']['imageDigest']
+    assert updated_pool[0]['imageReadinessStatus'] == 'READY'
     releases = client.get('/api/v1/releases', headers=headers, params={'projectId': project['projectId']}).json()['data']
     assert releases[0]['imageDigest'] == manifest['imageDigest']
+    activate_latest_release(client, headers, project, agents, manifest, reason='显式切换新版本')
+    activated_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert activated_pool[0]['latestImageDigest'] == manifest['imageDigest']
+    assert activated_pool[0]['imageReadinessStatus'] == 'READY'
 
 
-def test_agent_heartbeat_advertises_image_updates_and_pull_result_updates_readiness() -> None:
+def test_new_release_requires_explicit_deployment_instead_of_implicit_agent_prewarm() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
     company, project, agents, discovery = create_flow(client, headers, 'imgupd', ['srv-imgupd-a'])
     agent_headers = agents[0]['headers']
     pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
-    assert pool[0]['imageReadinessStatus'] == 'OUTDATED'
+    assert pool[0]['imageReadinessStatus'] == 'READY'
+
+    candidate = {**discovery['manifest'], 'releaseVersion': '1.0.2', 'imageDigest': 'sha256:' + ('5' * 64)}
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': candidate})
 
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-imgupd-a', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []}}).json()['data']
-    pending = [item for item in heartbeat['pendingImagePulls'] if item['projectId'] == project['projectId']]
+    assert not [item for item in heartbeat['pendingImagePulls'] if item['projectId'] == project['projectId']]
+    assert not [item for item in heartbeat['pendingAgentCommands'] if item.get('projectId') == project['projectId']]
+
+    deploy = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={'serverIds': [agents[0]['serverId']], 'reason': '显式发布 1.0.2'}).json()['data']
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-imgupd-a', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []}}).json()['data']
+    pending = [item for item in heartbeat['pendingAgentCommands'] if item.get('deploymentId') == deploy['deploymentId']]
     assert len(pending) == 1
-    assert pending[0]['safeToPrewarm'] is True
-    assert pending[0]['action'] == 'PREWARM_NOW'
-    assert pending[0]['imageDigest'] == discovery['manifest']['imageDigest']
-
-    failed = client.post('/api/v1/agent-image-pull-results', headers=agent_headers, json={'projectId': project['projectId'], 'releaseId': pending[0]['releaseId'], 'imageRepository': pending[0]['imageRepository'], 'imageDigest': pending[0]['imageDigest'], 'pullStatus': 'FAILED', 'message': 'registry timeout'}).json()['data']
-    assert failed['imageReadinessStatus'] == 'FAILED'
-    failed_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
-    assert failed_pool[0]['imageReadinessStatus'] == 'FAILED'
-    assert 'registry timeout' in failed_pool[0]['disabledReason']
-
-    ready = client.post('/api/v1/agent-image-pull-results', headers=agent_headers, json={'projectId': project['projectId'], 'releaseId': pending[0]['releaseId'], 'imageRepository': pending[0]['imageRepository'], 'imageDigest': pending[0]['imageDigest'], 'pullStatus': 'READY', 'message': 'ok'}).json()['data']
-    assert ready['imageReadinessStatus'] == 'READY'
+    assert pending[0]['releaseId'] == deploy['releaseId']
+    client.post('/api/v1/agent-command-results', headers=agent_headers, json={
+        'commandId': pending[0]['commandId'], 'commandType': pending[0]['commandType'],
+        'projectId': project['projectId'], 'releaseId': pending[0]['releaseId'],
+        'deploymentId': pending[0]['deploymentId'], 'targetId': pending[0]['targetId'],
+        'success': True, 'message': 'candidate smoke ok',
+        'result': {'imageRef': candidate['imageRepository'] + '@' + candidate['imageDigest']},
+    })
     ready_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert ready_pool[0]['latestImageDigest'] == candidate['imageDigest']
     assert ready_pool[0]['imageReadinessStatus'] == 'READY'
 
-    heartbeat_after = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-imgupd-a', 'dockerStatus': 'OK', 'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []}}).json()['data']
-    assert not [item for item in heartbeat_after['pendingImagePulls'] if item['projectId'] == project['projectId']]
 
-
-def test_new_release_does_not_interrupt_running_run_and_waits_idle_prewarm() -> None:
+def test_new_release_registration_does_not_interrupt_running_run_or_enqueue_implicit_prewarm() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
@@ -1001,15 +1052,12 @@ def test_new_release_does_not_interrupt_running_run_and_waits_idle_prewarm() -> 
     manifest = {**discovery['manifest'], 'releaseVersion': '1.0.19', 'imageDigest': 'sha256:' + ('4' * 64)}
     client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
     pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
-    assert pool[0]['latestImageDigest'] == manifest['imageDigest']
-    assert pool[0]['imageReadinessStatus'] == 'OUTDATED'
+    assert pool[0]['latestImageDigest'] == discovery['manifest']['imageDigest']
+    assert pool[0]['imageReadinessStatus'] == 'READY'
 
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'inst-nointerrupt-a', 'dockerStatus': 'OK', 'availableSlots': 0, 'runningContainers': 1, 'currentRuns': {'runIds': [run['runId']]}}).json()['data']
-    pending = [item for item in heartbeat['pendingImagePulls'] if item['projectId'] == project['projectId']]
-    assert len(pending) == 1
-    assert pending[0]['safeToPrewarm'] is False
-    assert pending[0]['action'] == 'PREWARM_WHEN_IDLE'
-    assert pending[0]['imageDigest'] == manifest['imageDigest']
+    assert not [item for item in heartbeat['pendingImagePulls'] if item['projectId'] == project['projectId']]
+    assert not [item for item in heartbeat['pendingAgentCommands'] if item.get('projectId') == project['projectId']]
 
     from app.db import SessionLocal
     from app.models import CrawlerTaskRun
@@ -1555,7 +1603,7 @@ def test_project_release_deployment_to_multiple_agents() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, agents, discovery = create_flow(client, headers, 'deploymulti', server_codes=['srv-dep-a', 'srv-dep-b'])
+    company, project, agents, discovery = create_flow(client, headers, 'deploymulti', server_codes=['srv-dep-a', 'srv-dep-b'], activate=False)
     deployment = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={
         'serverIds': [],
     })
@@ -1579,13 +1627,17 @@ def test_project_release_deployment_to_multiple_agents() -> None:
     assert {item['serverId'] for item in pool} >= set(server_ids)
     for item in pool:
         if item['serverId'] in server_ids:
-            assert item['latestImageDigest'] == discovery['manifest']['imageDigest']
-            assert item['deploymentStatus'] == 'DEPLOYING'
-            assert item['imageReadinessStatus'] == 'DEPLOYING'
-            assert item['schedulingStatus'] == 'PAUSED'
+            # Candidate deployment state lives on DeploymentTarget. ProjectServer
+            # remains the last proven runtime fact until Agent smoke-test succeeds.
+            assert item['latestImageDigest'] == ''
+            assert item['deploymentStatus'] == 'PENDING'
+            assert item['imageReadinessStatus'] == 'UNKNOWN'
+            assert item['schedulingStatus'] == 'ENABLED'
     history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data']
     assert history and history[0]['deploymentStatus'] == 'DEPLOYING'
-    assert history[0]['strategy']['steps'][-1]['key'] == 'AGENT_DEPLOY_PREPARE'
+    step_keys = [step['key'] for step in history[0]['strategy']['steps']]
+    assert 'AGENT_DEPLOY_PREPARE' in step_keys
+    assert step_keys[-1] == 'RELEASE_ACTIVATION'
 
     heartbeat = client.post('/api/v1/agent-heartbeats', headers=agents[0]['headers'], json={
         'agentInstanceId': 'inst-deploy-a',
@@ -1613,10 +1665,193 @@ def test_project_release_deployment_to_multiple_agents() -> None:
     assert ack['accepted'] is True
     pool_after_ack = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
     deployed = [item for item in pool_after_ack if item['serverId'] == pending[0]['serverId']][0]
-    assert deployed['deploymentStatus'] == 'DEPLOYED'
-    assert deployed['imageReadinessStatus'] == 'READY'
-    assert deployed['schedulingStatus'] == 'ENABLED'
+    # Candidate smoke success is recorded on DeploymentTarget only. ProjectServer
+    # must remain the current production runtime until the activation barrier opens.
+    assert deployed['deploymentStatus'] == 'PENDING'
+    assert deployed['imageReadinessStatus'] == 'UNKNOWN'
+    assert deployed['latestImageDigest'] == ''
+    # One of two targets is still pending, so the Release is not active yet.
+    project_mid = next(item for item in client.get('/api/v1/projects', headers=headers, params={'companyId': company['companyId']}).json()['data'] if item['projectId'] == project['projectId'])
+    assert project_mid['onlineStatus'] == 'READY'
+    assert client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'] == []
 
+    heartbeat_b = client.post('/api/v1/agent-heartbeats', headers=agents[1]['headers'], json={
+        'agentInstanceId': 'inst-deploy-b', 'dockerStatus': 'OK', 'availableSlots': 2,
+        'runningContainers': 0, 'currentRuns': {'runIds': []},
+    }).json()['data']
+    pending_b = [item for item in heartbeat_b['pendingAgentCommands'] if item['deploymentId'] == deployment['deploymentId']]
+    assert len(pending_b) == 1
+    client.post('/api/v1/agent-command-results', headers=agents[1]['headers'], json={
+        'commandId': pending_b[0]['commandId'], 'commandType': 'PROJECT_DEPLOY_PREPARE',
+        'projectId': project['projectId'], 'releaseId': pending_b[0]['releaseId'],
+        'deploymentId': pending_b[0]['deploymentId'], 'targetId': pending_b[0]['targetId'],
+        'success': True, 'message': 'ok',
+        'result': {'imageRef': discovery['manifest']['imageRepository'] + '@' + discovery['manifest']['imageDigest']},
+    })
+    history_after = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data']
+    assert history_after[0]['deploymentStatus'] == 'DEPLOYED'
+    project_after = next(item for item in client.get('/api/v1/projects', headers=headers, params={'companyId': company['companyId']}).json()['data'] if item['projectId'] == project['projectId'])
+    assert project_after['onlineStatus'] == 'ONLINE'
+    assert len(client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']) == 1
+    pool_after_activation = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    activated = [item for item in pool_after_activation if item['serverId'] in server_ids]
+    assert len(activated) == 2
+    assert all(item['deploymentStatus'] == 'DEPLOYED' for item in activated)
+    assert all(item['imageReadinessStatus'] == 'READY' for item in activated)
+    assert all(item['latestImageDigest'] == discovery['manifest']['imageDigest'] for item in activated)
+
+
+
+def test_project_release_rollout_honors_max_parallel_pulls_and_promotes_atomically() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(
+        client, headers, 'rolloutlimit', server_codes=['srv-roll-a', 'srv-roll-b', 'srv-roll-c'], activate=False
+    )
+    for idx, agent in enumerate(agents):
+        client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f'inst-roll-precheck-{idx}',
+            'dockerStatus': 'OK',
+            'availableSlots': 2,
+            'runningContainers': 0,
+            'currentRuns': {'runIds': []},
+        })
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    server_ids = sorted(row['serverId'] for row in servers if row['serverCode'] in {'srv-roll-a', 'srv-roll-b', 'srv-roll-c'})
+    deployment = client.post(
+        f"/api/v1/projects/{project['projectId']}/release-deployments",
+        headers=headers,
+        json={'serverIds': server_ids, 'maxParallelPulls': 1, 'reason': '串行受控发布'},
+    ).json()['data']
+    assert deployment['deploymentStatus'] == 'DEPLOYING'
+    assert sum(1 for target in deployment['targets'] if target['targetStatus'] == 'DISPATCHED') == 1
+    assert sum(1 for target in deployment['targets'] if target['targetStatus'] == 'PENDING_AGENT') == 2
+
+    command_agents = {}
+    for idx, agent in enumerate(agents):
+        heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f'inst-roll-{idx}', 'dockerStatus': 'OK', 'availableSlots': 2,
+            'runningContainers': 0, 'currentRuns': {'runIds': []},
+        }).json()['data']
+        for command in heartbeat['pendingAgentCommands']:
+            if command.get('deploymentId') == deployment['deploymentId']:
+                command_agents[command['serverId']] = agent
+    assert len(command_agents) == 1
+
+    completed = []
+    while len(completed) < 3:
+        history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data'][0]
+        active = [target for target in history['targets'] if target['targetStatus'] == 'DISPATCHED']
+        assert len(active) == 1
+        target = active[0]
+        server_id = target['serverId']
+        agent = command_agents.get(server_id)
+        if not agent:
+            for idx, candidate in enumerate(agents):
+                hb = client.post('/api/v1/agent-heartbeats', headers=candidate['headers'], json={
+                    'agentInstanceId': f'inst-roll-next-{idx}-{len(completed)}', 'dockerStatus': 'OK',
+                    'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []},
+                }).json()['data']
+                matches = [item for item in hb['pendingAgentCommands'] if item.get('deploymentId') == deployment['deploymentId']]
+                if matches:
+                    command_agents[matches[0]['serverId']] = candidate
+            agent = command_agents[server_id]
+        hb = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f'inst-roll-command-{len(completed)}', 'dockerStatus': 'OK',
+            'availableSlots': 2, 'runningContainers': 0, 'currentRuns': {'runIds': []},
+        }).json()['data']
+        command = next(item for item in hb['pendingAgentCommands'] if item.get('deploymentId') == deployment['deploymentId'])
+        client.post('/api/v1/agent-command-results', headers=agent['headers'], json={
+            'commandId': command['commandId'], 'commandType': 'PROJECT_DEPLOY_PREPARE',
+            'projectId': project['projectId'], 'releaseId': command['releaseId'],
+            'deploymentId': command['deploymentId'], 'targetId': command['targetId'],
+            'success': True, 'message': 'ok',
+            'result': {'imageRef': discovery['manifest']['imageRepository'] + '@' + discovery['manifest']['imageDigest']},
+        })
+        completed.append(server_id)
+        if len(completed) < 3:
+            pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+            assert all(item['latestImageDigest'] == '' for item in pool if item['serverId'] in server_ids)
+            assert client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'] == []
+
+    final_history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data'][0]
+    assert final_history['deploymentStatus'] == 'DEPLOYED'
+    assert final_history['strategy']['maxParallelPulls'] == 1
+    assert all(item['targetStatus'] == 'DEPLOYED' for item in final_history['targets'])
+    pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    promoted = [item for item in pool if item['serverId'] in server_ids]
+    assert len(promoted) == 3
+    assert all(item['deploymentStatus'] == 'DEPLOYED' for item in promoted)
+    assert all(item['imageReadinessStatus'] == 'READY' for item in promoted)
+    assert all(item['latestImageDigest'] == discovery['manifest']['imageDigest'] for item in promoted)
+    assert len(client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']) == 1
+
+
+def test_partial_rollout_failure_keeps_stable_runtime_untouched() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'rolloutfail', ['srv-rollfail-a', 'srv-rollfail-b'])
+    definition = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'][0]
+    task = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition['definitionId'], 'taskCode': 'rollout_fail_task',
+        'taskName': '滚动失败保护任务', 'status': 'ENABLED',
+    }).json()['data']
+    old_digest = discovery['manifest']['imageDigest']
+    candidate = {**discovery['manifest'], 'releaseVersion': '1.0.2', 'imageDigest': 'sha256:' + ('7' * 64)}
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={
+        'companyId': company['companyId'], 'manifest': candidate,
+    })
+    for idx, agent in enumerate(agents):
+        client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+            'agentInstanceId': f'inst-rollfail-pre-{idx}', 'dockerStatus': 'OK', 'availableSlots': 2,
+            'runningContainers': 0, 'currentRuns': {'runIds': []},
+        })
+    servers = client.get('/api/v1/servers', headers=headers, params={'companyId': company['companyId']}).json()['data']
+    server_ids = sorted(item['serverId'] for item in servers if item['serverCode'] in {'srv-rollfail-a', 'srv-rollfail-b'})
+    deploy = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={
+        'serverIds': server_ids, 'maxParallelPulls': 1, 'reason': '验证候选失败保护 stable',
+    }).json()['data']
+
+    def pending_command():
+        for idx, agent in enumerate(agents):
+            heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent['headers'], json={
+                'agentInstanceId': f'inst-rollfail-{idx}', 'dockerStatus': 'OK', 'availableSlots': 2,
+                'runningContainers': 0, 'currentRuns': {'runIds': []},
+            }).json()['data']
+            matches = [item for item in heartbeat['pendingAgentCommands'] if item.get('deploymentId') == deploy['deploymentId']]
+            if matches:
+                return agent, matches[0]
+        raise AssertionError('没有找到 rollout command')
+
+    agent_a, command_a = pending_command()
+    client.post('/api/v1/agent-command-results', headers=agent_a['headers'], json={
+        'commandId': command_a['commandId'], 'commandType': command_a['commandType'],
+        'projectId': project['projectId'], 'releaseId': command_a['releaseId'],
+        'deploymentId': command_a['deploymentId'], 'targetId': command_a['targetId'],
+        'success': True, 'message': 'candidate a ready',
+        'result': {'imageRef': candidate['imageRepository'] + '@' + candidate['imageDigest']},
+    })
+    mid_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert all(item['latestImageDigest'] == old_digest for item in mid_pool if item['serverId'] in server_ids)
+    assert all(item['imageReadinessStatus'] == 'READY' for item in mid_pool if item['serverId'] in server_ids)
+
+    agent_b, command_b = pending_command()
+    client.post('/api/v1/agent-command-results', headers=agent_b['headers'], json={
+        'commandId': command_b['commandId'], 'commandType': command_b['commandType'],
+        'projectId': project['projectId'], 'releaseId': command_b['releaseId'],
+        'deploymentId': command_b['deploymentId'], 'targetId': command_b['targetId'],
+        'success': False, 'message': 'candidate b smoke failed', 'result': {},
+    })
+    history = client.get(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers).json()['data'][0]
+    assert history['deploymentStatus'] == 'FAILED'
+    final_pool = client.get(f"/api/v1/projects/{project['projectId']}/servers", headers=headers).json()['data']
+    assert all(item['latestImageDigest'] == old_digest for item in final_pool if item['serverId'] in server_ids)
+    assert all(item['imageReadinessStatus'] == 'READY' for item in final_pool if item['serverId'] in server_ids)
+    manual = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']})
+    assert manual.status_code == 200, manual.text
+    assert manual.json()['data']['imageDigest'] == old_digest
 
 
 def test_delete_task_enqueues_agent_container_cleanup_and_ack_clears_queue() -> None:
@@ -1768,7 +2003,7 @@ def test_139_project_publish_pipeline_deploys_registered_release() -> None:
     migrate()
     client = TestClient(app)
     _, headers = login(client)
-    company, project, agents, meta = create_flow(client, headers, 'pipe_ready', ['pipe-ready-srv'])
+    company, project, agents, meta = create_flow(client, headers, 'pipe_ready', ['pipe-ready-srv'], activate=False)
     from app.db import SessionLocal
     from app.models import CrawlerDiscoveredProject, CrawlerProject, CrawlerServer
     repo_url = 'https://github.com/zhq910513/pipe-ready.git'
@@ -2093,7 +2328,8 @@ def test_discovered_task_definition_visible_in_task_schedule_panel_before_formal
     assert pending['definitionKey'] == 'task_one'
     assert pending['taskName'] == '任务一'
     assert pending['entryPath'] == 'spiders.task_one:run'
-    assert pending['definitionStatus'] == 'AVAILABLE'
+    assert pending['discoveryStatus'] == 'ACTIVE'
+    assert pending['orchestrationStatus'] == 'PENDING'
 
     created = client.post('/api/v1/tasks', headers=headers, json={
         'definitionId': pending['definitionId'],
@@ -2109,3 +2345,176 @@ def test_discovered_task_definition_visible_in_task_schedule_panel_before_formal
     assert len(data['items']) == 1
     assert data['items'][0]['taskCode'] == 'task_one'
     assert data['items'][0]['taskStatus'] == 'DRAFT'
+
+
+def test_definition_ignore_survives_release_activation_and_can_restore() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'def_ignore')
+    definitions = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    definition = definitions[0]
+
+    ignored = client.post(
+        f"/api/v1/task-definitions/{definition['definitionId']}/ignore",
+        headers=headers,
+        json={'reason': '系统检测任务无需生产编排'},
+    )
+    assert ignored.status_code == 200, ignored.text
+    assert ignored.json()['data']['orchestrationStatus'] == 'IGNORED'
+
+    manifest = {
+        **discovery['manifest'],
+        'releaseVersion': '1.0.2',
+        'imageDigest': 'sha256:' + ('d' * 64),
+        'taskDefinitions': [{
+            'definitionKey': 'task_one', 'taskName': '任务一新版本',
+            'entryModule': 'spiders.task_one', 'entryFunction': 'run',
+        }],
+    }
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='验证忽略决策跨 Release 保留')
+
+    panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']
+    assert panel['pendingDefinitionTotal'] == 0
+    assert panel['ignoredDefinitionTotal'] == 1
+    assert panel['ignoredDefinitions'][0]['orchestrationStatus'] == 'IGNORED'
+    assert panel['ignoredDefinitions'][0]['taskName'] == '任务一新版本'
+    assert panel['ignoredDefinitions'][0]['ignoreReason'] == '系统检测任务无需生产编排'
+
+    restored = client.post(f"/api/v1/task-definitions/{definition['definitionId']}/restore", headers=headers)
+    assert restored.status_code == 200, restored.text
+    assert restored.json()['data']['orchestrationStatus'] == 'PENDING'
+    panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']
+    assert panel['pendingDefinitionTotal'] == 1
+    assert panel['ignoredDefinitionTotal'] == 0
+
+
+def test_definition_drift_stops_cron_until_explicit_reconcile() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'def_drift')
+    definition = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'][0]
+    task_response = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition['definitionId'],
+        'taskCode': 'task_drift',
+        'taskName': '漂移任务',
+        'status': 'ENABLED',
+        'scheduleType': 'CRON',
+        'scheduleStatus': 'ENABLED',
+        'cronExpression': '*/5 * * * *',
+    })
+    assert task_response.status_code == 200, task_response.text
+    task = task_response.json()['data']
+
+    manifest = {
+        **discovery['manifest'],
+        'releaseVersion': '1.0.2',
+        'imageDigest': 'sha256:' + ('e' * 64),
+        'taskDefinitions': [{
+            'definitionKey': 'task_one', 'taskName': '任务一新版入口',
+            'entryModule': 'spiders.task_one_v2', 'entryFunction': 'run',
+        }],
+    }
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='验证 Definition 漂移门禁')
+
+    panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']
+    item = next(row for row in panel['items'] if row['taskId'] == task['taskId'])
+    assert item['runtimeReadiness']['status'] == 'NEEDS_REVIEW'
+    assert item['runtimeReadiness']['definitionChanged'] is True
+    assert any('任务入口已随 Release 变化' in reason for reason in item['runtimeReadiness']['reasons'])
+
+    manual = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']})
+    assert manual.status_code == 400
+    assert manual.json()['code'] == 40091
+
+    from app.db import SessionLocal
+    from app.models import CrawlerTaskSchedule
+    from app.services.scheduler_service import SchedulerService
+    from app.utils import utcnow
+    with SessionLocal() as db:
+        schedule = db.query(CrawlerTaskSchedule).filter(CrawlerTaskSchedule.task_id == task['taskId']).one()
+        schedule.next_run_at = utcnow()
+        db.commit()
+    with SessionLocal() as db:
+        SchedulerService(db).dispatch_due_schedules()
+    schedules = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']['items']
+    item = next(row for row in schedules if row['taskId'] == task['taskId'])
+    assert item['scheduleStatus'] == 'ERROR'
+    assert item['nextRunAt'] is None
+
+    reconciled = client.post(f"/api/v1/tasks/{task['taskId']}/definition-reconciliations", headers=headers, json={})
+    assert reconciled.status_code == 200, reconciled.text
+    task_after = client.get('/api/v1/tasks', headers=headers, params={'projectId': project['projectId']}).json()['data'][0]
+    assert task_after['entryModule'] == 'spiders.task_one_v2'
+    assert task_after['runtimeReadiness']['status'] == 'READY'
+    panel_after = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']['items'][0]
+    assert panel_after['scheduleStatus'] == 'ERROR'
+
+
+def test_draft_can_be_orchestrated_before_required_binding_but_enable_is_blocked() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    company, project, agents, discovery = create_flow(client, headers, 'draft_binding')
+    manifest = {
+        **discovery['manifest'],
+        'releaseVersion': '1.0.2',
+        'imageDigest': 'sha256:' + ('f' * 64),
+        'taskDefinitions': [{
+            'definitionKey': 'needs_mongo', 'taskName': '需要 Mongo 的任务',
+            'entryModule': 'spiders.mongo_task', 'entryFunction': 'run',
+            'requiredConfigs': [{'slot': 'mongo_main', 'type': 'MONGO', 'required': True}],
+        }],
+    }
+    client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + discovery['token']}, json={'companyId': company['companyId'], 'manifest': manifest})
+    activate_latest_release(client, headers, project, agents, manifest, reason='验证草稿分阶段编排')
+    definitions = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data']
+    definition = next(item for item in definitions if item['definitionKey'] == 'needs_mongo')
+
+    draft = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition['definitionId'],
+        'taskCode': 'needs_mongo',
+        'taskName': '需要 Mongo 的任务',
+        'status': 'DRAFT',
+        'scheduleStatus': 'PAUSED',
+    })
+    assert draft.status_code == 200, draft.text
+    task = draft.json()['data']
+
+    enable = client.patch(f"/api/v1/tasks/{task['taskId']}", headers=headers, json={'status': 'ENABLED'})
+    assert enable.status_code == 400
+    assert enable.json()['code'] in {40090, 40091}
+    assert 'mongo_main' in str(enable.json()['data'])
+
+
+def test_explicit_task_server_target_never_falls_back_to_other_project_node() -> None:
+    migrate()
+    client = TestClient(app)
+    _, headers = login(client)
+    _, project, agents, _ = create_flow(client, headers, 'strict_target', ['srv-strict-a', 'srv-strict-b'])
+    definition = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'][0]
+    task = client.post('/api/v1/tasks', headers=headers, json={
+        'definitionId': definition['definitionId'],
+        'taskCode': 'strict_target_task',
+        'taskName': '严格节点任务',
+        'status': 'ENABLED',
+        'serverIds': [agents[0]['serverId']],
+    }).json()['data']
+
+    from app.db import SessionLocal
+    from app.models import CrawlerAgent
+    with SessionLocal() as db:
+        agent = db.query(CrawlerAgent).filter(CrawlerAgent.server_id == agents[0]['serverId']).one()
+        agent.connection_status = 'OFFLINE'
+        db.commit()
+
+    panel = client.get('/api/v1/task-schedule-panels', headers=headers, params={'projectId': project['projectId']}).json()['data']['items']
+    item = next(row for row in panel if row['taskId'] == task['taskId'])
+    assert item['runtimeReadiness']['ready'] is False
+    assert any('任务指定节点当前不可运行' in reason for reason in item['runtimeReadiness']['reasons'])
+    run = client.post('/api/v1/runs', headers=headers, json={'taskId': task['taskId']})
+    assert run.status_code == 400
+    assert run.json()['code'] == 40091

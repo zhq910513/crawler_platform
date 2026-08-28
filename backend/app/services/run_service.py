@@ -14,6 +14,7 @@ from app.repositories.platform import RunRepository, TaskRepository
 from app.schemas import ManualRunCreate
 from app.services.permissions import is_super_admin, require_project_role, scoped_company_id
 from app.services.routing_service import RoutingService
+from app.services.task_runtime_readiness_service import TaskRuntimeReadinessService
 from app.services.state_machine import RUN_TERMINAL, safe_set_run_status, set_routing_status, set_synthetic_parent_terminal
 from app.utils import utcnow
 
@@ -86,7 +87,14 @@ class RunService:
             raise AppError("任务未启用", code=40062)
         release = self._resolve_release(task)
         if not release:
-            raise AppError("任务未绑定可用发布版本", code=40064)
+            raise AppError("任务未绑定已激活且可用的发布版本", code=40064)
+        readiness = TaskRuntimeReadinessService(self.db).evaluate(task, release=release, require_nodes=True)
+        if not readiness.ready:
+            raise AppError(
+                "任务当前不可运行",
+                code=40091,
+                data={"readiness": readiness.asdict(), "reasons": readiness.reasons},
+            )
         if task.execution_mode == "SHARDED":
             return self._create_sharded_run(task, schedule, scheduled_at, parameters or {}, release, trigger_type, hold_for_queue)
         return self._create_single_run(task, schedule, scheduled_at, parameters or {}, release, trigger_type, None, None, hold_for_queue, "single")
@@ -170,26 +178,7 @@ class RunService:
         return parent
 
     def _resolve_release(self, task: CrawlerTask):
-        if task.image_policy == "PINNED":
-            if not task.fixed_release_id:
-                return None
-            release = self.db.get(CrawlerProjectRelease, task.fixed_release_id)
-        else:
-            channel = self.db.scalar(
-                select(CrawlerReleaseChannel).where(
-                    CrawlerReleaseChannel.project_id == task.project_id,
-                    CrawlerReleaseChannel.channel_name == task.release_channel,
-                    CrawlerReleaseChannel.channel_status == "ENABLED",
-                )
-            )
-            release = self.db.get(CrawlerProjectRelease, channel.release_id) if channel and channel.release_id else None
-        if not release:
-            return None
-        if release.project_id != task.project_id or release.company_id != task.company_id:
-            return None
-        if release.release_status != "PUBLISHED" or release.parse_status != "SUCCESS":
-            return None
-        return release
+        return TaskRuntimeReadinessService(self.db).resolve_release(task)
 
     @staticmethod
     def _trigger_key(schedule: CrawlerTaskSchedule | None, scheduled_at: datetime, trigger_type: str, suffix: str) -> str | None:

@@ -16,13 +16,13 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSIONS = ROOT / "backend" / "migrations" / "versions"
-EXPECTED_HEAD = "0017_project_build_center"
+EXPECTED_HEAD = "0018_definition_lifecycle"
 MAX_ALEMBIC_VERSION_LEN = 32
 OBSOLETE_FILES = {
     "0002_platform_1_0_2_observability.py",
     "0003_expand_schedule_cron_expression.py",
 }
-EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py", "0006_agent_deploy.py", "0007_account_status.py", "0008_task_contract_subject_binding.py", "0009_contract_runtime_gate.py", "0010_running_center_container_snapshots.py", "0011_preflight_snapshot.py", "0012_agent_join_invitation.py", "0013_agent_image_digest.py", "0014_agent_install_feedback.py", "0015_agent_lifecycle.py", "0016_company_resource_pool.py", "0017_project_build_center.py"]
+EXPECTED_FILES = ["0001_initial_platform.py", "0002_observability.py", "0003_schedule_cron_len.py", "0004_task_panel.py", "0005_110_audit.py", "0006_agent_deploy.py", "0007_account_status.py", "0008_task_contract_subject_binding.py", "0009_contract_runtime_gate.py", "0010_running_center_container_snapshots.py", "0011_preflight_snapshot.py", "0012_agent_join_invitation.py", "0013_agent_image_digest.py", "0014_agent_install_feedback.py", "0015_agent_lifecycle.py", "0016_company_resource_pool.py", "0017_project_build_center.py", "0018_definition_lifecycle.py"]
 
 
 def fail(message: str) -> int:
@@ -101,7 +101,7 @@ def main() -> int:
 
     filenames = sorted(path.name for path in VERSIONS.glob("*.py") if path.name != "__init__.py")
     if filenames != EXPECTED_FILES:
-        print("迁移文件清单不符合当前 1.0.109 发布基线：", file=sys.stderr)
+        print("迁移文件清单不符合当前 1.0.110 发布基线：", file=sys.stderr)
         print(f"  当前：{filenames}", file=sys.stderr)
         print(f"  期望：{EXPECTED_FILES}", file=sys.stderr)
         return 1

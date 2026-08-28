@@ -40,8 +40,8 @@ class SchedulerService:
             project = self.db.get(CrawlerProject, schedule.project_id)
             scheduled_at = schedule.next_run_at or utcnow()
             try:
-                if not task or not project or task.status != "ENABLED" or project.status != "ENABLED" or project.online_status != "ONLINE":
-                    self._create_skipped(task, schedule, scheduled_at, "项目或任务状态不允许调度")
+                if not task or not project or task.status != "ENABLED" or project.status != "ENABLED" :
+                    self._create_skipped(task, schedule, scheduled_at, "项目或任务已停用")
                     self._advance(schedule, scheduled_at)
                     self.db.commit()
                     continue
@@ -73,7 +73,14 @@ class SchedulerService:
                 task = self.db.get(CrawlerTask, schedule.task_id) if schedule else None
                 if schedule:
                     self._create_skipped(task, schedule, scheduled_at, exc.message)
-                    self._advance(schedule, scheduled_at)
+                    readiness = exc.data.get("readiness") if exc.code == 40091 and isinstance(exc.data, dict) else None
+                    if isinstance(readiness, dict) and readiness.get("status") == "NEEDS_REVIEW":
+                        # Contract drift is persistent until an operator explicitly reconciles it.
+                        # Stop the automatic plan instead of creating an endless stream of skipped runs.
+                        schedule.schedule_status = "ERROR"
+                        schedule.next_run_at = None
+                    else:
+                        self._advance(schedule, scheduled_at)
                     try:
                         self.db.commit()
                     except IntegrityError:

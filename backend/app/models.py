@@ -482,7 +482,13 @@ class CrawlerProjectTaskDefinition(Base, TimestampMixin):
     secret_refs: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
     allow_offline_run: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     offline_policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
-    definition_status: Mapped[str] = mapped_column(String(30), default="AVAILABLE", index=True, nullable=False)
+    discovery_status: Mapped[str] = mapped_column(String(30), default="ACTIVE", index=True, nullable=False)
+    orchestration_status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True, nullable=False)
+    first_seen_release_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("crawler_project_release.release_id", ondelete="SET NULL"), index=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    ignored_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    ignored_by: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sys_user.user_id", ondelete="SET NULL"), index=True)
+    ignore_reason: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     parse_message: Mapped[str] = mapped_column(Text, default="", nullable=False)
 
 

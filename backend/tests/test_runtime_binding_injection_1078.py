@@ -68,7 +68,7 @@ def test_run_snapshot_and_agent_claim_deliver_config_and_account_slots() -> None
             project_key='runtime_project',
             image_repository='registry/runtime-project',
             status='ENABLED',
-            online_status='READY',
+            online_status='ONLINE',
         )
         db.add(project)
         db.flush()
@@ -81,6 +81,7 @@ def test_run_snapshot_and_agent_claim_deliver_config_and_account_slots() -> None
             image_digest='sha256:' + ('a' * 64),
             release_status='PUBLISHED',
             parse_status='SUCCESS',
+            manifest={'taskDefinitions': [{'definitionKey': 'runtime_task', 'entryModule': 'spiders.demo.runtime_task', 'entryFunction': 'run'}]},
         )
         db.add(release)
         db.flush()

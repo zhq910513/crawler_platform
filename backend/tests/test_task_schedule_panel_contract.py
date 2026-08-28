@@ -88,9 +88,11 @@ def test_task_schedule_panel_aggregation_filters_and_scope() -> None:
     assert response.status_code == 200
     body = response.json()
     assert set(body) == {"code", "message", "data"}
-    assert set(body["data"]) == {"items", "total", "page", "pageSize", "pendingDefinitions", "pendingDefinitionTotal"}
+    assert set(body["data"]) == {"items", "total", "page", "pageSize", "pendingDefinitions", "pendingDefinitionTotal", "ignoredDefinitions", "ignoredDefinitionTotal"}
     assert body["data"]["pendingDefinitionTotal"] == 0
     assert body["data"]["pendingDefinitions"] == []
+    assert body["data"]["ignoredDefinitionTotal"] == 0
+    assert body["data"]["ignoredDefinitions"] == []
     assert body["data"]["total"] == 1
     item = body["data"]["items"][0]
     assert item["taskId"] == task_a_id

@@ -36,7 +36,7 @@ class RoutingService:
             run.server_id = None
             set_routing_status(run, "WAITING_RESOURCE", reason=limit_reason)
             return run
-        candidates = self._resolve_candidates(task, project)
+        candidates = self._resolve_candidates(task, project, run.release_id)
         if not candidates:
             run.server_id = None
             set_routing_status(run, "WAITING_RESOURCE", reason="暂无可用执行节点或镜像未就绪")
@@ -88,7 +88,7 @@ class RoutingService:
         project = self.db.get(CrawlerProject, run.project_id)
         if not task or not project:
             return False
-        return any(c.server.server_id == run.server_id for c in self._resolve_candidates(task, project))
+        return any(c.server.server_id == run.server_id for c in self._resolve_candidates(task, project, run.release_id))
 
     def _runtime_policy_block_reason(self, run: CrawlerTaskRun, task: CrawlerTask) -> str:
         active_statuses = ["QUEUED", "ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"]
@@ -139,31 +139,33 @@ class RoutingService:
                     return f"资源锁被占用：{', '.join(sorted(conflict))}"
         return ""
 
-    def _resolve_candidates(self, task: CrawlerTask, project: CrawlerProject) -> list[Candidate]:
+    def _resolve_candidates(self, task: CrawlerTask, project: CrawlerProject, release_id: int | None) -> list[Candidate]:
         target_ids = list(self.db.scalars(select(CrawlerTaskServerTarget.server_id).where(CrawlerTaskServerTarget.task_id == task.task_id, CrawlerTaskServerTarget.enabled.is_(True))).all())
         if target_ids:
-            candidates = self._project_pool_candidates(task, project, layer="任务指定节点", server_ids=set(target_ids), include_candidate=True)
-            if candidates:
-                return candidates
-        candidates = self._project_pool_candidates(task, project, layer="项目执行节点范围", enabled_only=True)
+            # Explicit task targets are a routing constraint, not a soft preference.
+            # Falling back to another project/company node would violate the operator's
+            # placement decision and can also bypass node-local network/credential assumptions.
+            return self._project_pool_candidates(task, project, release_id, layer="任务指定节点", server_ids=set(target_ids), include_candidate=True)
+        candidates = self._project_pool_candidates(task, project, release_id, layer="项目执行节点范围", enabled_only=True)
         if candidates:
             return candidates
         if project.allow_deployed_fallback:
-            candidates = self._project_pool_candidates(task, project, layer="项目已部署节点兜底", include_candidate=True, allow_paused=False)
+            candidates = self._project_pool_candidates(task, project, release_id, layer="项目已部署节点兜底", include_candidate=True, allow_paused=False)
             if candidates:
                 return candidates
         if project.allow_company_pool_fallback:
             return self._company_pool_candidates(task, project.company_id)
         return []
 
-    def _project_pool_candidates(self, task: CrawlerTask, project: CrawlerProject, layer: str, server_ids: set[int] | None = None, enabled_only: bool = False, include_candidate: bool = False, allow_paused: bool = False) -> list[Candidate]:
+    def _project_pool_candidates(self, task: CrawlerTask, project: CrawlerProject, release_id: int | None, layer: str, server_ids: set[int] | None = None, enabled_only: bool = False, include_candidate: bool = False, allow_paused: bool = False) -> list[Candidate]:
         role_filter = ["ACTIVE", "PRIMARY", "STANDBY"] if not include_candidate else ["ACTIVE", "PRIMARY", "STANDBY", "CANDIDATE"]
         status_filter = ["ENABLED", "RECOVERING"] if enabled_only or not allow_paused else ["ENABLED", "RECOVERING", "PAUSED"]
         stmt = select(CrawlerServer, CrawlerProjectServer).join(CrawlerProjectServer, CrawlerProjectServer.server_id == CrawlerServer.server_id).join(CrawlerAgent, CrawlerAgent.server_id == CrawlerServer.server_id).where(
             CrawlerProjectServer.project_id == project.project_id,
             CrawlerProjectServer.deployment_status == "DEPLOYED",
+            CrawlerProjectServer.latest_release_id == release_id,
             CrawlerProjectServer.scheduling_status.in_(status_filter),
-            CrawlerProjectServer.image_readiness_status.in_(["READY", "OUTDATED", "WARMING"]),
+            CrawlerProjectServer.image_readiness_status == "READY",
             CrawlerProjectServer.server_role.in_(role_filter),
             CrawlerServer.manage_status == "ENABLED",
             CrawlerServer.health_status.in_(["HEALTHY", "DEGRADED"]),

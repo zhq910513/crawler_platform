@@ -214,7 +214,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { apiErrorData } from '../api/client'
-import { analyzeProjectPublishPipeline, cancelProjectBuildJob, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listServers, getSystemSettings, retryProjectBuildJob, runProjectPublishPipeline } from '../api/platform'
+import { analyzeProjectPublishPipeline, cancelProjectBuildJob, createAgentJoinToken, createCompany, getProjectBuildJob, listCompanies, listProjectReleaseDeployments, listServers, getSystemSettings, retryProjectBuildJob, runProjectPublishPipeline } from '../api/platform'
 import { sessionState } from '../stores/session'
 import type { AgentJoinTokenResult, Company, ControlPlanePreflight, ProjectPublishPipelineStep, ServerNode } from '../types/api'
 import { zh } from '../utils/dictionaries'
@@ -232,6 +232,7 @@ const installPanelRef = ref<HTMLElement | null>(null)
 const joinOnlineNotified = ref(false)
 let joinPollingTimer: number | undefined
 let publishBuildPollingTimer: number | undefined
+let publishDeploymentPollingTimer: number | undefined
 const controlBaseUrl = ref('')
 const controlPreflight = ref<ControlPlanePreflight | null>(null)
 const publishSummary = ref('')
@@ -523,6 +524,60 @@ function stopPublishBuildPolling() {
     publishBuildPollingTimer = undefined
   }
 }
+function stopPublishDeploymentPolling() {
+  if (publishDeploymentPollingTimer) {
+    window.clearTimeout(publishDeploymentPollingTimer)
+    publishDeploymentPollingTimer = undefined
+  }
+}
+
+async function pollPublishDeployment(projectId: number, deploymentId: number) {
+  stopPublishDeploymentPolling()
+  try {
+    const rows = await listProjectReleaseDeployments(projectId)
+    const deployment = rows.find((item) => Number(item.deploymentId || item.deployment_id || 0) === deploymentId)
+    if (!deployment) throw new Error('部署记录不存在')
+    const status = String(deployment.deploymentStatus || deployment.deployment_status || '').toUpperCase()
+    const targets = (deployment.targets || []) as Array<Record<string, unknown>>
+    publishTargets.value = targets
+    const deployStep = publishSteps.value.find((item) => item.key === 'deploy')
+    const readyStep = publishSteps.value.find((item) => item.key === 'ready')
+    if (status === 'DEPLOYED') {
+      if (deployStep) { deployStep.status = 'success'; deployStep.message = '所有目标节点已完成部署' }
+      if (readyStep) { readyStep.status = 'success'; readyStep.message = '节点运行前自检通过，Release 已激活并进入可调度状态' }
+      publishSucceeded.value = true
+      publishing.value = false
+      publishSummary.value = '发布完成：目标节点已就绪，运行版本已激活'
+      ElMessage.success(publishSummary.value)
+      return
+    }
+    if (status === 'FAILED' || status === 'BLOCKED') {
+      if (deployStep) deployStep.status = 'error'
+      if (readyStep) { readyStep.status = 'error'; readyStep.message = status === 'BLOCKED' ? '节点自检完成，但未满足 Release 激活条件' : '至少一个目标节点部署或运行前自检失败' }
+      publishSucceeded.value = false
+      publishing.value = false
+      publishSummary.value = readyStep?.message || '发布未完成'
+      ElMessage.error(publishSummary.value)
+      return
+    }
+    if (deployStep) { deployStep.status = 'process'; deployStep.message = '正在等待目标节点完成镜像拉取与部署' }
+    if (readyStep) { readyStep.status = 'process'; readyStep.message = '等待所有目标节点完成 smoke test 后激活 Release' }
+    publishDeploymentPollingTimer = window.setTimeout(() => { void pollPublishDeployment(projectId, deploymentId) }, 3000)
+  } catch (error) {
+    publishSummary.value = error instanceof Error ? error.message : '部署状态读取失败'
+    publishDeploymentPollingTimer = window.setTimeout(() => { void pollPublishDeployment(projectId, deploymentId) }, 5000)
+  }
+}
+
+function beginDeploymentPolling(result: { deployment?: { deploymentId?: number; projectId?: number } }) {
+  const projectId = Number(result.deployment?.projectId || 0)
+  const deploymentId = Number(result.deployment?.deploymentId || 0)
+  if (projectId > 0 && deploymentId > 0) {
+    publishing.value = true
+    publishSucceeded.value = false
+    void pollPublishDeployment(projectId, deploymentId)
+  }
+}
 
 function buildJobIdOf(job: Record<string, unknown> | null | undefined): number {
   const raw = job?.buildJobId || job?.build_job_id
@@ -599,13 +654,13 @@ function validatePublishForm() {
 function pipelinePayload() {
   return { companyId: form.companyId, serverIds: form.serverIds, repositoryUrl: form.repositoryUrl, refName: form.refName || 'main' }
 }
-function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; targets?: Array<Record<string, unknown>>; deployment?: { targets?: Array<Record<string, unknown>> }; buildJob?: Record<string, unknown>; message?: string; canContinue?: boolean }) {
+function applyPipelineResult(result: { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; targets?: Array<Record<string, unknown>>; deployment?: { deploymentId?: number; projectId?: number; deploymentStatus?: string; targets?: Array<Record<string, unknown>> }; buildJob?: Record<string, unknown>; message?: string; canContinue?: boolean; pipelineStatus?: string }) {
   if (result.steps?.length) publishSteps.value = result.steps.map((item) => ({ ...item }))
   publishBlockers.value = result.blockers || []
   publishTargets.value = result.targets || result.deployment?.targets || []
   publishBuildJob.value = result.buildJob || null
   publishSummary.value = result.message || ''
-  publishSucceeded.value = Boolean(result.canContinue && (result.deployment || publishTargets.value.length))
+  publishSucceeded.value = String(result.pipelineStatus || "").toUpperCase() === "SUCCEEDED"
   pipelineChecked.value = true
   assistantMode.value = 'panel'
 }
@@ -638,9 +693,8 @@ async function continuePublishAfterBuild() {
     pollPublishBuildJob(buildJobIdOf(result.buildJob))
     return
   }
-  publishSucceeded.value = true
-  publishing.value = false
-  ElMessage.success('发布流水线已进入节点自检阶段')
+  beginDeploymentPolling(result)
+  ElMessage.success('部署指令已下发，等待节点自检与 Release 激活')
 }
 
 async function pollPublishBuildJob(buildJobId: number) {
@@ -717,6 +771,7 @@ async function publishProject() {
   const problem = validatePublishForm()
   if (problem) { ElMessage.warning(problem); return }
   stopPublishBuildPolling()
+  stopPublishDeploymentPolling()
   resetSteps()
   publishing.value = true
   try {
@@ -734,9 +789,8 @@ async function publishProject() {
       pollPublishBuildJob(buildJobIdOf(result.buildJob))
       return
     }
-    publishSucceeded.value = true
-    publishing.value = false
-    ElMessage.success('发布流水线已进入节点自检阶段')
+    beginDeploymentPolling(result)
+    ElMessage.success('部署指令已下发，等待节点自检与 Release 激活')
   } catch (error) {
     const payload = apiErrorData<unknown>(error)
     const data = payload?.data as { steps?: ProjectPublishPipelineStep[]; blockers?: Array<Record<string, unknown>>; buildJob?: Record<string, unknown>; message?: string } | undefined
@@ -820,6 +874,7 @@ onUnmounted(() => {
   if (collapseTimer) window.clearTimeout(collapseTimer)
   stopJoinPolling()
   stopPublishBuildPolling()
+  stopPublishDeploymentPolling()
   cleanupFloatDragListeners()
 })
 </script>

@@ -457,14 +457,12 @@ class ProjectService:
         for release in releases:
             release.project_id = project.project_id
         latest_release = self.db.get(CrawlerProjectRelease, discovered.latest_release_id) if discovered.latest_release_id else (releases[-1] if releases else None)
-        if latest_release:
-            self._bind_release_channel(project, latest_release)
         dps_items = list(self.db.scalars(select(CrawlerDiscoveredProjectServer).where(CrawlerDiscoveredProjectServer.discovered_project_id == discovered.discovered_project_id)).all())
         for idx, item in enumerate(dps_items):
-            self._upsert_project_server(project, item.server_id, latest_release, item.latest_image_digest, item.last_deployed_at, idx, payload.dispatch_mode)
-        if latest_release:
-            self._mark_existing_project_servers_outdated(project, latest_release, utcnow())
-            self._sync_task_definitions(project, latest_release)
+            # External discovery proves only that a server relationship was observed.
+            # It is not a platform smoke-test result and must not manufacture DEPLOYED/READY facts.
+            ps = self._ensure_project_server(project, item.server_id, idx, payload.dispatch_mode)
+            ps.disabled_reason = "历史发现节点已接入，等待显式 Release 部署与运行前自检"
         write_operation_log(self.db, user, None, operation_type="IMPORT_PROJECT", resource_type="project", resource_id=str(project.project_id), after_data={"projectId": project.project_id, "companyId": project.company_id, "discoveredProjectId": discovered.discovered_project_id, "dispatchMode": project.dispatch_mode})
         try:
             self.db.commit()
@@ -570,6 +568,12 @@ class ProjectService:
             servers.append(server)
         if unavailable:
             raise AppError("部署目标校验未通过", code=40052, data={"unavailableServers": unavailable})
+        if len(servers) < max(1, project.min_available_servers or 1):
+            raise AppError(
+                "部署目标数量低于项目最小可用节点要求",
+                code=40054,
+                data={"selectedServerCount": len(servers), "minAvailableServers": project.min_available_servers},
+            )
         active_deploying = self.db.scalar(select(func.count(CrawlerProjectServer.project_server_id)).where(
             CrawlerProjectServer.project_id == project.project_id,
             CrawlerProjectServer.server_id.in_([server.server_id for server in servers]),
@@ -593,13 +597,21 @@ class ProjectService:
         command_service = AgentCommandService(self.db)
         existing_count = len(self.project_servers.list_by_project(project.project_id))
         strategy_targets: list[dict] = []
+        existing_by_server = {item.server_id: item for item in self.project_servers.list_by_project(project.project_id)}
+        target_rows: list[CrawlerProjectDeploymentTarget] = []
         for idx, server in enumerate(servers):
-            ps = self._upsert_project_server(project, server.server_id, release, release.image_digest, now, existing_count + idx, project.dispatch_mode)
-            desired_scheduling_status = "ENABLED"
-            ps.deployment_status = "DEPLOYING"
-            ps.image_readiness_status = "DEPLOYING"
-            ps.scheduling_status = "PAUSED"
-            ps.disabled_reason = "项目首次/版本部署中：等待 Agent 完成镜像拉取、目录准备和运行时自检"
+            existing_ps = existing_by_server.get(server.server_id)
+            ps = existing_ps or self._ensure_project_server(project, server.server_id, existing_count + idx, project.dispatch_mode)
+            desired_scheduling_status = (
+                existing_ps.scheduling_status
+                if existing_ps and existing_ps.scheduling_status in {"ENABLED", "RECOVERING", "PAUSED", "DRAINING", "DISABLED"}
+                else "ENABLED"
+            )
+            if not existing_ps:
+                ps.deployment_status = "PENDING"
+                ps.image_readiness_status = "UNKNOWN"
+                ps.scheduling_status = "PAUSED"
+                ps.disabled_reason = "已加入执行池，等待首次 Release 部署和运行前自检"
             target = CrawlerProjectDeploymentTarget(
                 deployment_id=deployment.deployment_id,
                 company_id=project.company_id,
@@ -607,48 +619,47 @@ class ProjectService:
                 release_id=release.release_id,
                 server_id=server.server_id,
                 target_status="PENDING_AGENT",
-                image_readiness_status="DEPLOYING",
+                image_readiness_status="UNKNOWN",
                 last_deployed_at=None,
             )
             self.db.add(target)
             self.db.flush()
-            command = command_service.enqueue_project_deploy_prepare(
-                server=server,
-                project_id=project.project_id,
-                project_code=project.project_code,
-                release_id=release.release_id,
-                release_version=release.version,
-                image_repository=release.image_repository,
-                image_digest=release.image_digest,
-                deployment_id=deployment.deployment_id,
-                target_id=target.target_id,
-                desired_scheduling_status=desired_scheduling_status,
-                reason=payload.reason or "项目一键部署",
-            )
-            target.target_status = "DISPATCHED"
+            target_rows.append(target)
             strategy_targets.append({
                 "targetId": target.target_id,
                 "serverId": server.server_id,
                 "serverCode": server.server_code,
                 "serverName": server.server_name,
-                "commandId": command["commandId"],
-                "status": "DISPATCHED",
-                "message": "已下发 Agent 部署指令，等待心跳执行",
-            })
-            targets.append({
-                "targetId": target.target_id,
-                "serverId": server.server_id,
-                "serverCode": server.server_code,
-                "serverName": server.server_name,
-                "targetStatus": target.target_status,
-                "imageReadinessStatus": target.image_readiness_status,
-                "latestImageDigest": ps.latest_image_digest,
-                "commandId": command["commandId"],
+                "commandId": "",
+                "desiredSchedulingStatus": desired_scheduling_status,
+                "status": "PENDING_AGENT",
+                "message": "等待 rollout 并发槽位",
             })
         strategy = dict(deployment.strategy or {})
+        strategy["maxParallelPulls"] = payload.max_parallel_pulls
         strategy["targets"] = strategy_targets
         strategy["updatedAt"] = utcnow().isoformat()
         deployment.strategy = strategy
+        self.db.flush()
+        command_service.dispatch_project_deployment_targets(deployment)
+        self.db.flush()
+        strategy = dict(deployment.strategy or {})
+        meta_by_target = {int(item.get("targetId") or 0): item for item in strategy.get("targets", []) if isinstance(item, dict)}
+        for target in target_rows:
+            server = self.db.get(CrawlerServer, target.server_id)
+            ps = existing_by_server.get(target.server_id) or self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.server_id == target.server_id))
+            meta = meta_by_target.get(target.target_id, {})
+            targets.append({
+                "targetId": target.target_id,
+                "serverId": target.server_id,
+                "serverCode": server.server_code if server else "",
+                "serverName": server.server_name if server else "",
+                "targetStatus": target.target_status,
+                "imageReadinessStatus": target.image_readiness_status,
+                "latestImageDigest": ps.latest_image_digest if ps else "",
+                "commandId": meta.get("commandId") or "",
+            })
+        strategy = dict(deployment.strategy or {})
         deployment.deployment_status = "DEPLOYING"
         write_operation_log(self.db, user, None, operation_type="DEPLOY_PROJECT_RELEASE", resource_type="project", resource_id=str(project.project_id), after_data={"projectId": project.project_id, "releaseId": release.release_id, "serverIds": [s.server_id for s in servers], "deploymentId": deployment.deployment_id})
         self.db.commit()
@@ -680,7 +691,6 @@ class ProjectService:
     def analyze_server_pool(self, user: SysUser, project_id: int, payload: ProjectServerPoolUpdate) -> dict:
         project = require_project_role(self.db, user, project_id, "OWNER")
         existing = {item.server_id: item for item in self.project_servers.list_by_project(project_id)}
-        latest_release = self._latest_project_release(project.project_id)
         current_running = self.db.scalar(select(func.count(CrawlerTaskRun.run_id)).where(CrawlerTaskRun.project_id == project_id, CrawlerTaskRun.run_status.in_(["ASSIGNED", "STARTING", "RUNNING", "CANCEL_REQUESTED"]))) or 0
         future_window = utcnow() + timedelta(minutes=10)
         upcoming = self.db.scalar(select(func.count(CrawlerTask.task_id)).where(CrawlerTask.project_id == project_id, CrawlerTask.status == "ENABLED")) or 0
@@ -695,13 +705,15 @@ class ProjectService:
             if not server or server.company_id != project.company_id:
                 reason = "节点不存在或不属于该公司"
                 available = False
-            elif not ps or ps.deployment_status != "DEPLOYED":
-                if latest_release and latest_release.image_digest:
-                    reason = "将按项目最新发布版本建立部署记录，Agent 执行时按 digest 拉取镜像"
-                    will_create = True
-                else:
-                    reason = "项目尚无可用发布版本，不能加入执行池"
-                    available = False
+            elif not ps:
+                # The server pool describes orchestration intent, not an already
+                # deployed runtime fact. A node may be selected before the first
+                # Release is activated; explicit Release Deployment later proves
+                # image readiness and makes the node schedulable.
+                reason = "将加入项目执行池；完成 Release 部署和运行前自检后才会参与调度"
+                will_create = True
+            elif ps.deployment_status != "DEPLOYED":
+                reason = "节点已加入执行池，等待 Release 部署和运行前自检"
             elif ps.image_readiness_status not in {"READY", "OUTDATED", "WARMING"}:
                 reason = "镜像状态未就绪"
                 available = False
@@ -718,14 +730,10 @@ class ProjectService:
             raise AppError("执行节点配置校验未通过", code=40045, data=analysis)
         existing = {item.server_id: item for item in self.project_servers.list_by_project(project_id)}
         before = [self._project_server_payload(item) for item in existing.values()]
-        latest_release = self._latest_project_release(project.project_id)
-        now = utcnow()
         for idx, item in enumerate(payload.servers):
             ps = existing.get(item.server_id)
             if not ps:
-                if not latest_release:
-                    raise AppError("项目尚无可用发布版本，不能加入执行池", code=40046)
-                ps = self._upsert_project_server(project, item.server_id, latest_release, latest_release.image_digest, now, idx, project.dispatch_mode)
+                ps = self._ensure_project_server(project, item.server_id, idx, project.dispatch_mode)
                 existing[item.server_id] = ps
             ps.scheduling_status = item.scheduling_status
             ps.server_role = item.server_role
@@ -860,6 +868,7 @@ class ProjectService:
                 {"key": "SERVER_PRECHECKED", "status": "SUCCEEDED", "message": "目标节点服务、Docker 与目录权限基础校验已通过", "finishedAt": now},
                 {"key": "DISPATCHING_AGENT", "status": "SUCCEEDED", "message": "部署指令已写入目标节点队列", "finishedAt": now},
                 {"key": "AGENT_DEPLOY_PREPARE", "status": "PENDING", "message": "等待 Agent 拉取镜像、准备目录并执行运行时自检"},
+                {"key": "RELEASE_ACTIVATION", "status": "PENDING", "message": "节点自检完成后才会切换运行版本并同步任务定义"},
             ],
             "targets": [],
             "createdAt": now,
@@ -876,6 +885,10 @@ class ProjectService:
 
     def _latest_project_release(self, project_id: int) -> CrawlerProjectRelease | None:
         return self.db.scalar(select(CrawlerProjectRelease).where(CrawlerProjectRelease.project_id == project_id, CrawlerProjectRelease.release_status == "PUBLISHED", CrawlerProjectRelease.parse_status == "SUCCESS").order_by(CrawlerProjectRelease.published_at.desc(), CrawlerProjectRelease.release_id.desc()))
+
+    def _active_project_release(self, project_id: int, channel_name: str = "stable") -> CrawlerProjectRelease | None:
+        channel = self.db.scalar(select(CrawlerReleaseChannel).where(CrawlerReleaseChannel.project_id == project_id, CrawlerReleaseChannel.channel_name == channel_name, CrawlerReleaseChannel.channel_status == "ENABLED"))
+        return self.db.get(CrawlerProjectRelease, channel.release_id) if channel and channel.release_id else None
 
     @staticmethod
     def _validate_release_version(version: str) -> None:
@@ -930,6 +943,9 @@ class ProjectService:
         return dps
 
     def _sync_formal_project(self, discovered: CrawlerDiscoveredProject, release: CrawlerProjectRelease, servers: list[CrawlerServer], now) -> None:
+        # Registering/building a Release only records an immutable artifact.
+        # Runtime channel activation, task-definition sync and ONLINE transition
+        # happen only after explicit node deployment + smoke test succeeds.
         project = self.db.get(CrawlerProject, discovered.formal_project_id)
         if not project:
             return
@@ -937,32 +953,25 @@ class ProjectService:
         project.repository_url = discovered.repository_url
         project.image_repository = discovered.image_repository
         release.project_id = project.project_id
-        self._bind_release_channel(project, release)
-        existing_count = len(self.project_servers.list_by_project(project.project_id))
-        for idx, server in enumerate(servers):
-            self._upsert_project_server(project, server.server_id, release, release.image_digest, now, existing_count + idx, project.dispatch_mode)
-        self._mark_existing_project_servers_outdated(project, release, now)
-        self._sync_task_definitions(project, release)
 
-    def _bind_release_channel(self, project: CrawlerProject, release: CrawlerProjectRelease) -> CrawlerReleaseChannel:
-        channel_name = release.release_channel or "stable"
-        channel = self.db.scalar(select(CrawlerReleaseChannel).where(CrawlerReleaseChannel.project_id == project.project_id, CrawlerReleaseChannel.channel_name == channel_name))
-        if not channel:
-            channel = CrawlerReleaseChannel(company_id=project.company_id, project_id=project.project_id, channel_name=channel_name, channel_status="ENABLED")
-            self.db.add(channel)
-        channel.release_id = release.release_id
-        return channel
-
-    def _mark_existing_project_servers_outdated(self, project: CrawlerProject, release: CrawlerProjectRelease, deployed_at) -> None:
-        for ps in self.project_servers.list_by_project(project.project_id):
-            if ps.latest_release_id == release.release_id and ps.latest_image_digest == release.image_digest:
-                continue
-            ps.latest_release_id = release.release_id
-            ps.latest_image_digest = release.image_digest
-            ps.last_deployed_at = deployed_at
-            if ps.image_readiness_status in {"READY", "WARMING", "OUTDATED", "UNKNOWN", "FAILED"}:
-                ps.image_readiness_status = "OUTDATED"
-                ps.disabled_reason = "项目发布了新镜像，执行节点下次执行时将按 digest 拉取并校验"
+    def _ensure_project_server(self, project: CrawlerProject, server_id: int, idx: int, dispatch_mode: str) -> CrawlerProjectServer:
+        ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.server_id == server_id))
+        if not ps:
+            ps = CrawlerProjectServer(
+                company_id=project.company_id,
+                project_id=project.project_id,
+                server_id=server_id,
+                priority=100 + idx,
+                weight=100,
+                max_concurrency=4,
+                deployment_status="PENDING",
+                scheduling_status="PAUSED",
+                image_readiness_status="UNKNOWN",
+            )
+            ps.server_role = "ACTIVE" if dispatch_mode == "LOAD_BALANCE" else ("PRIMARY" if idx == 0 else "STANDBY")
+            self.db.add(ps)
+            self.db.flush()
+        return ps
 
     def _upsert_project_server(self, project: CrawlerProject, server_id: int, release: CrawlerProjectRelease | None, digest: str, deployed_at, idx: int, dispatch_mode: str) -> CrawlerProjectServer:
         ps = self.db.scalar(select(CrawlerProjectServer).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.server_id == server_id))
@@ -987,98 +996,6 @@ class ProjectService:
         return ps
 
 
-    def _validate_task_contract(self, item: dict) -> tuple[str, list[str]]:
-        warnings: list[str] = []
-        platform_code = str(item.get("platformCode") or item.get("platform_code") or "").strip().lower()
-        if not platform_code:
-            warnings.append("缺少 platformCode，平台任务无法在前端按被爬平台归类")
-        required_credentials = item.get("requiredCredentials") or item.get("required_credentials") or []
-        if required_credentials and not isinstance(required_credentials, list):
-            warnings.append("requiredCredentials 必须是列表")
-        for idx, cred in enumerate(required_credentials if isinstance(required_credentials, list) else [], start=1):
-            if not isinstance(cred, dict):
-                warnings.append(f"requiredCredentials[{idx}] 必须是对象")
-                continue
-            if not str(cred.get("slot") or "").strip():
-                warnings.append(f"requiredCredentials[{idx}] 缺少 slot")
-            if not str(cred.get("platformCode") or cred.get("platform_code") or platform_code or "").strip():
-                warnings.append(f"requiredCredentials[{idx}] 缺少 platformCode")
-            modes = cred.get("supportedModes") or cred.get("supported_modes") or []
-            if modes and not isinstance(modes, list):
-                warnings.append(f"requiredCredentials[{idx}].supportedModes 必须是列表")
-        required_configs = item.get("requiredConfigs") or item.get("required_configs") or []
-        if required_configs and not isinstance(required_configs, list):
-            warnings.append("requiredConfigs 必须是列表")
-        for idx, cfg in enumerate(required_configs if isinstance(required_configs, list) else [], start=1):
-            if not isinstance(cfg, dict):
-                warnings.append(f"requiredConfigs[{idx}] 必须是对象")
-                continue
-            if not str(cfg.get("slot") or "").strip():
-                warnings.append(f"requiredConfigs[{idx}] 缺少 slot")
-            if not str(cfg.get("type") or cfg.get("configType") or "").strip():
-                warnings.append(f"requiredConfigs[{idx}] 缺少 type/configType")
-        output_tables = item.get("outputTables") or item.get("output_tables") or []
-        if output_tables and not isinstance(output_tables, list):
-            warnings.append("outputTables 必须是列表")
-        for idx, table in enumerate(output_tables if isinstance(output_tables, list) else [], start=1):
-            if not isinstance(table, dict):
-                warnings.append(f"outputTables[{idx}] 必须是对象")
-                continue
-            if not str(table.get("slot") or "").strip():
-                warnings.append(f"outputTables[{idx}] 缺少 slot")
-        return ("WARNING" if warnings else "OK"), warnings
-
-    def _sync_task_definitions(self, project: CrawlerProject, release: CrawlerProjectRelease) -> None:
-        task_items = (release.manifest or {}).get("taskDefinitions") or []
-        seen: set[str] = set()
-        for item in task_items:
-            key = str(item.get("definitionKey") or "")
-            if not key:
-                continue
-            seen.add(key)
-            definition = self.db.scalar(select(CrawlerProjectTaskDefinition).where(CrawlerProjectTaskDefinition.project_id == project.project_id, CrawlerProjectTaskDefinition.definition_key == key))
-            if not definition:
-                definition = CrawlerProjectTaskDefinition(company_id=project.company_id, project_id=project.project_id, definition_key=key)
-                self.db.add(definition)
-            old_status = definition.definition_status
-            definition.latest_release_id = release.release_id
-            definition.task_name = item.get("taskName", key)
-            definition.entry_module = item.get("entryModule", "")
-            definition.entry_function = item.get("entryFunction", "")
-            definition.source_file = item.get("sourceFile", "sch.py")
-            definition.source_fingerprint = item.get("sourceFingerprint", "")
-            definition.default_params = item.get("defaultParams") or {}
-            definition.suggested_cron = item.get("suggestedCron", "")
-            definition.execution_mode = item.get("executionMode", "SINGLE")
-            definition.idempotency_policy = item.get("idempotencyPolicy", "IDEMPOTENT")
-            definition.resource_requirements = item.get("resourceRequirements") or {}
-            definition.required_capabilities = item.get("requiredCapabilities") or {}
-            definition.platform_code = str(item.get("platformCode") or item.get("platform_code") or "").strip().lower()
-            definition.required_configs = item.get("requiredConfigs") or item.get("required_configs") or []
-            definition.required_credentials = item.get("requiredCredentials") or item.get("required_credentials") or []
-            definition.output_tables = item.get("outputTables") or item.get("output_tables") or []
-            definition.contract_version = str(item.get("contractVersion") or item.get("contract_version") or "1")
-            definition.contract_status, definition.contract_warnings = self._validate_task_contract(item)
-            definition.runtime_mode = item.get("runtimeMode", "SHARED_ENV_ISOLATED")
-            definition.task_group = item.get("taskGroup", "default")
-            definition.task_max_concurrency = int(item.get("taskMaxConcurrency", 1) or 1)
-            definition.group_max_concurrency = int(item.get("groupMaxConcurrency", 4) or 4)
-            definition.exclusive_mode = bool(item.get("exclusiveMode", False))
-            definition.io_class = item.get("ioClass", "NORMAL")
-            definition.shm_size_mb = int(item.get("shmSizeMb", 64) or 64)
-            definition.log_limit_mb = int(item.get("logLimitMb", 50) or 50)
-            locks = item.get("resourceLocks") or []
-            definition.resource_locks = locks if isinstance(locks, list) else []
-            definition.secret_refs = item.get("secretRefs") or []
-            definition.allow_offline_run = bool(item.get("allowOfflineRun", False))
-            definition.offline_policy = item.get("offlinePolicy") or {}
-            if old_status in {"REMOVED", "PARSE_ERROR"}:
-                definition.definition_status = "AVAILABLE"
-        for definition in list(self.db.scalars(select(CrawlerProjectTaskDefinition).where(CrawlerProjectTaskDefinition.project_id == project.project_id)).all()):
-            if definition.definition_key not in seen and definition.definition_status != "CREATED":
-                definition.definition_status = "REMOVED"
-                definition.parse_message = "最新版本 manifest 中未发现该任务定义"
-
     def _validate_project_pool(self, project: CrawlerProject) -> None:
         items = self.project_servers.list_by_project(project.project_id)
         enabled = [item for item in items if item.deployment_status == "DEPLOYED" and item.scheduling_status in {"ENABLED", "RECOVERING"}]
@@ -1090,10 +1007,21 @@ class ProjectService:
             raise AppError("可接收任务的节点数量低于项目最低要求", code=40047)
 
     def _project_summary(self, project: CrawlerProject) -> dict:
-        latest = self.db.scalar(select(CrawlerProjectRelease).where(CrawlerProjectRelease.project_id == project.project_id).order_by(CrawlerProjectRelease.published_at.desc()))
+        latest = self._latest_project_release(project.project_id)
+        active = self._active_project_release(project.project_id)
         deployed_count = self.db.scalar(select(func.count(CrawlerProjectServer.project_server_id)).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.deployment_status == "DEPLOYED")) or 0
         execution_count = self.db.scalar(select(func.count(CrawlerProjectServer.project_server_id)).where(CrawlerProjectServer.project_id == project.project_id, CrawlerProjectServer.deployment_status == "DEPLOYED", CrawlerProjectServer.scheduling_status.in_(["ENABLED", "RECOVERING"]))) or 0
-        return {**{c.name: getattr(project, c.name) for c in project.__table__.columns}, "latestVersion": latest.version if latest else "", "latestImageDigest": latest.image_digest if latest else "", "deployedServerCount": deployed_count, "executionServerCount": execution_count}
+        return {
+            **{c.name: getattr(project, c.name) for c in project.__table__.columns},
+            "latestVersion": latest.version if latest else "",
+            "latestImageDigest": latest.image_digest if latest else "",
+            "activeReleaseId": active.release_id if active else None,
+            "activeVersion": active.version if active else "",
+            "activeImageDigest": active.image_digest if active else "",
+            "releaseActivationPending": bool(latest and (not active or latest.release_id != active.release_id)),
+            "deployedServerCount": deployed_count,
+            "executionServerCount": execution_count,
+        }
 
     def _discovered_payload(self, project: CrawlerDiscoveredProject) -> dict:
         deployment_count = self.db.scalar(select(func.count(CrawlerDiscoveredProjectServer.discovered_project_server_id)).where(CrawlerDiscoveredProjectServer.discovered_project_id == project.discovered_project_id)) or 0

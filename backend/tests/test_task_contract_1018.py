@@ -45,6 +45,15 @@ def test_task_definition_contract_is_discovered_and_snapshot_on_task() -> None:
     }
     discovered = client.post('/api/v1/discovered-projects', headers={'Authorization': 'Discovery ' + token}, json={'companyId': company['companyId'], 'manifest': manifest}).json()['data']
     project = client.post('/api/v1/projects', headers=headers, json={'discoveredProjectId': discovered['discoveredProjectId']}).json()['data']
+    server = client.post('/api/v1/servers', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'contract-node', 'serverName': 'Contract Node', 'serverIp': '10.18.0.10'}).json()['data']
+    agent = client.post('/api/v1/agents', headers=headers, json={'companyId': company['companyId'], 'serverCode': 'contract-node', 'serverName': 'Contract Node', 'agentCode': 'contract-agent', 'agentName': 'Contract Agent'}).json()['data']
+    agent_headers = {'Authorization': 'Agent ' + agent['agentToken']}
+    client.put(f"/api/v1/projects/{project['projectId']}/servers", headers=headers, json={'servers': [{'serverId': server['serverId'], 'schedulingStatus': 'ENABLED', 'serverRole': 'ACTIVE', 'priority': 100, 'weight': 100, 'maxConcurrency': 4}]})
+    client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'contract-instance', 'dockerStatus': 'OK', 'availableSlots': 2})
+    deployment = client.post(f"/api/v1/projects/{project['projectId']}/release-deployments", headers=headers, json={'serverIds': [server['serverId']]}).json()['data']
+    heartbeat = client.post('/api/v1/agent-heartbeats', headers=agent_headers, json={'agentInstanceId': 'contract-instance', 'dockerStatus': 'OK', 'availableSlots': 2}).json()['data']
+    command = next(item for item in heartbeat['pendingAgentCommands'] if item['deploymentId'] == deployment['deploymentId'])
+    client.post('/api/v1/agent-command-results', headers=agent_headers, json={'commandId': command['commandId'], 'commandType': command['commandType'], 'projectId': project['projectId'], 'releaseId': command['releaseId'], 'deploymentId': command['deploymentId'], 'targetId': command['targetId'], 'success': True, 'message': 'smoke ok', 'result': {}})
     definition = client.get(f"/api/v1/projects/{project['projectId']}/task-definitions", headers=headers).json()['data'][0]
     assert definition['platformCode'] == 'a_platform'
     assert definition['contractStatus'] == 'OK'

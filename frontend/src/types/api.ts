@@ -227,7 +227,14 @@ export interface TaskDefinition {
   outputTables?: Array<Record<string, unknown>>
   contractStatus?: string
   contractWarnings?: unknown[]
-  definitionStatus: string
+  discoveryStatus: string
+  orchestrationStatus: string
+  latestReleaseId?: number | null
+  firstSeenReleaseId?: number | null
+  lastSeenAt?: string | null
+  ignoredAt?: string | null
+  ignoredBy?: number | null
+  ignoreReason?: string
   createdAt: string
 }
 
@@ -242,6 +249,10 @@ export interface Task {
   entryModule: string
   entryFunction: string
   parameters: Record<string, unknown>
+  configBindings?: Record<string, unknown>
+  credentialBindings?: Record<string, unknown>
+  contractSnapshot?: Record<string, unknown>
+  runtimeReadiness?: TaskRuntimeReadiness
   executionMode: string
   idempotencyPolicy: string
   runtimeMode?: string
@@ -310,11 +321,28 @@ export interface PendingTaskDefinitionItem {
   platformCode: string
   taskGroup: string
   suggestedCron: string
+  defaultParams?: Record<string, unknown>
+  executionMode?: string
+  runtimeMode?: string
+  taskMaxConcurrency?: number
+  groupMaxConcurrency?: number
+  exclusiveMode?: boolean
+  ioClass?: string
+  shmSizeMb?: number
+  logLimitMb?: number
+  resourceLocks?: string[]
   requiredConfigs: Array<Record<string, unknown>>
   requiredCredentials: Array<Record<string, unknown>>
   contractStatus: string
   contractWarnings: Array<unknown>
-  definitionStatus: string
+  discoveryStatus: string
+  orchestrationStatus: string
+  firstSeenReleaseId?: number | null
+  latestReleaseId?: number | null
+  lastSeenAt?: string | null
+  ignoredAt?: string | null
+  ignoredBy?: number | null
+  ignoreReason?: string
   bindingRequired: boolean
   updatedAt: string
 }
@@ -322,6 +350,19 @@ export interface PendingTaskDefinitionItem {
 export interface TaskSchedulePanelResult extends PageResult<TaskSchedulePanelItem> {
   pendingDefinitions: PendingTaskDefinitionItem[]
   pendingDefinitionTotal: number
+  ignoredDefinitions: PendingTaskDefinitionItem[]
+  ignoredDefinitionTotal: number
+}
+
+export interface TaskRuntimeReadiness {
+  ready: boolean
+  status: 'READY' | 'NEEDS_REVIEW' | 'BLOCKED' | string
+  reasons: string[]
+  releaseId?: number | null
+  releaseVersion?: string
+  definitionKey?: string
+  definitionChanged?: boolean
+  readyServerCount?: number
 }
 
 export interface TaskSchedulePanelItem {
@@ -358,6 +399,7 @@ export interface TaskSchedulePanelItem {
   routingStatus: string
   lastFinishedAt: string | null
   lastErrorSummary: string
+  runtimeReadiness?: TaskRuntimeReadiness
   createdAt: string
   updatedAt: string
 }

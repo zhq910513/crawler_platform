@@ -293,6 +293,15 @@ class TaskFromDefinitionCreate(ApiModel):
         return self
 
 
+class TaskDefinitionIgnore(ApiModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class TaskDefinitionReconcile(ApiModel):
+    config_bindings: dict[str, Any] | None = None
+    credential_bindings: dict[str, Any] | None = None
+
+
 class TaskUpdate(ApiModel):
     owner_user_id: int | None = None
     task_name: str | None = Field(default=None, min_length=1, max_length=200)
