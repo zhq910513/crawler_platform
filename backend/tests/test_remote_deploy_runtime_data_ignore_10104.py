@@ -21,5 +21,6 @@ def test_remote_deploy_bootstraps_runtime_excludes_before_status_gate() -> None:
     assert '.git/info/exclude' in workflow
     assert 'ensure_runtime_data_ignore' in workflow
     assert 'filtered_status' in workflow
+    assert 'script_stop:' not in workflow
     assert script.index('cp_ensure_runtime_data_git_excludes') < script.index('cp_git_restore_mode_only_changes')
     assert 'cp_git_status_filtered' in host

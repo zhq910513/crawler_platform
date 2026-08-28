@@ -76,6 +76,8 @@ def scan_workflow_bootstrap() -> None:
     ]:
         if snippet not in text:
             fail(f"GitHub Actions SSH 入口缺少首次升级自愈逻辑：{snippet}")
+    if "script_stop:" in text:
+        fail("GitHub Actions SSH 入口不得使用 appleboy/ssh-action script_stop；set -Eeuo pipefail 已提供失败即退出语义，script_stop 会破坏 HEREDOC/if 远端脚本")
 
 
 def scan_internal_script_invocations() -> None:

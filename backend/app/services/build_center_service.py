@@ -87,7 +87,7 @@ def start_project_release_build_thread(build_job_id: int, user_id: int | None) -
 class BuildCenterService:
     """Platform-driven spider project build center.
 
-    v1.0.106 reconciles Docker build diagnostics and remote-deploy runtime bootstrap contracts. v1.0.104 adds local source bundle/source cache fallbacks and deployment runtime-directory hygiene. v1.0.101 adds GitHub source archive fallback after git clone failures.
+    v1.0.107 fixes SSH action remote-script parsing while retaining the v1.0.106 Docker diagnostics and runtime bootstrap contracts. v1.0.104 adds local source bundle/source cache fallbacks and deployment runtime-directory hygiene. v1.0.101 adds GitHub source archive fallback after git clone failures.
     v1.0.98 adds recovery/cancel/retry lifecycle controls for async build jobs. v1.0.97 starts project builds asynchronously from the publish flow. v1.0.96 implements and observes the smallest safe path: the platform creates the build,
     pulls source in an isolated workspace, executes the spider project's passive
     build contract, builds/pushes a Docker image, reads the immutable digest and
